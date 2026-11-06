@@ -4234,6 +4234,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const touching = (a: RoomLayout, b: RoomLayout) =>
       ((a.x + a.width === b.x || b.x + b.width === a.x) && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) >= 1) ||
       ((a.y + a.height === b.y || b.y + b.height === a.y) && Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) >= 1);
+    const shared = (a: RoomLayout, b: RoomLayout) =>
+      a.x + a.width === b.x || b.x + b.width === a.x ? Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+      : a.y + a.height === b.y || b.y + b.height === a.y ? Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) : 0;
     const slide = (corridor: Area, shape: Shape): { x: number; y: number } | undefined => {
       const c = corridor.layout!;
       const along = c.x + c.width === l.x || l.x + l.width === c.x ? "y" : "x";
@@ -4242,7 +4245,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         const moved = { ...c, x: along === "x" ? c.x + sgn * d : c.x, y: along === "y" ? c.y + sgn * d : c.y };
         if (!touching(moved, l) || standingBeside(l, moved, shape) < 2) continue;
         // (and its other rooms still beside it, with floor for a door: a round one made before this one has its curve there too)
-        if (partners.some((o) => !touching(moved, o.layout!) || (o.layout!.shape && standingBeside(o.layout!, moved, o.layout!.shape) < 2))) continue;
+        // (with as much side shared as before, up to two squares: a door wants a free square on both sides, and one square of side left to it was
+        // sometimes taken, which cut a booth or a pharmacy off, tests/world/layouts.test.ts)
+        if (partners.some((o) => !touching(moved, o.layout!) || shared(moved, o.layout!) < Math.min(2, shared(c, o.layout!)) || (o.layout!.shape && standingBeside(o.layout!, moved, o.layout!.shape) < 2))) continue;
         if (rooms.some((o) => o !== corridor && o.layout && clash(moved, o.layout))) continue;
         return { x: moved.x, y: moved.y };
       }
@@ -4252,7 +4257,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       if (!waysStand(l.width, l.height, shapeRadii(shape, l.width, l.height))) return false;
       // (a room that only stands beside the curve, no door between them, is no bar: the wall is drawn out to the curve; one a door joins it by
       // must have floor of the round room beside it for the door, as a corridor must; only corridors are slid)
-      if (against.some((other) => formOf(other) !== "corridor" && joined(other) && standingBeside(l, other.layout!, shape) < 2)) return false;
+      // (a room joined to it by a door of its own, not by a corridor or a stair, keeps it square, wherever that room is: round rooms are reached
+      // through corridors, tests/interiors/round.test.ts; a room only standing beside the curve, no door between them, is no bar)
+      if (rooms.some((other) => other !== room && !formOf(other) && joined(other))) return false;
       const short = against.filter((other) => joined(other) && standingBeside(l, other.layout!, shape) < 2);
       const moves = short.map((other) => slide(other, shape));
       if (moves.some((m) => !m)) return false;
@@ -4380,7 +4387,13 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
           }
         }
       }
-      if (!joinedOne) return;
+      // (a round or oval room still cut off is made square again and tried once more: its furniture stands inside the curve, so inside the square
+      // too, and a square's corners give its neighbours wall for a door; 2026-11-06, tests/world/layouts.test.ts, a cantina's private booth)
+      if (!joinedOne) {
+        const curved = lost.filter((a) => a.layout!.shape);
+        if (!curved.length) return;
+        for (const a of curved) delete a.layout!.shape;
+      }
     }
   };
   for (const { path, stairs } of joined) {

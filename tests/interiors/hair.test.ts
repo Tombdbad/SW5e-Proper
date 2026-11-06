@@ -69,13 +69,15 @@ test("hair.glb holds every style of the lists, the beards and the brows, as card
     const b = boundsOf(hi[name].part);
     assert.ok(b.max.y < 0.24 && b.min.y > -0.46 && b.max.x < 0.27 && b.min.x > -0.27 && b.max.z < 0.2 && b.min.z > -0.26, `${name} ${b.min.toArray().map((x) => x.toFixed(2))} ${b.max.toArray().map((x) => x.toFixed(2))}`);
   }
-  // and never inside the skull (the part of it above the eyes, where the skull is the ellipsoid)
+  // and never inside the skull (the part of it above the eyes). (2026-11-05: the hair is rooted on the head's own surface now, not on this ellipsoid,
+  // so it no longer floats; build-head.py's surface comes in to 0.94 of the ellipsoid at a woman's temples and 0.97 at the back of the crown, so the
+  // bound is under that, not at the ellipsoid)
   for (const name of STYLES) {
     const p = hi[name].part[0].attributes.position as THREE.BufferAttribute;
     for (let i = 0; i < p.count; i++) {
       if (p.getY(i) < 0.05) continue;
       const f = (p.getX(i) / 0.1) ** 2 + (p.getY(i) / 0.118) ** 2 + (p.getZ(i) / 0.112) ** 2;
-      assert.ok(f > 0.97, `${name} has a vertex in the skull (${f.toFixed(3)})`);
+      assert.ok(f > 0.93, `${name} has a vertex in the skull (${f.toFixed(3)})`);
     }
   }
 });
