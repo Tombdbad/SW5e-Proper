@@ -41,7 +41,13 @@ test("an older world is given its windows when livened, and only once", () => {
   const once = livenWorld(old, catalog);
   assert.ok(windows(once).length > before, "livened, the rooms have more windows");
   const twice = livenWorld({ ...once, life: 17 }, catalog);
-  assert.equal(windows(twice).length, windows(once).length, "livened again, none are added twice");
+  // (livened again from before the windows, the walls take no second window on a square that has one. Since life 19, 2026-11-06, the buildings
+  // and their districts are planned again on the way, so a wall a neighbour stood against may be clear and take one: the count may grow, not double)
+  for (const a of Object.values(twice.areas)) {
+    const at = (a.layout?.assets ?? []).filter((x) => x.kind === "window").map((x) => `${x.x},${x.y},${x.side}`);
+    assert.equal(new Set(at).size, at.length, `${a.name}: no window twice`);
+  }
+  assert.ok(windows(twice).length < windows(once).length * 1.2, "livened again, the windows are not added again");
   assert.deepEqual(auditBuildings(once), []);
   assert.ok(childrenOf(once, Object.values(once.areas).find((a) => a.kind === "building")!.id).length);
 });

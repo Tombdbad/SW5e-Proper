@@ -48,7 +48,18 @@ generated. Consider we may need a new suite of interior meshes/assets."
 - Delivered in playable stages: 1 generator (round buildings, tree/stilt villages, re-plan), 2 furniture that fits the curves, 3 curved interior models (Mixar).
   Each stage deployed with a finish script.
 
-## Next, in order (the overhaul first)
-1. The gantry form in the planner (round rooms now exist to hang it on): gantryPlan/rampPlan in interiors/architecture.ts, kit pieces in architecture.glb.
-2. Heads for Ithorian (a sphere), Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean (tools/blender/build-species.py, SPECIES_EXPORT).
-3. Look in a browser after the deploy: a square cantina's doorway (cut wall), a round medcenter, a close-up of a human face side-on, curly and messy hair.
+## Stage 1 of the overhaul (REVIVAL_NOTES "The overhaul, stage 1"): round by default, tree and stilt villages, life 19 re-plans saved worlds
+- shared/logic: SQUARE_BUILDINGS/ROUND_BUILDINGS, linkRounds rounds every room, corridors centred on round rooms, canopyOf/CANOPY_ALOFT/setAloft,
+  planDistrict wraps planDistrictGround, LIFE 19. Client: levelY adds `aloft`; siteAssets CanopyDeck/CanopyBridge/CanopyLadder; LocalMap draws them.
+- Tests: interiors/round.test.ts (3 new), worlds/layouts.test.ts pass here. The client was only syntax-checked (no three here): the finish script's tsc.
+- Stage 2 too (same branch): round-room furniture on the ring (findSpot), aisles in round shops (planFor), facing the middle (packs.ts facing),
+  shelves and counters on the ring drawn curved (models.tsx CurvedPiece, ringSpan). Life 19 takes down roofs/catwalks/side entrances before the
+  re-plan (as migrateSites), re-plans each building once (tag "overhauled"), then its districts. Tests updated: windows.test.ts (no doubled
+  windows, count may grow), layouts.test.ts (old district plans kept, re-planned). voice.test.ts's Piper test fails here only (no piper.exe).
+- Ship it: the same command, `powershell -ExecutionPolicy Bypass -File deploy\finish-2026-11-05.ps1` (it takes the branch nov5-wiring).
+
+## Next, in order (the overhaul)
+1. Look at it in a browser after the deploy (Kashyyyk/Endor-like forest town: decks, trunks, bridges, ladders; a round shop's aisles and curved shelves).
+2. Gantries round round rooms (gantryPlan/rampPlan, radius-4 kit pieces: scale or make r5/r6 variants in Mixar).
+3. Stage 3: curved interior models in Mixar (curved shelves, curved bar counter, round tables, ring benches).
+4. Heads for Ithorian, Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean.

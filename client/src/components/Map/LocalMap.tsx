@@ -10,7 +10,7 @@ import type { Pet } from "@shared/logic/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
-import { deckSquares, waterOf, isWaterCraft, isSubmersible, HELM_PACE, type WaterLife } from "@shared/logic";
+import { canopyOf, deckSquares, waterOf, isWaterCraft, isSubmersible, HELM_PACE, type WaterLife } from "@shared/logic";
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type Standing, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import type { VerticalMove } from "@shared/logic";
@@ -42,10 +42,10 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, TreeVillages, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, TreeVillages, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -555,7 +555,8 @@ function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Ar
 // (a storey was 2.8 and a room's walls 2.4 until 2026-10-30; the user: "ceiling and roof textures are too low (when using over the shoulder
 // view, the ceiling obscures the view when the player looks down)": now 3.4 and 3.0, and the camera keeps under the ceiling, aim.ts `roof`)
 export const LEVEL_H = 3.4;
-const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
+// (and a tree or stilt village's rooms on their platforms, `aloft` metres up: shared/logic canopyOf)
+const levelY = (l?: Pick<RoomLayout, "level" | "aloft">) => (l?.level ?? 0) * LEVEL_H + (l?.aloft ?? 0);
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
 // north-west corner, the middle of a square being half way into it): evenly up a flight, lift or
@@ -1131,7 +1132,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp">;
+  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -1161,6 +1162,13 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
 }) {
   // What the shop shows today (a droid dealer's droids and parts), set by Play
   const onShow = useDisplay();
+  // (a shelf or counter standing on a round room's ring of squares inside its curve: drawn along the curve, CurvedPiece)
+  const ringed = (a: RoomAsset) => {
+    if (!plan?.shape || a.kind !== "furniture" || !curvedKind(a.name) || !ringSpan(a, width, height)) return false;
+    const off = (x: number, y: number) => x < 0 || y < 0 || x >= width || y >= height || !standsAt(plan as RoomLayout, x, y);
+    for (let y = a.y; y < a.y + a.h; y++) for (let x = a.x; x < a.x + a.w; x++) if (off(x - 1, y) || off(x + 1, y) || off(x, y - 1) || off(x, y + 1)) return true;
+    return false;
+  };
   // A cave has walls of rock and a rim of formations; every room has the light, the air and the stock its kind of place would
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
@@ -1363,11 +1371,16 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} rock={rocky ? { biome: mood!.biome } : undefined} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
-              <>
-                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+              ringed(a) ? (
+                // (a shelf or counter on a round room's ring, drawn along the curve: models.tsx CurvedPiece)
+                <group position={[-a.x, 0, -a.y]}>
+                  <CurvedPiece kind={curvedKind(a.name)!} span={ringSpan(a, width, height)!} width={width} height={height} color={look?.wood ?? "#6b5a48"} trim={look?.metal ?? "#9aa3ad"} />
+                </group>
+              ) : <>
+                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height, !!plan?.shape)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
                 {/* A fighting beast in its pen (an arena's pens: models.tsx draws the cage) */}
                 {a.name === "Beast pen" && <group position={[a.w / 2, 0.06, a.h / 2]} rotation={[0, hue(a.id) % 6, 0]}><Figure kind="beast" ring="#9ca3af" name={PEN_BEASTS[hue(a.id) % PEN_BEASTS.length]} /></group>}
-                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height)} />}
+                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height, !!plan?.shape)} />}
                 {/* A droid for sale on its plinth (the dealer's stock of the day) */}
                 {onShow.droids[a.id] && (
                   <group position={[a.w / 2, 0.14, a.h / 2]}>
@@ -3116,6 +3129,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     [world, building.id],
   );
   const buildingIds = new Set(buildings.map((b) => b.id));
+  // (which of them stand aloft in a tree or stilt village, shared/logic canopyOf)
+  const canopyAt = useMemo(() => new Map(buildings.map((b) => [b.id, canopyOf(world, b.id)] as const)), [world, buildings]);
   // The ships that belong to each hangar, away or in: their comings and goings are drawn by the clock
   const based = (world as World & { based?: Record<string, Ship[]> }).based ?? {};
   const rooms = buildings.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room"));
@@ -4801,6 +4816,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             })}
           />
         )}
+        {/* A tree or stilt village's decks under its rooms, its bridges, the ladder down from its ways in (siteAssets.tsx CanopyDeck) */}
+        {planned && rooms.map((room) => {
+          const l = room.layout;
+          const kind = canopyAt.get(room.parentId ?? "");
+          if (!l || !kind || !l.aloft || (l.level ?? 0) !== 0) return null;
+          const ways = l.assets.filter((a) => a.kind === "exit" && a.side);
+          return (
+            <group key={`canopy-${room.id}`} position={[l.x, l.aloft, l.y]}>
+              {formOf(room) === "corridor" ? <CanopyBridge w={l.width} d={l.height} kind={kind} biome={biome} /> : <CanopyDeck w={l.width} d={l.height} round={!!l.shape} aloft={l.aloft} kind={kind} biome={biome} />}
+              {ways.map((a) => {
+                const out: [number, number] = a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0];
+                const at: [number, number] = a.side === "n" ? [a.x + 0.5, 0] : a.side === "s" ? [a.x + 0.5, l.height] : a.side === "w" ? [0, a.y + 0.5] : [l.width, a.y + 0.5];
+                return <CanopyLadder key={a.id} at={at} out={out} aloft={l.aloft!} biome={biome} />;
+              })}
+            </group>
+          );
+        })}
         {planned && rooms.map((room) => {
           const l = room.layout!;
           // Inside a building the others of its district are not drawn: nobody looks at them from
@@ -4933,7 +4965,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <WallAnchor key={room.id} at={[l.x, lift, l.y]}><group position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
-              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(wallPackOf(building.type), biome)} solid={!opened} />}
+              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -(lift - (l.aloft ?? 0)) / 2, l.height / 2]} size={[l.width - 0.1, lift - (l.aloft ?? 0), l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(wallPackOf(building.type), biome)} solid={!opened} />}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} biome={biome} like={likeOf(room)} corners={(() => { const under = roofUnder(l); return under ? radiiOf(under) : undefined; })()} />
@@ -4971,6 +5003,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     );
                   })}
                 </group>
+              ) : form === "corridor" && canopyAt.get(room.parentId ?? "") && l.aloft ? (
+                // (a bridge between the huts of a tree or stilt village: drawn with the decks above, no walls; tapped like any room)
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined} />
               ) : form === "walkway" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#59636d")}

@@ -131,7 +131,15 @@ export const stretches = (name: string) => /table|bench|workbench|desk|counter|p
 // Which way a piece on the squares `a` (corner `x`,`y`, size `w` by `h`) in a room `width` by `height` faces: its back to the
 // wall it stands against, so a console on the west wall looks east. Pieces in the open face south, as they are drawn.
 // Turns about the upright axis: 0 faces +z, pi/2 faces +x.
-export function facing(a: { x: number; y: number; w: number; h: number }, width: number, height: number): number {
+// In a round or oval room (`round`, 2026-11-06) a piece round the curve has its back to the curve: it faces the middle, to the nearest quarter turn
+// (its squares are square to the room; the curved pieces of the ring follow the curve itself)
+export function facing(a: { x: number; y: number; w: number; h: number }, width: number, height: number, round = false): number {
+  if (round) {
+    const dx = width / 2 - (a.x + a.w / 2);
+    const dz = height / 2 - (a.y + a.h / 2);
+    if (Math.abs(dx) < 0.75 && Math.abs(dz) < 0.75) return 0;
+    return Math.abs(dz) * width >= Math.abs(dx) * height ? (dz > 0 ? 0 : Math.PI) : dx > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
   const gaps: [number, number][] = [[a.y, 0], [height - (a.y + a.h), Math.PI], [a.x, Math.PI / 2], [width - (a.x + a.w), -Math.PI / 2]];
   const [gap, turn] = gaps.reduce((best, g) => (g[0] < best[0] ? g : best));
   return gap <= 0.5 ? turn : 0;

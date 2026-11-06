@@ -1117,3 +1117,28 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
   door, exit, window and found secret cut through (the frame's own outline), a dark core inside, the door's dark fill on the inside face (`DoorVoid deep`).
 - Not done yet: the gantry form in the planner (round rooms are now there to hang it on), and the heads of Ithorian, Duros, Bith, Gran, Kel Dor, Quarren,
   Weequay and Cerean.
+
+## The overhaul, stage 1: round by default, tree and stilt villages, saved games re-planned (2026-11-06; the user: "I want the tree villages to REPLACE the standard square rooms on relevant planets (like Kashyyyk and Endor) NOT just as background decoration! I want the round buildings, rooms, and gantries to REPLACE the VAST majority of old square buildings (square buildings should be RARE) ... a FULL OVERHAUL of the way districts and rooms are procedurally generated". Asked: saved games "Re-plan everything"; villages on forest, jungle and swamp worlds; square only for "Hangars and warehouses, Slums and shanties"; delivered "In playable stages")
+- Round by default (shared/logic ROUND_BUILDINGS, linkRounds): every kind of building is round but SQUARE_BUILDINGS (warehouse, refuelling depot, the
+  hangars, shipyard, tenements, junkyard; also slum/shanty names should a world add them), the open grounds, the ground hangars and the wild places.
+  Every room of a round kind is tagged round (it was one or two), except a ship's bay and a room with another stacked on it; each of its doors to
+  another room on its floor is split with a corridor (now also doors to the stacked ones: levels over all its rooms). The planner lays a corridor or
+  stair against the middle of a round room's side (it was flush with a corner, where the curve cuts the floor away), slides it if need be, and does not
+  join a round room straight to a plain one when it rescues a cut-off room (joinStranded; a round room still cut off is made square). Over seed 34
+  (all buildings planned) 1,700 of 2,024 rooms tagged round come out round; worlds/layouts.test.ts and interiors/round.test.ts pass.
+- Tree and stilt villages (shared/logic canopyOf, CANOPY_ALOFT, RoomLayout `aloft`): every round kind of building in a settlement on a forest or jungle
+  world stands 6.4 m up in the trees, on a swamp world 1.8 m up on stilts (not the arena, not a town's gates, not the square kinds). The plan on the
+  floor is the same; `aloft` lifts its rooms (LocalMap levelY), set after a building is planned and after its district adds roofs and catwalks
+  (setAloft). Drawn by siteAssets.tsx CanopyDeck (a deck a little wider than the room, on a great trunk with roots and struts, or on braced piles),
+  CanopyBridge (a corridor between huts is planks and rope rails, no walls) and CanopyLadder (down from every way in to the ground).
+- Saved games (livenWorld, life 19): every building already planned is planned again (its people and things placed again, secret ways found stay found),
+  then the districts it stands in. The party's spot in a building that has changed may need a step out of a wall: if it ever leaves anyone stuck,
+  that is where to look.
+- Stage 2, furniture to the curve (same day): in a round or oval room a piece for the wall, a corner or the far wall (shared/logic findSpot) stands
+  on the ring of squares inside the curve, its long side along the curve, the far wall's counter on the half away from the way in; a round shop's
+  sales floor has two or three aisles of its own shelving down the middle (planFor). The 3D map turns a piece round the curve to face the middle
+  (interiors/packs.ts facing, to the quarter), and draws a shelf, rack, cabinet or counter on the ring as an arc of the curve itself over the angle
+  its squares take (models.tsx CurvedPiece: back panel, shelves or a solid front and top, end panels), not the straight model. Test in
+  interiors/round.test.ts.
+- Not yet: gantries round round rooms (the kit's gantry_arc_r4 and ramp_arc_r4, gantryPlan, rampPlan: radius 4 pieces only), round tables, ring
+  benches and other curved models made in Mixar (stage 3: CurvedPiece is drawn in code meanwhile).

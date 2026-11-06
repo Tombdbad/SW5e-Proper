@@ -6169,3 +6169,73 @@ function buildSettlement(k: Kit, type: string, wall: string) {
   if (/camp/.test(type)) return buildBuilding(k, "camp", wall);
   domeOn(k, [0, 0, 0], 1.4, wall);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Curved pieces for a round room's ring (2026-11-06, the user: "curved shelving matching the room radius around the edge"): a shelf, rack, cabinet or
+// counter that stands on the ring of squares inside a round or oval room's curve (shared/logic findSpot) is drawn as an arc of the curve over the
+// angle its squares take up, instead of the straight piece: a back panel on the curve, three shelves (a counter: a solid front and a top), end panels.
+// Drawn in the room's frame (its north-west corner at the origin); an oval room's ellipse is the unit circle scaled to its two half widths.
+export const curvedKind = (name: string): "shelf" | "counter" | undefined =>
+  /counter|bar\b|desk/i.test(name) ? "counter" : /shelf|shelving|rack|cabinet|bookcase|curio|bin|bolts/i.test(name) ? "shelf" : undefined;
+// The angles the piece spans about the room's middle (radians, about +y from +x toward +z), or none when it is not on the ring
+export function ringSpan(a: { x: number; y: number; w: number; h: number }, width: number, height: number): [number, number] | undefined {
+  const cx = width / 2;
+  const cz = height / 2;
+  const corners = [[a.x, a.y], [a.x + a.w, a.y], [a.x, a.y + a.h], [a.x + a.w, a.y + a.h]].map(([x, z]) => Math.atan2(z - cz, x - cx));
+  const mid = Math.atan2(a.y + a.h / 2 - cz, a.x + a.w / 2 - cx);
+  const rel = corners.map((t) => Math.atan2(Math.sin(t - mid), Math.cos(t - mid)));
+  const lo = Math.min(...rel);
+  const hi = Math.max(...rel);
+  if (hi - lo > Math.PI * 0.9) return undefined;
+  return [mid + lo, mid + hi];
+}
+export function CurvedPiece({ kind, span, width, height, color, trim }: { kind: "shelf" | "counter"; span: [number, number]; width: number; height: number; color: string; trim: string }) {
+  const rx = width / 2;
+  const rz = height / 2;
+  const R = Math.min(rx, rz);
+  const depth = kind === "counter" ? 0.55 : 0.42;
+  // (from the curve's inside face, the wall's thickness in)
+  const outer = 1 - 0.1 / R;
+  const inner = 1 - (0.1 + depth) / R;
+  const tall = kind === "counter" ? 1.05 : 1.75;
+  const [t0, t1] = span;
+  // three.js measures a cylinder's theta from +z toward +x; the span is from +x toward +z
+  const thetaStart = Math.PI / 2 - t1;
+  const thetaLength = t1 - t0;
+  const geo = useMemo(() => {
+    const back = new THREE.CylinderGeometry(outer, outer, tall, 24, 1, true, thetaStart, thetaLength).translate(0, tall / 2, 0);
+    const parts: THREE.BufferGeometry[] = [back];
+    const board = (y: number, th: number) => {
+      const shape = new THREE.Shape();
+      const n = 24;
+      for (let i = 0; i <= n; i++) { const t = t0 + (i / n) * (t1 - t0); shape[i ? "lineTo" : "moveTo"](Math.cos(t) * outer, Math.sin(t) * outer); }
+      for (let i = n; i >= 0; i--) { const t = t0 + (i / n) * (t1 - t0); shape.lineTo(Math.cos(t) * inner, Math.sin(t) * inner); }
+      return new THREE.ExtrudeGeometry(shape, { depth: th, bevelEnabled: false }).rotateX(Math.PI / 2).translate(0, y + th, 0);
+    };
+    if (kind === "counter") {
+      parts.push(board(tall - 0.06, 0.06), new THREE.CylinderGeometry(inner, inner, tall - 0.06, 24, 1, true, thetaStart, thetaLength).translate(0, (tall - 0.06) / 2, 0));
+    } else {
+      for (const y of [0.05, 0.62, 1.18, tall - 0.04]) parts.push(board(y, 0.04));
+    }
+    // (an end panel at each end of the arc)
+    for (const t of [t0, t1]) {
+      const mid = (outer + inner) / 2;
+      // (in the unit circle's frame, so its thickness is 4 cm once scaled to the room)
+      parts.push(new THREE.BoxGeometry(0.04 / R, tall, outer - inner).rotateY(Math.PI / 2 - t).translate(Math.cos(t) * mid, tall / 2, Math.sin(t) * mid));
+    }
+    return mergeGeometries(parts.map((g) => g.toNonIndexed())) ?? undefined;
+  }, [kind, t0, t1, outer, inner, tall, R]);
+  return (
+    <group position={[rx, 0, rz]} scale={[rx, 1, rz]}>
+      <mesh geometry={geo} castShadow receiveShadow>
+        <meshStandardMaterial color={color} roughness={0.8} side={THREE.DoubleSide} />
+      </mesh>
+      {kind === "counter" && (
+        <mesh position={[0, 0.06, 0]}>
+          <cylinderGeometry args={[inner * 0.999, inner * 0.999, 0.12, 24, 1, true, thetaStart, thetaLength]} />
+          <meshStandardMaterial color={trim} roughness={0.5} metalness={0.4} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+    </group>
+  );
+}

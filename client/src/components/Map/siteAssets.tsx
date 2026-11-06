@@ -1693,3 +1693,139 @@ export function FishSchools({ ground, depth, count = 5, lite, round }: { ground:
     </instancedMesh>
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Tree and stilt villages (2026-11-06, the user: "I want the tree villages to REPLACE the standard square rooms on relevant planets (like Kashyyyk and
+// Endor)"; shared/logic canopyOf). A room of such a building stands `aloft` metres up: under it, drawn in the room's own frame (its north-west corner
+// at the origin, its floor at 0), a deck a little wider than its curve, and what carries the deck down to the ground: a great trunk with its roots
+// and four struts to the deck's rim in a tree village, piles and their bracing on a swamp's stilts. A corridor between two huts is a bridge: planks
+// and rope rails over the drop, no walls. The way in has a ladder down to the ground outside it.
+type CanopyKind = "tree" | "stilts";
+const PLANK = "#7a5a3a";
+const ROPE = "#b8a27a";
+function Cyl({ at, r0, r1, h, color, seg = 10 }: { at: V3; r0: number; r1: number; h: number; color: string; seg?: number }) {
+  return (
+    <mesh position={at} castShadow receiveShadow>
+      <cylinderGeometry args={[r1, r0, h, seg]} />
+      <meshStandardMaterial color={color} roughness={0.9} />
+    </mesh>
+  );
+}
+function Plank({ at, size, color = PLANK, turn = 0 }: { at: V3; size: V3; color?: string; turn?: number }) {
+  return (
+    <mesh position={at} rotation={[0, turn, 0]} castShadow receiveShadow>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color={color} roughness={0.85} />
+    </mesh>
+  );
+}
+// (a beam from one point to another, for struts, braces and the ladder's rails)
+function Beam({ from, to, thick, color }: { from: V3; to: V3; thick: number; color: string }) {
+  const a = new THREE.Vector3(...from);
+  const b = new THREE.Vector3(...to);
+  const mid = a.clone().add(b).multiplyScalar(0.5);
+  const len = a.distanceTo(b);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  return (
+    <mesh position={mid} quaternion={q} castShadow>
+      <boxGeometry args={[thick, len, thick]} />
+      <meshStandardMaterial color={color} roughness={0.9} />
+    </mesh>
+  );
+}
+export function CanopyDeck({ w, d, round, aloft, kind, biome }: { w: number; d: number; round: boolean; aloft: number; kind: CanopyKind; biome: string }) {
+  const bark = paletteOf(biome).bark;
+  const cx = w / 2;
+  const cz = d / 2;
+  const rx = w / 2 + 0.35;
+  const rz = d / 2 + 0.35;
+  const deck = round ? (
+    <mesh position={[cx, -0.2, cz]} scale={[rx, 1, rz]} receiveShadow castShadow>
+      <cylinderGeometry args={[1, 1, 0.34, 28]} />
+      <meshStandardMaterial color={PLANK} roughness={0.85} />
+    </mesh>
+  ) : (
+    <Plank at={[cx, -0.2, cz]} size={[w + 0.7, 0.34, d + 0.7]} />
+  );
+  const rim = (t: number): V3 => [cx + Math.cos(t) * (rx - 0.3), -0.37, cz + Math.sin(t) * (rz - 0.3)];
+  if (kind === "tree") {
+    const r = Math.min(1.35, 0.55 + Math.min(w, d) * 0.09);
+    return (
+      <group>
+        {deck}
+        <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={r * 1.12} r1={r * 0.92} h={aloft} color={bark} seg={12} />
+        {/* the roots splaying into the ground */}
+        <Cyl at={[cx, -aloft + 0.35, cz]} r0={r * 2.1} r1={r * 1.1} h={0.7} color={bark} seg={12} />
+        {/* the struts from the trunk to the deck's rim */}
+        {[0.4, 2.0, 3.55, 5.1].map((t, i) => (
+          <Beam key={i} from={[cx + Math.cos(t) * r * 0.9, -2.4, cz + Math.sin(t) * r * 0.9]} to={rim(t)} thick={0.22} color={bark} />
+        ))}
+      </group>
+    );
+  }
+  // (stilts: piles round the rim and one in the middle, braced in pairs)
+  const piles = [0, 1, 2, 3, 4, 5].map((i) => (i * Math.PI) / 3 + 0.3);
+  return (
+    <group>
+      {deck}
+      {piles.map((t, i) => <Cyl key={i} at={[rim(t)[0], -aloft / 2 - 0.2, rim(t)[2]]} r0={0.16} r1={0.13} h={aloft + 0.4} color={bark} seg={7} />)}
+      <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={0.22} r1={0.18} h={aloft + 0.4} color={bark} seg={8} />
+      {piles.map((t, i) => {
+        const u = piles[(i + 1) % piles.length];
+        return <Beam key={`b${i}`} from={[rim(t)[0], -aloft + 0.3, rim(t)[2]]} to={[rim(u)[0], -0.45, rim(u)[2]]} thick={0.09} color={bark} />;
+      })}
+    </group>
+  );
+}
+// A corridor between huts as a bridge: planks across its length, a rope rail along each long side on posts (it hangs between the decks: no posts down)
+export function CanopyBridge({ w, d, kind, biome }: { w: number; d: number; kind: CanopyKind; biome: string }) {
+  const along = w >= d ? "x" : "z";
+  const len = along === "x" ? w : d;
+  const span = along === "x" ? d : w;
+  const n = Math.max(2, Math.round(len / 0.32));
+  const bark = paletteOf(biome).bark;
+  const at = (u: number, v: number, y: number): V3 => (along === "x" ? [u, y, v] : [v, y, u]);
+  const sag = kind === "tree" ? 0.18 : 0.04;
+  const yAt = (u: number) => -sag * Math.sin((Math.PI * u) / len);
+  return (
+    <group>
+      {Array.from({ length: n }, (_, i) => {
+        const u = (i + 0.5) * (len / n);
+        return <Plank key={i} at={at(u, span / 2, yAt(u) + 0.04)} size={along === "x" ? [len / n - 0.04, 0.08, span - 0.1] : [span - 0.1, 0.08, len / n - 0.04]} />;
+      })}
+      {[0.06, span - 0.06].map((v, side) => (
+        <group key={side}>
+          {Array.from({ length: Math.max(2, Math.round(len / 1.2) + 1) }, (_, i, all) => {
+            const u = (i / (all.length - 1)) * len;
+            return <Beam key={i} from={at(u, v, yAt(u))} to={at(u, v, yAt(u) + 1.0)} thick={0.07} color={bark} />;
+          })}
+          {Array.from({ length: 8 }, (_, i) => {
+            const u0 = (i / 8) * len;
+            const u1 = ((i + 1) / 8) * len;
+            return <Beam key={`r${i}`} from={at(u0, v, yAt(u0) + 0.95)} to={at(u1, v, yAt(u1) + 0.95)} thick={0.04} color={ROPE} />;
+          })}
+        </group>
+      ))}
+    </group>
+  );
+}
+// A ladder from the floor of the way in down to the ground, outside its square on its side (`at`, `out`: the square's middle on the wall and the way out)
+export function CanopyLadder({ at, out, aloft, biome }: { at: [number, number]; out: [number, number]; aloft: number; biome: string }) {
+  const bark = paletteOf(biome).bark;
+  const x = at[0] + out[0] * 0.75;
+  const z = at[1] + out[1] * 0.75;
+  const across: [number, number] = [-out[1], out[0]];
+  const rails = [-0.28, 0.28].map((s) => [x + across[0] * s, z + across[1] * s] as [number, number]);
+  const rungs = Math.max(4, Math.floor(aloft / 0.32));
+  return (
+    <group>
+      {/* the landing outside the door */}
+      <Plank at={[at[0] + out[0] * 0.5, -0.1, at[1] + out[1] * 0.5]} size={out[0] ? [0.9, 0.16, 1.0] : [1.0, 0.16, 0.9]} />
+      {rails.map(([rx, rz], i) => <Beam key={i} from={[rx, -aloft, rz]} to={[rx, 0.9, rz]} thick={0.08} color={bark} />)}
+      {Array.from({ length: rungs }, (_, i) => {
+        const y = -aloft + (i + 0.5) * (aloft / rungs);
+        return <Beam key={`g${i}`} from={[rails[0][0], y, rails[0][1]]} to={[rails[1][0], y, rails[1][1]]} thick={0.05} color={PLANK} />;
+      })}
+    </group>
+  );
+}

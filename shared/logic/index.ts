@@ -1945,6 +1945,8 @@ export interface RoomLayout {
   well?: number;
   // A switchback drawn as a slope rather than steps (the ramps the pit fighters and their beasts come up into an arena by)
   ramp?: boolean;
+  // How far above the ground the building's floor stands, in metres (a tree village's huts on their platforms, a swamp's on stilts: canopyOf)
+  aloft?: number;
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -2002,7 +2004,11 @@ const planFor = (room: Area, buildingType: string): RoomPlan => {
   const plan = ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : named))!;
   // A shop shows its wares: pieces of its own line stand on its sales floor
   const wares = /sales floor|upgrade showroom/i.test(room.name) ? SHOP_WARES[buildingType] : undefined;
-  return wares ? { ...plan, items: [...plan.items, ...wares] } : plan;
+  // (a round shop has aisles of its shelving down the middle too, two or three rows of them, its shelves round the curve, 2026-11-06, the user:
+  // "Ailes of shelving in shops in the centre of the rooms, and curved shelving matching the room radius around the edge")
+  const shelf = wares && room.layout?.shape ? wares.find(([name, place]) => place === "wall" && /shelf|rack|cabinet/i.test(name)) : undefined;
+  const aisles: Furnishing[] = shelf ? [[shelf[0], "rows", "3x1", "2-3", shelf[4]]] : [];
+  return wares ? { ...plan, items: [...aisles, ...plan.items, ...wares] } : plan;
 };
 // What each kind of shop has on show (physical pieces on the floor, not only the stock a trader lists)
 const SHOP_WARES: Record<string, Furnishing[]> = {
@@ -2602,7 +2608,32 @@ function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number
   const options: { x: number; y: number; w: number; h: number }[] = [];
   const add = (x: number, y: number, ww: number, hh: number) => { if (!taken(x, y, ww, hh)) options.push({ x, y, w: ww, h: hh }); };
   const { width: W, height: H } = layout;
-  if (place === "corner") {
+  if (layout.shape && (place === "corner" || place === "wall" || place === "far")) {
+    // A round or oval room's wall is its curve (2026-11-06, the user: "curved shelving matching the room radius around the edge"): a piece for the wall
+    // or a corner stands on the ring of squares just inside the curve, its long side along the curve (across the line to the middle), a counter for the
+    // far wall on the half of the ring away from the way in; the 3D map turns it to face the middle (interiors/packs.ts facing)
+    const cx = W / 2;
+    const cy = H / 2;
+    const edge = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || !standsAt(layout, x, y);
+    const onRim = (x: number, y: number, ww: number, hh: number) => {
+      for (let j = y; j < y + hh; j++) for (let i = x; i < x + ww; i++) if (edge(i - 1, j) || edge(i + 1, j) || edge(i, j - 1) || edge(i, j + 1)) return true;
+      return false;
+    };
+    const far = (x: number, y: number, ww: number, hh: number) => {
+      if (place !== "far" || !awayFrom) return true;
+      const [px, py] = [x + ww / 2 - cx, y + hh / 2 - cy];
+      return awayFrom === "n" ? py > 0.5 : awayFrom === "s" ? py < -0.5 : awayFrom === "w" ? px > 0.5 : px < -0.5;
+    };
+    const long = Math.max(w, h);
+    const short = Math.min(w, h);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      // (along the curve: lying east-west where the middle is north or south of it, north-south where it is east or west)
+      const [px, py] = [x + 0.5 - cx, y + 0.5 - cy];
+      const [ww, hh] = Math.abs(py) * W >= Math.abs(px) * H ? [long, short] : [short, long];
+      if (x + ww <= W && y + hh <= H && onRim(x, y, ww, hh) && far(x, y, ww, hh)) add(x, y, ww, hh);
+    }
+    if (!options.length && place !== "far") for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (onRim(x, y, w, h)) add(x, y, w, h);
+  } else if (place === "corner") {
     for (const [x, y] of [[0, 0], [W - w, 0], [0, H - h], [W - w, H - h]]) add(x, y, w, h);
   } else if (place === "wall" || place === "far") {
     const sides: Side[] = place === "far" && awayFrom ? [OPPOSITE[awayFrom]] : ["n", "s", "e", "w"];
@@ -2954,7 +2985,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 18;
+export const LIFE = 19;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3152,6 +3183,60 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   }
   // More windows (life 18, 2026-11-03, the user: rooms by day were too dark, "more windows"): see moreWindows
   if ((next.life ?? 0) < 18) for (const building of Object.values(next.areas).filter((a) => a.kind === "building")) moreWindows(next, building);
+  // Round by default, tree and stilt villages (life 19, 2026-11-06, the user: round buildings "to REPLACE the VAST majority of old square buildings";
+  // asked about saved games: "Re-plan everything"): every building already planned is planned again with the new rules (its rooms, their people and
+  // what is in them kept, placed again; secret ways found stay found), then the districts they stand in, whose plots are the buildings' new sizes
+  if ((next.life ?? 0) < 19) {
+    const settlements = new Set<string>();
+    // (once for each building, tag "overhauled", should a world be livened from an older life again)
+    const due = Object.values(next.areas).filter((a) => a.kind === "building" && !a.tags.includes("overhauled") && childrenOf(next, a.id).some((room) => room.layout));
+    // What the districts made on and between them comes down first, as migrateSites does (the roofs, their stairs, the catwalks, the side entrances):
+    // the district plan puts them up again where the buildings now stand. Whoever stood on them goes to the building's way in.
+    const gone = new Set<string>();
+    const movedTo = new Map<string, string>();
+    for (const building of due) {
+      const rooms = childrenOf(next, building.id).filter((x) => x.kind === "room");
+      const hall = rooms.find((x) => x.gateway && !formOf(x)) ?? rooms.find((x) => !formOf(x));
+      for (const room of rooms) {
+        if ((formOf(room) === "roof" && room.name === "Roof") || room.name === "Stairs up to the roof" || (formOf(room) === "walkway" && /^Catwalk to /.test(room.name))) {
+          if (hall && room.occupants.length) hall.occupants.push(...room.occupants);
+          if (hall) movedTo.set(room.id, hall.id);
+          gone.add(room.id);
+          delete next.areas[room.id];
+          continue;
+        }
+        const side = room.layout?.assets.filter((x) => x.name === "Side entrance") ?? [];
+        if (side.length && room.layout) {
+          room.layout.assets = room.layout.assets.filter((x) => x.name !== "Side entrance");
+          if (!room.layout.assets.some((x) => x.kind === "exit")) room.gateway = false;
+        }
+      }
+    }
+    next.paths = next.paths.filter((p) => !gone.has(p.from) && !gone.has(p.to));
+    // (a day that took someone up to a roof takes them to the way in instead)
+    if (movedTo.size) for (const area of Object.values(next.areas)) for (const o of area.occupants ?? []) {
+      const rt = o.routine;
+      if (!rt) continue;
+      if (movedTo.has(rt.home)) rt.home = movedTo.get(rt.home)!;
+      for (const st of rt.stops) if (movedTo.has(st.at)) st.at = movedTo.get(st.at)!;
+      for (const v of rt.visits ?? []) if (movedTo.has(v.at)) v.at = movedTo.get(v.at)!;
+    }
+    for (const building of due) {
+      const found = new Set(childrenOf(next, building.id).filter((room) => room.secretEntry?.found).map((room) => room.id));
+      building.tags = [...building.tags.filter((t) => t !== "rounded"), "overhauled"];
+      planBuilding(next, building.id);
+      for (const room of childrenOf(next, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
+      const settlement = trailOf(next, building.id).find((a) => a.kind === "settlement");
+      if (settlement) settlements.add(settlement.id);
+    }
+    for (const id of settlements) {
+      for (const d of districtsOf(next, id)) {
+        if (!next.districtPlans?.[d.id]) continue;
+        delete next.districtPlans[d.id];
+        planDistrict(ctx, d);
+      }
+    }
+  }
   next.life = LIFE;
   return next;
 }
@@ -3356,7 +3441,11 @@ const OPEN_GROUNDS = ["landing field", "landing pad", "speeder platform"];
 // Buildings that may be round or oval when they are one room (see planBuilding): the towns' guard posts, a cantina
 // or a cookshop's round hall, the shops that are one room, and any hut, shrine or tower a world may add later
 // (more of them since 2026-10-30, the user: "We should try to have a greater number of circular/oval buildings")
-const ROUND_BUILDINGS = /^(arena|guardhouse|gatehouse|cantina|cookshop|pawnshop|curio shop|scrap dealer|hut|shrine|temple|chapel|tower|silo|cistern|observatory|dome|lighthouse|shelter|medcenter|archive|market|general store|apothecary|tech shop|outfitter|armsmith|residences|estates|manor house|palace|rooming house|gambling hall|command post|promenade|habitat ring|operations center|transit hub)$/i;
+// (2026-11-06, the user: "round buildings, rooms, and gantries to REPLACE the VAST majority of old square buildings (square buildings should be
+// RARE)"; asked which may stay square: "Hangars and warehouses, Slums and shanties". So every kind is round but these, the open grounds, the ground
+// hangars and the wild places)
+const SQUARE_BUILDINGS = /^(warehouse|refuelling depot|cargo hangar|public hangar|private hangar|royal hangar|shipyard|tenements|slum|shanty|shanties|shantytown|junkyard)$/i;
+const ROUND_BUILDINGS = { test: (type: string) => !SQUARE_BUILDINGS.test(type) && !OPEN_GROUNDS.includes(type) && !GROUND_HANGARS.includes(type) && !WILD_BUILDINGS.includes(type) };
 const UNDERGROUND = /cellar|basement|crypt|vault|hidden compartment|escape tunnel|detention|sewer|deep chamber/i;
 const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office|guest rooms|bedchambers/i;
 // Hangars that stand on the ground, with sliding doors in the roof, for ships to put down in (see SITES)
@@ -3398,15 +3487,16 @@ function linkRounds(world: World, building: Area, seed: number) {
   building.tags.push("rounded");
   const all = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
   const rooms = all.filter((a) => !a.tags.some((t) => t.startsWith("stack:") || t.startsWith("under:")) && !all.some((o) => o.tags.includes(`stack:${a.id}`) || o.tags.includes(`under:${a.id}`)));
-  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 6151 + 3);
-  // (on an ocean world, Kamino's way, every building is round, up to three of its rooms; elsewhere most have one, a large building two;
-  // an arena's floor is always round: the amphitheatre)
-  const ocean = trailOf(world, building.id).find((a) => a.kind === "planet")?.type === "ocean";
+  void seed;
+  // (an arena's floor is always round: the amphitheatre)
   const bowl = building.type === "arena" ? rooms.find((a) => /^arena floor$/i.test(a.name)) : undefined;
-  if (!rooms.length || (!bowl && !r.chance(ocean ? 1 : 0.85))) return;
-  const picked = bowl ? [bowl] : r.shuffle([...rooms]).slice(0, ocean ? 3 : rooms.length >= 5 ? 2 : 1);
+  // (2026-11-06, the overhaul: every room of it that is not a ship's bay or a stack's floor, not one or two: a building is round pods joined by
+  // corridors. The stacks are left to linkFloors; an ocean world's buildings, round three rooms at a time before, are now as round as any)
+  if (!rooms.length) return;
+  const picked = bowl ? [bowl] : rooms.filter((a) => !holdsShips(a));
   for (const room of picked) room.tags.push("round");
-  const levels = levelsOf(building, rooms);
+  // (the floors of all its rooms: a room with another stacked over it is not made round, but the door to it from a round one is split all the same)
+  const levels = levelsOf(building, all);
   const station = trailOf(world, building.id).some((a) => a.type === "station");
   for (const room of picked) for (const path of [...world.paths]) {
     if (path.kind !== "door") continue;
@@ -3875,7 +3965,37 @@ function planArena(world: World, building: Area, seed: number) {
 
 // Lays out every room of a building on one grid, sets doors, windows and a secret way in, and
 // furnishes and fills the rooms. The same building and seed give the same plan.
+// Tree and stilt villages (2026-11-06, the user: "I want the tree villages to REPLACE the standard square rooms on relevant planets (like Kashyyyk and
+// Endor)"; asked which: forest and jungle worlds, and swamps on stilts over the water). Every round kind of building of a settlement on such a world
+// stands aloft: its rooms are huts on platforms in the great trees (or on stilts), its corridors the bridges between them, a stair down at its way in.
+// The plan on the floor is the same as anywhere (the rooms, their doors and what is in them); only the height differs, and the 3D map draws the trees,
+// the decks, the bridges and the stair (LocalMap BuildingScene). The arena, the hangars and the square kinds stand on the ground.
+export type Canopy = "tree" | "stilts";
+export const CANOPY_ALOFT: Record<Canopy, number> = { tree: 6.4, stilts: 1.8 };
+export function canopyOf(world: World, buildingId: string): Canopy | undefined {
+  const building = world.areas[buildingId];
+  // (nor the gates in a town's wall, which stand in the wall on the ground)
+  if (!building || building.kind !== "building" || building.type === "arena" || /gate/.test(building.type) || !ROUND_BUILDINGS.test(building.type)) return undefined;
+  const trail = trailOf(world, buildingId);
+  if (!trail.some((a) => a.kind === "settlement") || trail.some((a) => a.type === "station")) return undefined;
+  const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
+  return biome === "forest" || biome === "jungle" ? "tree" : biome === "swamp" ? "stilts" : undefined;
+}
+
 export function planBuilding(world: World, buildingId: string, seed = world.seed): void {
+  planBuildingRooms(world, buildingId, seed);
+  setAloft(world, buildingId);
+}
+// (the rooms on the ground and up from it are set aloft, the roofs and catwalks the district adds too; a cellar dug under a hut stays where it is)
+function setAloft(world: World, buildingId: string) {
+  const canopy = canopyOf(world, buildingId);
+  for (const room of childrenOf(world, buildingId)) {
+    if (room.kind !== "room" || !room.layout) continue;
+    if (canopy && (room.layout.level ?? 0) >= 0) room.layout.aloft = CANOPY_ALOFT[canopy];
+    else delete room.layout.aloft;
+  }
+}
+function planBuildingRooms(world: World, buildingId: string, seed: number): void {
   const building = world.areas[buildingId];
   if (!building) return;
   if (building.type === "arena") return planArena(world, building, seed);
@@ -4142,8 +4262,11 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       }
       if (options.length) {
         touching = true;
-        // (the way into an arena's floor meets the middle of its side, where the curve stands)
-        if (/^arena floor$/i.test(room.name) || /^arena floor$/i.test(from.name)) {
+        // (the way into an arena's floor meets the middle of its side, where the curve stands; and since 2026-11-06, when round is the rule, so does
+        // every corridor or stair laid against a room to be made round, and every round room laid at the end of one: placed flush with a corner, as
+        // they were, most of them met only the squares the curve cuts away and the room stayed square)
+        const centred = (x: Area, y: Area) => x.tags.includes("round") && !formOf(x) && !!formOf(y);
+        if (/^arena floor$/i.test(room.name) || /^arena floor$/i.test(from.name) || centred(room, from) || centred(from, room)) {
           const gap = (spot: { x: number; y: number }) => (used === "e" || used === "w" ? Math.abs(spot.y + b.height / 2 - (a.y + a.height / 2)) : Math.abs(spot.x + b.width / 2 - (a.x + a.width / 2)));
           options.sort((p, q) => gap(p) - gap(q));
         }
@@ -4325,6 +4448,8 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         for (const other of real.filter((o) => seen.has(o.id) && o !== room && !tagId(o, "block"))) {
           // (on one floor, or one of them is a way between floors: a door never joins two floors)
           if (!formOf(room) && !formOf(other) && (room.layout!.level ?? 0) !== (other.layout!.level ?? 0)) continue;
+          // (nor straight from a round room to a plain one: round rooms are reached through corridors; a cut-off round one is squared below)
+          if (!formOf(room) && !formOf(other) && (room.layout!.shape || other.layout!.shape)) continue;
           const wall = sharedWall(room.layout!, other.layout!);
           if (!wall) continue;
           const [la, lb] = [room.layout!, other.layout!];
@@ -10514,6 +10639,11 @@ function roofStairs(world: World, building: Area, top: Area, roof: Area, all: Ar
 }
 
 export function planDistrict(ctx: Context, district: District): DistrictPlan | undefined {
+  const plan = planDistrictGround(ctx, district);
+  for (const id of district.buildingIds) setAloft(ctx.world, id);
+  return plan;
+}
+function planDistrictGround(ctx: Context, district: District): DistrictPlan | undefined {
   const { world } = ctx;
   const existing = world.districtPlans?.[district.id];
   if (existing) return existing;

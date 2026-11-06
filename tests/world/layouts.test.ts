@@ -162,6 +162,8 @@ test("the arena (2026-11-02, the user's design): tiers over a round floor (three
     const names = new Set(districtsOf(livened, s.id).map((d) => d.name));
     assert.deepEqual(districtsOf(old, s.id).map((d) => d.name).filter((n) => !names.has(n)), [], `${s.name} keeps its districts`);
   }
-  for (const [id, plan] of Object.entries(old.districtPlans ?? {})) assert.deepEqual(livened.districtPlans?.[id], plan, `the plan of ${id} is kept`);
+  // (since life 19, 2026-11-06, the user: saved games "Re-plan everything", a district whose buildings were planned is planned again with them, to
+  // their new round footprints: it is kept, not kept as it was)
+  for (const id of Object.keys(old.districtPlans ?? {})) assert.ok(livened.districtPlans?.[id], `the plan of ${id} is kept`);
   assert.ok(Object.values(world.areas).some((a) => a.type === "palace"), "the test world has a palace to keep");
 });
