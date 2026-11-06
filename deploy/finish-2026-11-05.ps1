@@ -62,6 +62,17 @@ try {
 } catch {
   Write-Host "`nSTOPPED: $_" -ForegroundColor Red
   if ((git rev-parse --abbrev-ref HEAD) -ne 'main') { git switch main | Out-Null }
+  # Put back the hand-copied files that were set aside (the ones main does not have), so that a stopped run can simply be run again
+  if ($backup -and (Test-Path -LiteralPath $backup)) {
+    foreach ($f in (Get-ChildItem -LiteralPath $backup -Recurse -File)) {
+      $rel = $f.FullName.Substring($backup.Length).TrimStart('\')
+      $target = Join-Path $Repo $rel
+      if (-not (Test-Path -LiteralPath $target)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath $f.FullName -Destination $target -Force
+      }
+    }
+  }
   Write-Host "main and the server are as they were. The log is $Log." -ForegroundColor Red
 }
 Stop-Transcript | Out-Null
