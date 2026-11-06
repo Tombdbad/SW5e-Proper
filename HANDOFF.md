@@ -37,7 +37,18 @@ Nothing of this was looked at in a browser. After the deploy, check: the gallery
 - tests/interiors/hair.test.ts: hair inside the test's ellipsoid (0.969 < 0.97); the hair is rooted on the real head now, which comes in to 0.94 of it,
   so the bound is 0.93. tsc passed on the PC. The user must run the finish script again; production is still the old main until it passes.
 
-## Next, in order
+## The overhaul the user asked for (2026-11-06 04:34), and their answers (AskUserQuestion)
+"I want the tree villages to REPLACE the standard square rooms on relevant planets ... round buildings, rooms, and gantries to REPLACE the VAST majority
+of old square buildings (square buildings should be RARE) ... furniture ... to respect these new circular buildings (aisles of shelving in shops in the
+centre of the rooms, and curved shelving matching the room radius around the edge) ... a FULL OVERHAUL of the way districts and rooms are procedurally
+generated. Consider we may need a new suite of interior meshes/assets."
+- Saved campaigns: RE-PLAN EVERYTHING (buildings already entered are rebuilt too; people, loot and furniture re-placed).
+- Tree villages on forest AND jungle worlds, and on swamp worlds on stilts over the water; they replace the settlement's ordinary buildings.
+- Square stays allowed only for hangars and warehouses, and slums and shanties.
+- Delivered in playable stages: 1 generator (round buildings, tree/stilt villages, re-plan), 2 furniture that fits the curves, 3 curved interior models (Mixar).
+  Each stage deployed with a finish script.
+
+## Next, in order (the overhaul first)
 1. The gantry form in the planner (round rooms now exist to hang it on): gantryPlan/rampPlan in interiors/architecture.ts, kit pieces in architecture.glb.
 2. Heads for Ithorian (a sphere), Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean (tools/blender/build-species.py, SPECIES_EXPORT).
 3. Look in a browser after the deploy: a square cantina's doorway (cut wall), a round medcenter, a close-up of a human face side-on, curly and messy hair.
