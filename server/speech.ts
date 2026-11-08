@@ -221,6 +221,40 @@ const alone = <T,>(job: () => Promise<T>): Promise<T> => {
   return next;
 };
 
+// Put a rendered line into the cache. Windows refuses a rename (EBUSY, EPERM) while another request is reading or has just written the
+// same file (the audit, 2026-11-08: 19 of 55 requests failed), so it is retried a few times; if the line is already cached by then, the
+// spare copy is dropped and the cached one is used.
+export async function placeCached(
+  tmp: string,
+  file: string,
+  io: { rename?: (from: string, to: string) => void; wait?: (ms: number) => Promise<unknown> } = {},
+): Promise<void> {
+  const rename = io.rename ?? fs.renameSync;
+  const wait = io.wait ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let last: unknown;
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(file)) {
+      fs.rmSync(tmp, { force: true });
+      return;
+    }
+    try {
+      rename(tmp, file);
+      return;
+    } catch (e) {
+      last = e;
+      await wait(25 * (i + 1));
+    }
+  }
+  if (fs.existsSync(file)) {
+    fs.rmSync(tmp, { force: true });
+    return;
+  }
+  fs.rmSync(tmp, { force: true });
+  throw last;
+}
+
+let tmpCount = 0;
+
 export function registerSpeechRoutes(app: Express) {
   // Warm the Windows voices while the server starts (PowerShell and WinRT take a second or two the first time)
   if (!piperReady()) setTimeout(() => void startWorker(), 2500);
@@ -244,9 +278,9 @@ export function registerSpeechRoutes(app: Express) {
       fs.mkdirSync(CACHE, { recursive: true });
       const file = path.join(CACHE, `${key}.wav`);
       if (!fs.existsSync(file)) {
-        const tmp = `${file}.${process.pid}.tmp.wav`;
+        const tmp = `${file}.${process.pid}.${++tmpCount}.tmp.wav`;
         await alone(() => (engine === "piper" ? speakPiper(text, Math.max(0, Math.floor(Number(name.replace(/^piper:/, "")) || 0)), rate, tmp) : speakWindows(text, name, rate, pitch, tmp)));
-        fs.renameSync(tmp, file);
+        await placeCached(tmp, file);
       }
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("Cache-Control", "private, max-age=86400");
