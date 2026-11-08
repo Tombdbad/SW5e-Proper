@@ -2041,6 +2041,31 @@ export default function GameBoard() {
     toast.success(`${name}: ${on ? (kind === "weapon" ? "in hand" : "on") : kind === "weapon" ? "put away" : "taken off"}${change ? `; armor class ${change > 0 ? "+" : ""}${change}` : ""}.`);
   };
 
+  // Throw one of an item away (the audit, T-029: there was no way to). The last of a worn weapon or armor comes off with it, and a hidden
+  // copy that is no longer there is not counted as hidden. One save, so the three changes do not lose one another.
+  const dropItem = (name: string) => {
+    if (!character) return;
+    const equipment: string[] = [...(character.equipment ?? [])];
+    const at = equipment.indexOf(name);
+    if (at < 0) return;
+    equipment.splice(at, 1);
+    const changes: Record<string, any> = { equipment };
+    if (!equipment.includes(name)) {
+      const now = equippedNow(character);
+      const lower = name.toLowerCase();
+      if (now.weapons.some((n) => n.toLowerCase() === lower) || now.body === name || now.shield === name) {
+        const next: Equipped = { weapons: now.weapons.filter((n) => n.toLowerCase() !== lower), body: now.body === name ? null : now.body, shield: now.shield === name ? null : now.shield };
+        const change = derivedStats({ ...character, armor: next }).armorClass - derivedStats(character).armorClass;
+        changes.armor = next;
+        changes.armorClass = Math.max(0, (rawCharacter.armorClass ?? 10) + change);
+      }
+    }
+    const kept = equipment.filter((n) => n === name).length;
+    if ((play.hidden?.[name] ?? 0) > kept) changes.playState = { ...play, hidden: { ...play.hidden, [name]: kept } };
+    saveCharacter(changes);
+    toast.success(`${name} dropped.`);
+  };
+
   // The ranged weapon's ammunition (shared/logic gear.ts): what feeds it, the rounds carried, what each does, the shots left in it, and
   // whether an ammo pouch, power belt, bandolier, quiver or feed belt reloads it for free
   const ammoKit = (w?: { name: string; properties: string[] }) => {
@@ -7002,6 +7027,8 @@ export default function GameBoard() {
 
   // What an item can do, under its row in the inventory
   const [using, setUsing] = useState<string | null>(null);
+  // The item whose Drop was tapped once (a second tap throws it away)
+  const [dropAsk, setDropAsk] = useState<string | null>(null);
   // Which kind of thing the Inventory tab lists
   const [invTab, setInvTab] = useState<"all" | "weapons" | "armor" | "gear" | "ships" | "speeders">("all");
   // The plain item whose modification slots are open, and the droid companion being customized
@@ -10164,6 +10191,9 @@ export default function GameBoard() {
                                     {use.kind === "tool" ? "Tool" : use.kind === "game" ? "Game" : use.kind === "instrument" ? "Play" : "Use"}
                                   </Button>
                                 )}
+                                <Button size="sm" variant={dropAsk === name ? "destructive" : "outline"} className="h-6 px-2" disabled={inCombat || dead} data-testid={`drop-${name}`} onClick={() => (dropAsk === name ? (setDropAsk(null), dropItem(name)) : setDropAsk(name))} onBlur={() => setDropAsk((a) => (a === name ? null : a))}>
+                                  {dropAsk === name ? "Drop it?" : "Drop"}
+                                </Button>
                               </div>
                               {enhanced && (
                                 <p className="text-xs text-gray-400" data-testid={`item-effects-${name}`}>
