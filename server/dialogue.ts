@@ -140,6 +140,8 @@ export function chatterLine(text: string, name: string): string {
 }
 let chatting = false;
 let playerWaiting = 0;
+// The chatter in progress: a player's request cuts off the line it is making (T-022: the player waited behind it, 10 s and more, for the model's one slot)
+let chatterStop: AbortController | null = null;
 
 let primed = false;
 let primedAt = 0;
@@ -232,6 +234,7 @@ export function registerDialogueRoutes(app: Express) {
     const send = (o: object) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
 
     playerWaiting++;
+    chatterStop?.abort();
     let counted = true;
     const started = () => { if (counted) { counted = false; playerWaiting--; } };
     try {
@@ -299,6 +302,7 @@ export function registerDialogueRoutes(app: Express) {
     const turns = Math.max(2, Math.min(4, Number(b.turns) || 3));
     const scene = `${clip(b.scene, 200)} Small talk in passing: reply with ONE short sentence, 15 words at most, mostly of your own lives and what is between you two.`;
     const stop = new AbortController();
+    chatterStop = stop;
     res.on("close", () => stop.abort());
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -337,6 +341,7 @@ export function registerDialogueRoutes(app: Express) {
       if (!stop.signal.aborted) send({ error: e?.message === "fetch failed" ? "The dialogue model is not running (is Ollama started?)." : String(e?.message ?? e) });
     } finally {
       chatting = false;
+      if (chatterStop === stop) chatterStop = null;
       res.end();
     }
   });

@@ -15,6 +15,8 @@ const seen: Seen[] = [];
 let reply = ["Rook, bay nine. ", "[sighs heavily] *shrugs* ", "Don't be late."];
 let transcript = " \"Where is the cantina?\" ";
 let fake: http.Server;
+let slowSeen = 0;
+let slowClosed = 0;
 let app: http.Server;
 let api = "";
 
@@ -28,6 +30,13 @@ before(async () => {
       const body = raw ? JSON.parse(raw) : {};
       seen.push({ url: `${req.method} ${req.url}`, body });
       if (req.url === "/api/tags") return void res.end(JSON.stringify({ models: [{ name: "fake-model:latest" }] }));
+      // a chatter line (its card says "Small talk") takes two seconds, and notes when the server hangs up on it
+      if (req.url === "/api/chat" && String(body.messages?.[1]?.content ?? "").includes("Small talk")) {
+        slowSeen++;
+        const t = setTimeout(() => res.end(JSON.stringify({ message: { content: "Fine weather." }, done: true })), 2000);
+        res.on("close", () => { if (!res.writableEnded) { slowClosed++; clearTimeout(t); } });
+        return;
+      }
       if (req.url === "/api/chat" && !body.stream) {
         // the prime (a system message alone) and speech to text (a user message with audio)
         const stt = body.messages?.some((m: any) => m.images);
@@ -119,6 +128,23 @@ test("POST /api/dialogue streams {delta} lines and ends with {done, text}, the t
   assert.equal(chat[0].body.model, "fake-model");
   assert.equal(chat[0].body.messages[0].role, "system");
   assert.match(chat[0].body.messages[1].content, /PLAYER SAYS: "Which berth is the Lark in\?"/);
+});
+
+test("a player's reply does not wait for a line of background chatter: the chatter is cut off", async () => {
+  slowSeen = 0;
+  slowClosed = 0;
+  const people = { a: { name: "Hessa", role: "clerk" }, b: { name: "Rook", role: "porter" }, scene: "A quay.", turns: 3 };
+  const chatter = post("/api/chatter", people).then((r) => r.text());
+  for (let i = 0; i < 40 && !slowSeen; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(slowSeen, 1, "the chatter line is being made");
+  const t0 = Date.now();
+  const rows = (await (await post("/api/dialogue", talk)).text()).trim().split("\n").map((l) => JSON.parse(l));
+  const took = Date.now() - t0;
+  assert.equal(rows[rows.length - 1].done, true);
+  assert.ok(took < 1500, `the reply waited ${took} ms behind the chatter line`);
+  assert.equal(slowClosed, 1, "the server hung up on the chatter line");
+  await chatter;
+  assert.equal(slowSeen, 1, "no further chatter line was started");
 });
 
 test("POST /api/stt: the transcript, empty for silence, 400 without audio", async () => {
