@@ -6,6 +6,8 @@ import { useShoot, type ShootKey } from "./shoot";
 
 const base: React.CSSProperties = { borderRadius: 40, border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 12px sans-serif", pointerEvents: "auto", touchAction: "none", userSelect: "none", cursor: "pointer" };
 const fresh = (at: number, ms: number) => at > 0 && performance.now() - at < ms;
+// A touch screen has no keys: the [G] [Z] [T] hints are for a keyboard only (T-007)
+const touch = () => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
 export function ShooterHud() {
   const hud = useShoot((s) => s.hud);
@@ -29,7 +31,7 @@ export function ShooterHud() {
           {[45, -45].map((a) => <div key={a} style={{ position: "absolute", left: -11, top: -1, width: 22, height: 2, background: marker, transform: `rotate(${a}deg)`, boxShadow: "0 0 2px #000" }} />)}
         </div>
       )}
-      <div style={{ position: "absolute", left: 14, top: 44, width: 190 }} data-testid="shooter-vitals">
+      <div style={{ position: "absolute", left: 14, top: 44, width: touch() ? 125 : 190 }} data-testid="shooter-vitals">
         <div style={{ height: 10, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 5, overflow: "hidden" }}>
           <div style={{ width: `${hp * 100}%`, height: "100%", background: hp > 0.5 ? "#4ade80" : hp > 0.25 ? "#facc15" : "#ef4444" }} />
         </div>
@@ -80,7 +82,8 @@ export function ShooterHud() {
           <div style={{ position: "absolute", left: -26, top: -170, width: 52, height: 8, borderRadius: 6, background: "rgba(251,191,36,0.85)", boxShadow: "0 0 6px #000" }} />
         </div>
       ))}
-      <div style={{ position: "absolute", left: "50%", bottom: 150, transform: "translateX(-50%)", textAlign: "center", minWidth: 180 }} data-testid="shooter-ammo">
+      {/* on a phone the ammo sits at the left under the hit points, clear of the buttons and the middle of the view */}
+      <div style={touch() ? { position: "absolute", left: 14, top: 100, maxWidth: 125 } : { position: "absolute", left: "50%", bottom: 150, transform: "translateX(-50%)", textAlign: "center", minWidth: 180 }} data-testid="shooter-ammo">
         {hud.weapon === "gun" && hud.hasGun ? (
           <>
             <div>{hud.gun}{hud.optic ? <span style={{ fontSize: 11, opacity: 0.8 }}> · {hud.optic} ×{hud.scope}</span> : null}{hud.ads > 0.9 ? <span style={{ fontSize: 11, color: "#a7f3d0" }}> · aimed</span> : null}</div>
@@ -89,10 +92,10 @@ export function ShooterHud() {
         ) : (
           <div>{hud.saber ? "Lightsaber" : "Blade"} {hud.blocking ? "· guarding" : ""}</div>
         )}
-        {hud.grenades > 0 && <div style={{ fontSize: 12 }}>Grenades ×{hud.grenades}: {hud.grenade} next <span style={{ opacity: 0.7 }}>[G]</span></div>}
-        {hud.item && (
+        {hud.grenades > 0 && !touch() && <div style={{ fontSize: 12 }}>Grenades ×{hud.grenades}: {hud.grenade} next{touch() ? null : <span style={{ opacity: 0.7 }}> [G]</span>}</div>}
+        {hud.item && !touch() && (
           <div style={{ fontSize: 12 }} data-testid="shooter-item">
-            {hud.item} ×{hud.items} <span style={{ opacity: 0.7 }}>[Z]{hud.belt > 1 ? ` · ${hud.belt} on the belt [T]` : ""}</span>
+            {hud.item} ×{hud.items}{touch() ? (hud.belt > 1 ? ` · ${hud.belt} on the belt` : "") : <span style={{ opacity: 0.7 }}> [Z]{hud.belt > 1 ? ` · ${hud.belt} on the belt [T]` : ""}</span>}
           </div>
         )}
         {hud.note && <div style={{ fontSize: 12, color: "#fde68a" }}>{hud.note}</div>}
@@ -111,26 +114,29 @@ export function ShootButtons() {
     onPointerCancel: () => useShoot.getState().up(key),
     onLostPointerCapture: () => useShoot.getState().up(key),
   });
+  // on a phone the small buttons are smaller still, so that a tall stack of them fits the view in two or three columns
+  const sec: React.CSSProperties = touch() ? { width: 58, height: 30, padding: 0, font: "600 10px sans-serif" } : {};
   return (
-    <div style={{ position: "absolute", right: 14, bottom: 176, display: "flex", flexDirection: "column-reverse", alignItems: "flex-end", gap: 6, pointerEvents: "none" }} data-testid="shoot-buttons">
+    // top: 64 keeps the column under the compass; a column too tall for the view carries on in a second one to its left (T-007)
+    <div style={{ position: "absolute", right: 14, bottom: 176, top: 64, display: "flex", flexDirection: "column-reverse", flexWrap: "wrap-reverse", alignContent: "flex-start", alignItems: "flex-end", gap: 6, pointerEvents: "none" }} data-testid="shoot-buttons">
       <button data-testid="fire-button" {...hold("fire")} style={{ ...base, width: 80, height: 80, background: "rgba(239,68,68,0.55)", font: "700 14px sans-serif" }}>{hud.weapon === "blade" ? "Swing" : "Fire"}</button>
-      {hud.grenades > 0 && <button data-testid="grenade-button" {...hold("grenade")} style={{ ...base, width: 70, height: 40, background: "rgba(163,230,53,0.45)" }}>Grenade</button>}
+      {hud.grenades > 0 && <button data-testid="grenade-button" {...hold("grenade")} style={{ ...base, width: 70, height: 40, ...sec, background: "rgba(163,230,53,0.45)" }}>{touch() ? `Grenade ×${hud.grenades}` : "Grenade"}</button>}
       {hud.item && (
         <div style={{ display: "flex", gap: 4 }}>
-          {hud.belt > 1 && <button data-testid="next-item-button" {...hold("next")} style={{ ...base, width: 32, height: 40, background: "rgba(255,255,255,0.2)" }}>›</button>}
-          <button data-testid="item-button" {...hold("item")} style={{ ...base, width: 70, height: 40, background: "rgba(74,222,128,0.4)", font: "600 10px sans-serif" }}>{hud.item.length > 12 ? `${hud.item.slice(0, 11)}…` : hud.item}</button>
+          {hud.belt > 1 && <button data-testid="next-item-button" {...hold("next")} style={{ ...base, width: touch() ? 24 : 32, height: 40, padding: 0, ...(sec.height ? { height: sec.height } : {}), background: "rgba(255,255,255,0.2)" }}>›</button>}
+          <button data-testid="item-button" {...hold("item")} style={{ ...base, width: 70, height: 40, ...sec, background: "rgba(74,222,128,0.4)", font: "600 10px sans-serif" }}>{touch() ? `${hud.item.length > 7 ? `${hud.item.slice(0, 6)}…` : hud.item} ×${hud.items}` : hud.item.length > 12 ? `${hud.item.slice(0, 11)}…` : hud.item}</button>
         </div>
       )}
-      {hud.hasGun && hud.weapon === "gun" && <button data-testid="aim-button" {...hold("aim")} style={{ ...base, width: 70, height: 40, background: hud.ads > 0.5 ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.2)" }}>{hud.scope ? `Aim ×${hud.scope}` : "Aim"}</button>}
-      {hud.hasGun && <button data-testid="reload-button" {...hold("reload")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>Reload</button>}
-      {hud.hasGun && hud.hasBlade && <button data-testid="swap-button" {...hold("swap")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>{hud.weapon === "gun" ? "Saber" : "Gun"}</button>}
-      {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, background: "rgba(56,189,248,0.45)" }}>Guard</button>}
-      <button data-testid="crouch-button" {...hold("crouch")} style={{ ...base, width: 70, height: 40, background: hud.crouching ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.2)" }}>Crouch</button>
+      {hud.hasGun && hud.weapon === "gun" && <button data-testid="aim-button" {...hold("aim")} style={{ ...base, width: 70, height: 40, ...sec, background: hud.ads > 0.5 ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.2)" }}>{hud.scope ? `Aim ×${hud.scope}` : "Aim"}</button>}
+      {hud.hasGun && <button data-testid="reload-button" {...hold("reload")} style={{ ...base, width: 70, height: 40, ...sec, background: "rgba(255,255,255,0.2)" }}>Reload</button>}
+      {hud.hasGun && hud.hasBlade && <button data-testid="swap-button" {...hold("swap")} style={{ ...base, width: 70, height: 40, ...sec, background: "rgba(255,255,255,0.2)" }}>{hud.weapon === "gun" ? "Saber" : "Gun"}</button>}
+      {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, ...sec, background: "rgba(56,189,248,0.45)" }}>Guard</button>}
+      <button data-testid="crouch-button" {...hold("crouch")} style={{ ...base, width: 70, height: 40, ...sec, background: hud.crouching ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.2)" }}>Crouch</button>
       {hud.powers.map((w, i) => (
-        <button key={`${w.name}-${i}`} data-testid={`power-button-${i}`} {...hold(`power${i}` as ShootKey)} style={{ ...base, width: 70, height: 34, opacity: w.ready ? 1 : 0.5, background: "rgba(167,139,250,0.5)", font: "600 10px sans-serif" }}>{w.name.length > 12 ? `${w.name.slice(0, 11)}…` : w.name}</button>
+        <button key={`${w.name}-${i}`} data-testid={`power-button-${i}`} {...hold(`power${i}` as ShootKey)} style={{ ...base, width: 70, height: 34, ...sec, opacity: w.ready ? 1 : 0.5, background: "rgba(167,139,250,0.5)", font: "600 10px sans-serif" }}>{w.name.length > 12 ? `${w.name.slice(0, 11)}…` : w.name}</button>
       ))}
-      {hud.pages > 1 && <button data-testid="power-page-button" {...hold("page")} style={{ ...base, width: 70, height: 30, background: "rgba(167,139,250,0.3)", font: "600 10px sans-serif" }}>Powers {hud.page + 1}/{hud.pages}</button>}
-      <button data-testid="zoom-button" {...hold("zoom")} style={{ ...base, width: 70, height: 30, background: hud.zoom ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.15)", font: "600 10px sans-serif" }}>Zoom</button>
+      {hud.pages > 1 && <button data-testid="power-page-button" {...hold("page")} style={{ ...base, width: 70, height: 30, ...sec, background: "rgba(167,139,250,0.3)", font: "600 10px sans-serif" }}>Powers {hud.page + 1}/{hud.pages}</button>}
+      <button data-testid="zoom-button" {...hold("zoom")} style={{ ...base, width: 70, height: 30, ...sec, background: hud.zoom ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.15)", font: "600 10px sans-serif" }}>Zoom</button>
     </div>
   );
 }
