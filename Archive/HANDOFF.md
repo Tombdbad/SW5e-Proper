@@ -14,7 +14,7 @@ Checks after Batch 3: `tsc --noEmit` clean; `vite build` to a scratch folder 0 w
 
 ## Done after Batch 4 (TRIAGE section 12): T-002 Tailscale only, T-001 backup script (nightly task not registered), T-005 stays in Archive, T-045 Bandstand fallback (+ orphan walkway/ladder removal). Not pushed; production is the old build.
 
-T-014 fixed (section 13): archetype caster tables. T-019 waits for the user (show the Downtime tab to everyone? it was hidden on purpose). Phase 8 fact-check (08_factcheck.md) is next: it wants a fresh session.
+T-014 fixed (section 13): archetype caster tables. T-019 decided: the Downtime tab stays hidden (no change). The Phase 8 fact-check runs in its own session (audit-phase-8-independen); read AUDIT/08_factcheck_2026-11-08.md when it is done.
 
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
