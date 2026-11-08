@@ -15,7 +15,7 @@ Checks after Batch 3: `tsc --noEmit` clean; `vite build` to a scratch folder 0 w
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
 2. Batches 4 to 6 as in `AUDIT/TRIAGE.md` section 2. Run `08_factcheck.md` on one or two fixed items.
-3. T-043 and T-044 (e2e steps that fail), then Batch 5 (decisions first). Run the e2e with TIMEOUT=90000 and NOT with windows-start.ps1 -Mode test (it stops production on 5000). Clean sw5e_test first with e2e/audit/99_cleanup.mjs.
+3. T-043 and T-044 are done (the 9 failing e2e steps were stale tests, fixed in e2e/play.mjs, commit after 5751798; see TRIAGE section 11); a full 90-step run after the fixes has not been made. T-045 (new): a main bar with a stairwell has no Bandstand (generator; your decision). Then Batch 5 (decisions first). Run the e2e with TIMEOUT=90000 and NOT with windows-start.ps1 -Mode test (it stops production on 5000). Clean sw5e_test first with e2e/audit/99_cleanup.mjs.
 4. Still open from Batch 3: T-007's floating exit label ("Passage down to Winding tunnel!") is wider than a phone screen (3D text; not found where it is drawn: not `Label` in LocalMap, or not only).
 
 ## Learned
