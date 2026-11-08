@@ -1098,15 +1098,16 @@ function multiattackOf(text: string, attacks: StatAttack[]): string[] | undefine
 // one target. Hit: 24 (4d8 + 6) kinetic damage."
 function attackFrom(b: NonNullable<Sw5eMonster["behaviors"]>[number]): StatAttack | undefined {
   const text = b.description ?? "";
-  const hit = text.split(/Hit:/i)[1] ?? "";
+  // ("Hit:" as the books have it; some stat blocks write "Hit 3 (1d4 + 2)" or "hit 12 (2d6+5)", and "Attack +9" with no colon)
+  const hit = text.split(/\bHit(?::|\s+(?=\d))/i)[1] ?? "";
   const typed = (b.attackType === "MeleeWeapon" || b.attackType === "RangedWeapon") && !!b.damageRoll;
-  const written = text.match(/\b(melee|ranged)(?: or (?:melee|ranged))? (?:weapon|power|spell|tech|force) attack:\s*\+?(\d+) to hit/i);
+  const written = text.match(/\b(melee|ranged)(?: or (?:melee|ranged))? (?:weapon|power|spell|tech|force) attack:?\s*\+?(\d+) to hit/i);
   if (!typed && !written) return undefined;
   const damage = typed ? { dice: b.damageRoll!, type: b.damageType } : hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i")) && { dice: hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i"))![1], type: hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i"))![2] };
   if (!damage) return undefined;
   const ranged = typed ? b.attackType === "RangedWeapon" : /^ranged/i.test(written![1]);
   const feet = attackRange(typed ? b.range : text.match(/(?:reach|range) [^,]*ft/i)?.[0]);
-  const extra = hit.match(new RegExp(`(?:plus|and|an extra|additional)\\s+(?:an extra |an additional )?\\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
+  const extra = hit.match(new RegExp(`(?:plus|and|&|an extra|additional)\\s+(?:an extra |an additional )?\\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
   const save = saveIn(hit);
   const held = hit.match(/target is grappled \(escape DC (\d+)\)/i);
   const grapple = held ? { dc: Number(held[1]), ...(hit.match(/if it is (tiny|small|medium|large|huge|gargantuan) or smaller/i) ? { maxSize: hit.match(/if it is (tiny|small|medium|large|huge|gargantuan) or smaller/i)![1].replace(/^./, (c) => c.toUpperCase()) } : {}), ...(/(?:until|while) (?:this|the) grapple[^.]*restrained|grappled and restrained|restrained until/i.test(hit) ? { restrains: true } : {}) } : undefined;
@@ -1124,14 +1125,24 @@ function attackFrom(b: NonNullable<Sw5eMonster["behaviors"]>[number]): StatAttac
   };
 }
 
+// A stat block (the Voxyn) that wrote its attacks inside its Multiattack entry: "Bite. Melee Weapon Attack: +9 to hit, ... Tail. Melee Weapon
+// Attack: ...". Each is read as an attack of its own, up to the next one's name.
+function embeddedAttacks(b: NonNullable<Sw5eMonster["behaviors"]>[number]): NonNullable<Sw5eMonster["behaviors"]> {
+  const text = b.description ?? "";
+  const heads = [...text.matchAll(/(?:^|\s)([A-Z][a-z]+(?: [A-Z][a-z]+)*)\.\s+(?=(?:Melee|Ranged)(?: or (?:Melee|Ranged))? (?:Weapon|Power) Attack)/g)];
+  return heads.map((m, i) => ({ ...b, name: m[1], attackType: "None", damageRoll: undefined, description: text.slice(m.index! + m[0].length, heads[i + 1]?.index ?? text.length) }));
+}
+
 // The stat block's fighting profile
 export function statProfile(monster: Sw5eMonster): StatProfile {
   const behaviors = monster.behaviors ?? [];
   const attacks: StatAttack[] = [];
   for (const b of behaviors) {
-    if (b.monsterBehaviorType !== "Action" || /^multiattack/i.test(b.name)) continue;
-    const attack = attackFrom(b);
-    if (attack && !attacks.some((a) => a.name === attack.name)) attacks.push(attack);
+    if (b.monsterBehaviorType !== "Action") continue;
+    for (const one of /^multiattack/i.test(b.name) ? embeddedAttacks(b) : [b]) {
+      const attack = attackFrom(one);
+      if (attack && !attacks.some((a) => a.name === attack.name)) attacks.push(attack);
+    }
   }
   const specials: StatSpecial[] = [];
   const traits: StatTrait[] = [];
