@@ -374,7 +374,7 @@ export default function CharacterCreation() {
             )}
 
             <Tab.Group selectedIndex={currentTab} onChange={setCurrentTab}>
-              <Tab.List className="flex space-x-1 bg-gray-800 bg-opacity-50 p-1 rounded-lg overflow-x-auto">
+              <Tab.List className="flex space-x-1 bg-gray-800 bg-opacity-50 p-1 rounded-lg flex-wrap gap-y-1" data-testid="creation-tabs">
                 {tabs.map((tab) => (
                   <Tab
                     key={tab.name}
