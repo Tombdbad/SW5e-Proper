@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
+import { uniqueKeys } from "@/lib/uniqueKeys";
 import { useCoop, type Peer } from "@/lib/coop";
 import type { Pet } from "@shared/logic/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
@@ -1392,6 +1393,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // The wall line round the room (straight sides, a quarter circle at each rounded corner: shared/logic footprint `outline`), where each
   // door, way out and window stands on it (on the curve of a round room), and the wall that is left round them: straight runs and arcs
   const wallLine = useMemo(() => outline(width, height, [nw, ne, se, sw]), [width, height, nw, ne, se, sw]);
+  // (asset ids can repeat in a room, so the keys are made unique: React warned of twins 50 to 111 times in a fight, T-004)
+  const keyOf = useMemo(() => { const keys = uniqueKeys(assets); return new Map(assets.map((a, i) => [a, keys[i]] as const)); }, [assets]);
   const setIn = useMemo(() => assets.filter((a) => a.side).map((a) => meets.map((m) => m.place(a)).find(Boolean) ?? wayPlace(wallLine, width, height, a)), [assets, wallLine, meets]);
   // (a stretch against a round room has no wall of its own: the round room's curve is the wall there)
   const onLine = (side: FootSide, u: number) => {
@@ -1546,12 +1549,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => (walls || p.a.kind !== "window") && !p.a.seam).map(({ a, at, turn, bend }) => (
-        <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
+        <group key={keyOf.get(a) ?? a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
           <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
-        <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
+        <Glide key={keyOf.get(a) ?? a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             // (a round tower's spiral: drawn from its way up, over both halves of its 2 by 2 squares; on the top floor, the well it comes up through)
             : a.kind === "stairs" && a.name === `${SPIRAL} up` ? <group position={[1, 0, 1]}><SpiralStair up={LEVEL_H} /></group>
