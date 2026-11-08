@@ -2685,7 +2685,9 @@ export function furnishRoom(room: Area, r: Random, buildingType: string) {
     for (let i = 0, wanted = range(count, r); i < wanted; i++) {
       // (an arena's pit is in the very middle of its floor)
       const middle = name === "Fighting pit" ? { x: Math.floor((layout.width - w) / 2), y: Math.floor((layout.height - h) / 2), w, h } : undefined;
-      const spot = middle && !layout.assets.some((a) => a.x < middle.x + w && middle.x < a.x + a.w && a.y < middle.y + h && middle.y < a.y + a.h) ? middle : findSpot(layout, r, place, w, h, wayIn);
+      const spot = middle && !layout.assets.some((a) => a.x < middle.x + w && middle.x < a.x + a.w && a.y < middle.y + h && middle.y < a.y + a.h) ? middle : findSpot(layout, r, place, w, h, wayIn)
+        // (a band's stage that finds no 3x2 corner takes a smaller one: audit T-045, the same fallback as `livenWorld`)
+        ?? (name === "Bandstand" ? findSpot(layout, r, "corner", 2, 2, wayIn) ?? findSpot(layout, r, "wall", 2, 1, wayIn) : undefined);
       if (!spot) break;
       const asset: RoomAsset = { id: `${room.id}-${++n}`, kind: "furniture", name, ...spot, ...(flags.includes("b") ? { blocks: true } : {}), ...(flags.includes("c") ? { cover: true } : {}) };
       layout.assets.push(asset);
@@ -4718,6 +4720,12 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: spot.x, y: lg.y - lh.y + lg.height, w: 1, h: 2, blocks: true, toward: "n", ref: path.id, to: gallery.id });
       lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: spot.x - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
     }
+  }
+  // An elevated walkway or an outside ladder whose doors could not be laid out (their passages dropped above) leads nowhere: it goes (audit T-045)
+  for (const room of [...rooms]) {
+    if (!["walkway", "ladder"].includes(formOf(room) ?? "") || world.paths.some((p) => p.from === room.id || p.to === room.id)) continue;
+    delete world.areas[room.id];
+    rooms.splice(rooms.indexOf(room), 1);
   }
   joinStranded();
   syncColumns();

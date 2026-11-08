@@ -12,6 +12,8 @@ Checks after Batch 3: `tsc --noEmit` clean; `vite build` to a scratch folder 0 w
 ## Running
 - Nothing left running (test server on 5099 stopped). Start it: `DATABASE_URL=<sw5e_test url> PORT=5099 VITE_TEST_MENU=1 npx tsx server/index.ts`, then `BASE=http://127.0.0.1:5099 node e2e/audit/<flow>.mjs`.
 
+## Done after Batch 4 (TRIAGE section 12): T-002 Tailscale only, T-001 backup script (nightly task not registered), T-005 stays in Archive, T-045 Bandstand fallback (+ orphan walkway/ladder removal). Not pushed; production is the old build.
+
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
 2. Batches 4 to 6 as in `AUDIT/TRIAGE.md` section 2. Run `08_factcheck.md` on one or two fixed items.
