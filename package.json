@@ -21,7 +21,8 @@
     "coverage:models": "node --import tsx tools/model-coverage.ts",
     "audit:items": "node --import tsx tools/item-audit.ts",
     "build:items": "node tools/build-item-assets.mjs",
-    "test:items": "node --import tsx --test tests/items/*.test.ts"
+    "test:items": "node --import tsx --test tests/items/*.test.ts",
+    "test:coop": "node --import tsx --test tests/server/coop.test.ts"
   },
   "dependencies": {
     "@babylonjs/core": "9.33.1",
