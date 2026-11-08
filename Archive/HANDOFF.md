@@ -1,38 +1,23 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-06 (late) by a PC session. Branch **`stairwell`** (from main 86fa040); the user's own `client/src/components/ui/Alert.tsx` is modified: never commit it.
+Written 2026-11-08 by the audit fix session. Branch **`audit`**. Not pushed. Uncommitted and not mine: `CLAUDE.md`, `SW5E_AI_GUIDE.md` (the user's edits), `client/src/components/ui/Alert.tsx` (never commit), `AUDIT/`, `e2e/audit/` (untracked audit work).
+(The previous handoff, 2026-11-06, is in git history: the `stairwell` branch work and "production is still the old build; the user must restart it as Administrator". Check whether that is still true.)
 
-## State of main / production
-- `nov5-wiring` is merged into `main` and pushed (86fa040: the finish run passed tsc, 697 tests and the scratch build after the juvenile-rancor fix, floor 0.15 in beastMetres).
-- The finish script's last step FAILED: `windows-start.ps1 -Mode prod` could not stop the node on port 5000 (PID 2548/13396, "Access is denied": it runs elevated).
-  So **production is still the old build**. The user must restart it as Administrator (`deploy\windows-start.ps1 -Mode prod`), then it serves main.
+## This session: audit Batch 2 (`AUDIT/TRIAGE.md`, section 8 is the fix log)
+Commits on `audit`: f6051e9 T-003 speech rename retry; fa26c23 T-004 unique React keys for room assets; 3890f49 T-008 opaque Pazaak panel; f978fa7 T-017 five foes' attacks read; df9f006 T-029 Drop button.
+T-006 (Medpac) is NOT a bug: "Use" opens a chooser, "Use on yourself" heals. Only the audit script was wrong (fixed in `e2e/audit/07`, untracked).
+Checks: `tsc --noEmit` clean; `vite build` to a scratch folder 0 warnings; new tests pass (speech 3, assetKeys 2, monsterAttacks 3); the 213 items and combat tests pass; flows 05 and 06 show 0 "same key" warnings (were 50 to 111). Full `npm test` (`env -u DATABASE_URL npm test`, about 15 minutes): 708 tests, 705 pass, 0 fail, 3 skipped (the co-op ones, T-009).
 
-## This session, on `stairwell` (not merged yet; see `git log`)
-The user's 2026-11-06 stairwell feedback (screenshot of a round tower on Kashyyyk): a tree's foliage drawn inside the stairwell; doors between each landing
-and flight; the stairwell not matching the settlement (should be wooden and rustic). Done (REVIVAL_NOTES "Stairwells without doors, in wood"):
-1. Seams: `RoomAsset.seam` on the doorways between a landing and its flights (stairBlock doors whose key is not `floor<n>`, and roofStairs' up/mid). No frame, no
-   wall, no rail on a side that is only seams (LocalMap RoomShell `seamed`); walking onto one goes on into the next part (the walk loop, `onAct go`), so a tap
-   on the head of a flight climbs it and the next landing in one go (checked in the browser: Gantry floor 1 -> flight -> Roof landing). Their paths are labelled
-   "Stairwell". LIFE 22 `markSeams` marks saved stairwells.
-2. Wood: in a tree or timber village the open-air stairwell is planks on log stringers, log rails (RUSTIC colours; Switchback `rustic`, SlopedRail/Balustrade
-   `color`), posts of logs; steel stays elsewhere. Not made in Mixar: plain boxes were enough; a kit piece would be the next step if the user wants carved detail.
-3. Trees: hut great trees take the corner farthest from the stairwell/bridges/neighbours and no more crown than there is room (architecture.ts `treeCorner`,
-   GreatTree `clear`, FOLIAGE_REACH 7); ambient trees keep 5 squares off a stairwell (LocalMap `clear`). A small blot of foliage may still touch the lowest flight
-   seen from above in campaign seed 23: not tracked down (which tree it is).
-4. Bug found and fixed: a tap on a tree-village deck or bridge always landed on the middle row (the turned tap plane's local z is 0): now a box.
-Tests: access.test.ts (seams, life 22), architecture.test.ts (treeCorner). tsc clean. Full `npm test` was running at the time of writing.
+## Running
+- Nothing left running: the dev test copy on port 5099 (sw5e_test) was stopped. Start it with `PORT=5099 VITE_TEST_MENU=1 npx tsx server/index.ts` and the sw5e_test DATABASE_URL to rerun the audit flows.
 
-## Next, in order
-1. If the full test run passed: commit, merge `stairwell` into main (ff), push, then the user restarts prod as Administrator.
-2. The user's list still open: gantry rings round round rooms (gantryPlan is radius 4 only); kit ramp/bridge/pylon/tier pieces as real pieces; Mixar stage 3
-   curved furniture; heads for Ithorian, Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean; water-craft helm mount animation; saved buildings keep old columns.
-3. Browser checks not yet done: drum walls at several radii, tube walkway from outside and inside, mount/climb animations, beast sizes against riders (dewback
-   may be under 1.8 m: raise MAX_SPAN.large), inside spiral stair on a station.
+## Next steps (from TRIAGE, in order)
+1. Batch 1 needs the user's decisions first: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
+2. Batch 3: T-007 shooter phone layout, T-027 creation tab strip, T-009 co-op tests, T-011 old-save migration test, T-013 feature-parser test.
+3. Then Batches 4 to 6 as in `AUDIT/TRIAGE.md` section 2. Run `08_factcheck.md` on one or two fixed items.
 
 ## Learned
-- Dev server for the browser pane: `.claude/launch.json` "dev-5001" (untracked); make a campaign with scratchpad scripts through POST /api/world/generate and /api/campaigns
-  (seed 23 has a round tower with floors in a Kashyyyk cantina; start at area "Gantry, floor 1").
-- `window.__map3d.at("sq:X,Y")` gives page coordinates of a grid square, `.world(key)` its world position (world = grid - (32, 36) in that world), `.look(from, to)`
-  poses the camera (call it twice, the rig resets it once). The page's `__street().party` is the party's square; `__street.act({type:"go",areaId})` moves it.
-- The overhead camera in a tiny room looks at the room's neighbours; look from the north (z more negative) to see a stairwell.
-- No python on the PC: use sed/node for scripted edits.
+- Python is not installed on this PC; edit with the Edit tool or node.
+- `e2e/audit/*.mjs` run against a test server: `BASE=http://127.0.0.1:5099 node e2e/audit/<flow>.mjs` (refuse port 5000). `STOP_AFTER_START=1` stops flow 12 after the Pazaak table opens.
+- A room's asset ids are not unique (two counters meet, `shared/logic/index.ts`); never key React lists by `asset.id` alone (use `uniqueKeys`). The ids are left as they are because old saves hold them.
+- Multiattack reader (`multiattackOf`) takes the first count it finds ("two bite attacks and one tail attack" gives one of each): a known limit, not fixed.
