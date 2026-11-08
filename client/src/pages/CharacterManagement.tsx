@@ -133,8 +133,8 @@ function CombatOptions({ character, onSave, saving }: { character: any; onSave: 
 // gives comes from the class table; the choices are the archetype (3rd level), an Ability Score
 // Improvement or a feat, and new powers.
 function Advancement({ character, onSave, saving }: { character: any; onSave: (changes: Record<string, any>) => void; saving: boolean }) {
-  const plan = levelUpPlan(character);
   const [choices, setChoices] = useState<LevelUpChoices>({});
+  const plan = levelUpPlan(character, choices.archetype);
   const [useFeat, setUseFeat] = useState(false);
   const set = (changes: LevelUpChoices) => setChoices((current) => ({ ...current, ...changes }));
   // Start the choices over for each new level

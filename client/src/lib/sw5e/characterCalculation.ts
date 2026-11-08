@@ -10,7 +10,7 @@ import {
   calculateArmorClass,
   hasWeaponProficiency,
 } from "./rules";
-import { getClassById, getClassLevelValue } from "./classes";
+import { getClassById, getClassLevelValue, getPowerProgression } from "./classes";
 import { getSpeciesById } from "./species";
 import { archetypes, type ClassArchetype } from "./archetypes";
 import { findFeatByName, type Feat } from "./feats";
@@ -1049,7 +1049,10 @@ export function archetypeOptions(character: any, level = Number(character?.level
 export function chooseArchetype(character: any, archetypeId: string): Record<string, any> | null {
   if (!archetypeOptions(character).some((a) => a.id === archetypeId)) return null;
   const { hitPoints, fields } = featureChanges(character, { ...character, subclass: archetypeId });
-  return { subclass: archetypeId, maxHp: character.maxHp + hitPoints, currentHp: character.currentHp + hitPoints, ...fields };
+  // (an archetype with a caster table of its own brings its points)
+  const taken = archetypes.find((a) => a.id === archetypeId);
+  const points = castingPoints(character, Number(character.level) || 1, character.abilityScores ?? {}, taken) - castingPoints(character, Number(character.level) || 1, character.abilityScores ?? {});
+  return { subclass: archetypeId, maxHp: character.maxHp + hitPoints, currentHp: character.currentHp + hitPoints, ...(points ? { maxForcePoints: Math.max(0, (character.maxForcePoints ?? 0) + points), currentForcePoints: Math.max(0, (character.currentForcePoints ?? 0) + points) } : {}), ...fields };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1070,15 +1073,37 @@ const knownPowers = (character: any): any[] => [...(character.forcePowers ?? [])
 
 // Powers the character may learn at a level: of its class's kind, castable, not yet known, and
 // with the power they build on already known
-export function powerOptions(character: any, level: number): any[] {
-  const klass = getClassById(character.class);
-  if (!klass || klass.casterType === "None") return [];
+export function powerOptions(character: any, level: number, archetype = findArchetype(character)): any[] {
+  const cast = castingAt(character, level, archetype);
+  if (cast.type === "None") return [];
   const known = new Set(knownPowers(character).map((p) => String(p.name).toLowerCase()));
-  const maxLevel = calculateMaxPowerLevel(level, klass.id);
-  const pool: any[] = klass.casterType === "Force" ? forcePowers : techPowers;
+  const pool: any[] = cast.type === "Force" ? forcePowers : techPowers;
   return pool
-    .filter((p) => p.level <= maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
+    .filter((p) => p.level <= cast.maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
     .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+}
+
+// What the character's casting grants at a level: its class's table, or, for a class that has none, the table of its archetype (audit T-014: nine
+// archetypes make a Marauder, a Slicer or a Shield Specialist a partial caster). Points exclude the ability modifier.
+export function castingAt(character: any, level: number, archetype = findArchetype(character)): { type: "Force" | "Tech" | "None"; known: number; points: number; maxLevel: number } {
+  const klass = getClassById(character?.class);
+  if (klass && klass.casterType !== "None") {
+    return { type: klass.casterType, known: calculatePowersKnown(klass.id, level), points: getPowerProgression(klass.id, level).points, maxLevel: calculateMaxPowerLevel(level, klass.id) };
+  }
+  const rows = archetype?.casting ?? {};
+  const at = Math.max(0, ...Object.keys(rows).map(Number).filter((l) => l <= level));
+  return at && archetype && archetype.casterType !== "None" ? { type: archetype.casterType, ...rows[at] } : { type: "None", known: 0, points: 0, maxLevel: 0 };
+}
+
+// Force or tech: the kind of power the character can learn
+export const castingKind = (character: any): "Force" | "Tech" | "None" => castingAt(character, Number(character?.level) || 1).type;
+
+// Force or tech points at a level: the table's plus the casting modifier (Force: the better of Wisdom and Charisma; tech: Intelligence)
+function castingPoints(character: any, level: number, scores: any, archetype = findArchetype(character)): number {
+  const cast = castingAt(character, level, archetype);
+  if (cast.type === "None" || cast.points === 0) return 0;
+  const mod = cast.type === "Force" ? Math.max(getAbilityModifier(scores.wisdom ?? 10), getAbilityModifier(scores.charisma ?? 10)) : getAbilityModifier(scores.intelligence ?? 10);
+  return Math.max(0, cast.points + mod);
 }
 
 export interface LevelUpPlan {
@@ -1092,18 +1117,20 @@ export interface LevelUpPlan {
   powerOptions: any[];
 }
 
-export function levelUpPlan(character: any): LevelUpPlan | null {
+// (`archetypeId`: the archetype chosen with this level, when the character has none yet: its casting counts for the new level)
+export function levelUpPlan(character: any, archetypeId?: string): LevelUpPlan | null {
   const level = Number(character?.level) || 1;
   const klass = getClassById(character?.class);
   if (!klass || !canLevelUp(level, Number(character.experience) || 0)) return null;
   const next = level + 1;
-  const options = powerOptions(character, next);
+  const taking = archetypeOptions(character, next).find((a) => a.id === archetypeId) ?? findArchetype(character);
+  const options = powerOptions(character, next, taking);
   return {
     level: next,
     features: klass.features.filter((f) => f.level === next).map((f) => ({ ...f, source: klass.name })),
     archetypes: archetypeOptions(character, next),
     abilityScoreImprovement: klass.features.some((f) => f.level === next && /^Ability Score Improvement/i.test(f.name)),
-    powersToLearn: Math.min(options.length, Math.max(0, calculatePowersKnown(klass.id, next) - knownPowers(character).length)),
+    powersToLearn: Math.min(options.length, Math.max(0, castingAt(character, next, taking).known - knownPowers(character).length)),
     powerOptions: options,
   };
 }
@@ -1121,7 +1148,7 @@ export interface LevelUpChoices {
 // The saved fields that change when the character gains a level with these choices, or what is
 // still missing from the choices
 export function applyLevelUp(character: any, choices: LevelUpChoices): { changes?: Record<string, any>; problems: string[] } {
-  const plan = levelUpPlan(character);
+  const plan = levelUpPlan(character, choices.archetype);
   if (!plan) return { problems: ["Not enough experience for the next level."] };
   const klass = getClassById(character.class)!;
   const problems: string[] = [];
@@ -1164,7 +1191,7 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
   const conNow = getAbilityModifier(scores.constitution ?? 10);
   // The average of the Hit Die, plus Constitution; a higher Constitution counts for earlier levels too
   const hitPoints = Math.max(1, klass.hitDie / 2 + 1 + conNow) + (conNow - conBefore) * (plan.level - 1) + featured.hitPoints;
-  const points = calculatePowerPoints(klass.id, plan.level, scores as any) - calculatePowerPoints(klass.id, plan.level - 1, character.abilityScores);
+  const points = castingPoints(character, plan.level, scores, archetype ?? findArchetype(character)) - castingPoints(character, plan.level - 1, character.abilityScores);
   const force = picked.filter((p) => "forceAlignment" in p);
   const tech = picked.filter((p) => !("forceAlignment" in p));
 

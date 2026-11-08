@@ -43,7 +43,7 @@ import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
-import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
+import { gearOf as figureGearOf, carriedWeapons, castingKind, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById, species as speciesList } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
@@ -1859,8 +1859,8 @@ export default function GameBoard() {
   const learner: Learner = {
     level,
     credits: character?.credits ?? 0,
-    force: (character?.forcePowers ?? []).length > 0 || klass?.casterType === "Force",
-    tech: (character?.techPowers ?? []).length > 0 || klass?.casterType === "Tech",
+    force: (character?.forcePowers ?? []).length > 0 || castingKind(character) === "Force",
+    tech: (character?.techPowers ?? []).length > 0 || castingKind(character) === "Tech",
     forceAlign: forceAlignOf(character?.forceAlignment) !== "None" ? forceAlignOf(character?.forceAlignment) : /good/i.test(character?.alignment ?? "") ? "Light" : /evil/i.test(character?.alignment ?? "") ? "Dark" : "None",
     leaning: leaningOf(character?.forceAlignment, character?.skillProficiencies ?? [], character?.abilityScores ?? {}),
     known: knownPowers.map((p) => p.name),
@@ -3228,7 +3228,7 @@ export default function GameBoard() {
     if (!character || inCombat) return;
     const changes: Record<string, any> = {};
     const notes: string[] = [];
-    if (klass?.casterType === "Tech" && character.currentForcePoints < character.maxForcePoints) {
+    if (castingKind(character) === "Tech" && character.currentForcePoints < character.maxForcePoints) {
       changes.currentForcePoints = character.maxForcePoints;
       notes.push("tech points restored");
     }
@@ -8931,7 +8931,7 @@ export default function GameBoard() {
     commitDowntime({ downtime: { lore: downtime.lore.filter((l) => l.id !== id) }, days: 0, log: [`Lore spent (${item.topic}): what is hidden here is found.`] });
   };
 
-  const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
+  const pointsName = castingKind(character) === "Tech" ? "Tech Points" : "Force Points";
   // Features that heal and have a use left can be used between fights, as they are in one (Second Wind)
   const parsedFeatures = useMemo(() => (character ? combatFeatures(character) : []), [character?.class, character?.level, character?.subclass, character?.species, character?.feats, character?.fighterManeuvers, character?.abilityScores]);
   const outsideFeatures = character && !inCombat && !dead

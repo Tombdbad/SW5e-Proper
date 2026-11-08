@@ -8,7 +8,7 @@ import { getClassById } from "@/lib/sw5e/classes";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getBackgroundById } from "@/lib/sw5e/backgrounds";
 import PersonalityTraitForm from "@/components/CharacterCreation/PersonalityTraitForm";
-import { carriedWeapons, type CarriedWeapon } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, castingKind, type CarriedWeapon } from "@/lib/sw5e/characterCalculation";
 
 // CharacterPreview component
 export const CharacterPreview = ({ character }: { character?: any }) => {
@@ -289,7 +289,7 @@ export default function CharacterSheet({
 
   // Powers known, with what each costs and the caster's numbers for it
   const knownPowers: Power[] = [...(character.forcePowers ?? []), ...(character.techPowers ?? [])].filter((power) => power?.name);
-  const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
+  const pointsName = castingKind(character) === "Tech" ? "Tech Points" : "Force Points";
   const hitDiceLeft = Math.max(0, level - (character.hitDiceUsed ?? 0));
   const listed = (label: string, values?: string[]) =>
     values && values.length > 0 ? (
@@ -943,7 +943,7 @@ export default function CharacterSheet({
                 </div>
               ) : (
                 <div className="text-center p-4 text-gray-400">
-                  {klass && klass.casterType === "None"
+                  {klass && castingKind(character) === "None"
                     ? `${klass.name}s do not learn powers from their class.`
                     : "No powers known yet. Powers are chosen in creation and when a level grants them."}
                 </div>
