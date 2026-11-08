@@ -61,7 +61,7 @@ export function PazaakGame({ player, rival, stake, skill = 1, onGesture, onDone 
     </div>
   );
   return (
-    <div className="pointer-events-auto flex max-h-full flex-col gap-2 overflow-y-auto rounded-lg border border-emerald-700/60 bg-gray-950/95 p-3 text-sm text-gray-100 shadow-xl" data-testid="pazaak-panel">
+    <div className="pointer-events-auto flex max-h-full flex-col gap-2 overflow-y-auto rounded-lg border border-emerald-700/60 bg-gray-950 p-3 text-sm text-gray-100 shadow-xl" data-testid="pazaak-panel">
       <div className="flex items-center justify-between">
         <div>
           <div className="font-bold text-emerald-300">Pazaak against {rival}</div>
