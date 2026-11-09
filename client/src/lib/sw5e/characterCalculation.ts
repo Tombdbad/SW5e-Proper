@@ -24,7 +24,7 @@ import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
 import { conditions as conditionRows } from "./conditions";
 import lookups from "@shared/data/sw5e/lookups.json";
-import { scoresWith, sumEffects, type ItemFacts, type ItemEffects, type PowerBonus } from "@shared/logic";
+import { scoresWith, sumEffects, weaponTraining, MASTERY_ATTACK, type ItemFacts, type ItemEffects, type PowerBonus, type WeaponKind } from "@shared/logic";
 import { opticOf } from "@shared/logic/shooter";
 
 export const ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
@@ -966,7 +966,14 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     // Smart ("smart (15/+2)"): the weapon's own Dexterity score and proficiency bonus in place of the wielder's
     const smart = (e.properties ?? []).map((p) => p.match(/^smart \((\d+)\/\+?(\d+)\)/i)).find(Boolean);
     const modifier = smart ? getAbilityModifier(Number(smart[1])) : ability === "dexterity" ? dex : str;
-    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e) || grantedWeapon(character, e);
+    // A weapon type learned from a Master (house rule, shared/logic "Weapon Masters"): proficient with its simple and martial weapons,
+    // a master with its exotic ones too and +1 to attack
+    const kind = (e.weaponClassification ?? "").match(/^(Simple|Martial|Exotic)(Blaster|Vibroweapon|Lightweapon)$/i);
+    const trained = kind ? weaponTraining(character?.playState?.training)[kind[2].toLowerCase() as WeaponKind] : undefined;
+    // (a weapon trained in the downtime before 2026-11-09 is kept: its name is in `weaponProficiencies`)
+    const drilled = (character?.weaponProficiencies ?? []).some((n: unknown) => String(n).toLowerCase() === e.name.toLowerCase());
+    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e) || grantedWeapon(character, e) || drilled || (!!trained && (trained === "master" || !/^exotic/i.test(kind![1])));
+    const mastery = trained === "master" ? MASTERY_ATTACK : 0;
     const [dice, damageType = ""] = e.damage!.split(" ");
     return {
       name,
@@ -978,7 +985,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       proficient,
       properties: [...(e.properties ?? []), ...(bonus.props ?? [])],
       ...weaponReach([...(e.properties ?? []), ...(bonus.props ?? [])]),
-      attackBonus: modifier + (proficient ? (smart ? Number(smart[2]) : proficiency) : 0) + bonus.attack,
+      attackBonus: modifier + (proficient ? (smart ? Number(smart[2]) : proficiency) : 0) + bonus.attack + mastery,
       damageBonus: modifier + bonus.damage,
       ...(versatile ? { versatile } : {}),
       ...(thrown ? { thrown, returning: (e.properties ?? []).some((p) => /^returning/i.test(p)) } : {}),

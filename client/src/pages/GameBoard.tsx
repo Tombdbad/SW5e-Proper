@@ -109,6 +109,8 @@ import {
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
   roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
+  noteTravel, advanceTraining, serveTraining, trailReadiness, masterTraditions, WEAPON_KINDS, WEAPON_KIND_NAMES, TRAIL_SYSTEMS, TRAIL_LEVELS, MASTERY_ATTACK,
+  type TrainingLog, type WeaponKind,
 } from "@shared/logic";
 
 // What the character is in the middle of, kept with the character (`playState`)
@@ -1865,6 +1867,55 @@ export default function GameBoard() {
     leaning: leaningOf(character?.forceAlignment, character?.skillProficiencies ?? [], character?.abilityScores ?? {}),
     known: knownPowers.map((p) => p.name),
   };
+
+  // Weapon Masters (house rule, shared/logic "Weapon Masters"): the star systems and settlements been to are logged; the trail's people
+  // are placed as their places are mapped, its objectives ticked and its trials begun at their levels
+  const training: TrainingLog | undefined = (character?.playState as any)?.training;
+  const trainerTraits = { species: getSpeciesById(character?.species ?? "")?.name ?? character?.species, homeworld: character?.homeworld, className: character?.class, background: character?.background, forceAlign: learner.forceAlign };
+  useEffect(() => {
+    if (!world || !hereId || !character || inCombat) return;
+    const noted = noteTravel(training, world, hereId, level);
+    const log = noted ?? training;
+    if (!log) return;
+    const result = advanceTraining(world, log, hereId, level);
+    if (!noted && !result.changed) return;
+    if (result.world !== world) saveCampaign({ galaxyMap: result.world });
+    patchPlay({ training: result.log });
+    for (const quest of result.finished) toast.success(`Quest complete: ${quest.title}.`);
+    const kindName = log.weapon ? WEAPON_KIND_NAMES[log.weapon.kind] : "";
+    if (result.gained === "proficient") toast.success(`You are now proficient with ${kindName} (taught by a Master: house rule).`);
+    if (result.gained === "master") toast.success(`You are now a master of ${kindName} (house rule: +${MASTERY_ATTACK} to attack with them, exotic ones too).`);
+  }, [world, hereId, level, JSON.stringify(training ?? null), inCombat]);
+  const [seeking, setSeeking] = useState(false);
+  const seekMaster = async (kind: WeaponKind) => {
+    if (!world || !hereId || !training) return;
+    setSeeking(true);
+    try {
+      const response = await fetch("/api/world/trainer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, log: training, kind, traits: trainerTraits, hereId, seed: `${character.id}-${Date.now().toString(36)}` }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "Could not begin the search");
+      await saveCampaign({ galaxyMap: body.world });
+      await patchPlay({ training: body.log });
+      toast.success(`${body.log.weapon.quests[0].title}: the first step is in the Quests tab.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSeeking(false);
+    }
+  };
+  const serveMaster = (questId: string, index: number, choice?: string) => {
+    if (!world || !hereId || !training) return;
+    const out = serveTraining(world, training, questId, index, hereId, choice);
+    if ("error" in out) return void toast.error(out.error);
+    toast.info(out.message, { duration: 12000 });
+    if (out.finished) toast.success(`Quest complete: ${out.finished.title}.`);
+    patchPlay({ training: out.log });
+  };
+
   // The character's figure on the map: their species, and a lit blade for one who uses the Force
   // (red on the dark side)
   useEffect(() => {
@@ -10017,6 +10068,65 @@ export default function GameBoard() {
                     <p className="text-sm text-green-300">Completed: {quests.filter((q) => q.status === "completed").map((q) => q.title).join("; ")}</p>
                   )}
                 </div>
+                <h3 className="font-semibold mt-3 mb-1">Masters</h3>
+                <div className="space-y-2" data-testid="play-masters">
+                  {(training?.mastered ?? []).length > 0 && (
+                    <p className="text-sm text-green-300">Mastered: {training!.mastered!.map((m) => WEAPON_KIND_NAMES[m.kind]).join(", ")} (house rule: +{MASTERY_ATTACK} to attack, exotic ones too).</p>
+                  )}
+                  {!training?.weapon && (() => {
+                    const ready = trailReadiness(training, level);
+                    if (!ready.open) return <p className="text-sm text-gray-400" data-testid="masters-progress">A Master of a weapon type can be sought after {TRAIL_SYSTEMS} star systems and {TRAIL_LEVELS} levels: {Math.min(ready.systems, TRAIL_SYSTEMS)}/{TRAIL_SYSTEMS} systems and {Math.min(ready.levels, TRAIL_LEVELS)}/{TRAIL_LEVELS} levels so far. (House rule: weapons are learned from Masters, not by downtime training.)</p>;
+                    return (
+                      <div className="bg-gray-700 p-2 rounded space-y-1">
+                        <div className="text-sm">You have travelled far enough to hear of Masters. Whom will you seek?</div>
+                        {WEAPON_KINDS.filter((k) => !(training?.mastered ?? []).some((m) => m.kind === k)).map((k) => (
+                          <Button key={k} size="sm" variant="outline" className="mr-1 h-auto whitespace-normal px-2 py-1 text-left" disabled={seeking || inCombat || dead} onClick={() => seekMaster(k)} data-testid={`seek-master-${k}`}>
+                            A Master of {WEAPON_KIND_NAMES[k]}: {masterTraditions(k, trainerTraits)[0]?.title}
+                          </Button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {training?.weapon && world && hereId && (() => {
+                    const trail = training.weapon;
+                    const hereIn = (areaId: string) => trailOf(world, hereId).some((a) => a.id === areaId);
+                    return (
+                      <>
+                        {trail.quests.filter((q) => q.status === "active").map((quest) => {
+                          const next = quest.objectives.findIndex((o) => !o.completed);
+                          const shown = quest.ordered ? quest.objectives.slice(0, next + 1) : quest.objectives;
+                          return (
+                            <div key={quest.id} className="bg-gray-700 p-2 rounded" data-testid={`master-quest-${quest.id}`}>
+                              <div className="font-semibold">{quest.title}</div>
+                              <div className="text-sm mt-1">{quest.description}</div>
+                              <ul className="text-sm mt-1 space-y-1">
+                                {shown.map((objective, index) => {
+                                  const t = objective.target;
+                                  const meetable = !objective.completed && index === next && t?.kind === "serve" && hereIn(t.areaId) && !!world.areas[t.areaId]?.occupants.some((o) => o.id === t.person);
+                                  return (
+                                    <li key={index} className={objective.completed ? "text-green-300" : ""}>
+                                      {objective.completed ? "✓" : "○"} {objective.description}
+                                      {meetable && (t!.choices ?? [undefined]).map((choice) => (
+                                        <Button key={choice ?? "do"} size="sm" variant="outline" className="ml-2 h-6 px-2" disabled={inCombat || dead} onClick={() => serveMaster(quest.id, index, choice)} data-testid={`master-serve-${quest.id}-${index}`}>
+                                          {choice ?? (index === 0 && quest.id === "trail-find" ? "Ask" : "Speak to them")}
+                                        </Button>
+                                      ))}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          );
+                        })}
+                        {trail.quests.filter((q) => q.status === "inactive").slice(0, 1).map((quest) => (
+                          <p key={quest.id} className="text-sm text-gray-400">Next: {quest.title} (waits for level {quest.gate}).</p>
+                        ))}
+                        {trail.found && trail.master.areaId && world.areas[trail.master.areaId] && <p className="text-sm" data-testid="masters-found">Your Master: {trail.master.name}, {trailOf(world, trail.master.areaId).filter((a) => ["room", "building", "settlement", "planet"].includes(a.kind)).reverse().map((a) => a.name).join(", ")}.</p>}
+                        {trail.stage > 0 && <p className="text-sm text-green-300">Trials passed: {trail.stage} of 5{trail.stage >= 2 ? `; you are proficient with ${WEAPON_KIND_NAMES[trail.kind]}` : ""}.</p>}
+                      </>
+                    );
+                  })()}
+                </div>
                 <h3 className="font-semibold mt-3 mb-1">Jobs</h3>
                 <div className="space-y-2" data-testid="play-contracts">
                   {!cState.active.length && <p className="text-sm text-gray-400">No jobs taken. The people of a place give them (bartenders, officers, bounty hunters, smugglers): ask them in the Trade tab.</p>}
@@ -11281,7 +11391,8 @@ function TrainingActivity(props: DowntimeProps) {
   const { character, state, equipment } = props;
   const activity = downtimeActivity("training")!;
   const credits = Number(character?.credits) || 0;
-  const options = trainingOptions();
+  // (house rule, the user 2026-11-09) a weapon is learned from a Master (Quests tab), not by downtime training
+  const options = trainingOptions().filter((o) => o.kind !== "weapon");
   const [optionId, setOptionId] = useState(options[0]?.id ?? "");
   const [topic, setTopic] = useState("");
   const [message, setMessage] = useState<string[]>([]);
@@ -11379,6 +11490,7 @@ function TrainingActivity(props: DowntimeProps) {
           ))}
         </select>
         <p className="text-xs text-gray-400">Training is half proficiency, proficiency or expertise as the book's three tiers; the half and expert tiers count in downtime checks.</p>
+        <p className="text-xs text-amber-300" data-testid="downtime-train-weapon-note">House rule: weapons are not trained here. Seek a Master of a weapon type in the Quests tab.</p>
         <Button size="sm" disabled={!topic} onClick={start} data-testid="downtime-train-start">Find a teacher and begin</Button>
       </div>
       {message.map((m, i) => (

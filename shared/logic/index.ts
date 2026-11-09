@@ -7077,9 +7077,13 @@ export function passageFare(exit: Exit, fuelCost: number): number {
 // ---------------------------------------------------------------------------------------------
 
 export interface QuestTarget {
-  kind: "defeat" | "loot" | "reach";
+  // `serve`: something done for a person at that place (ask, hand over, choose), ticked by the player there (see serveTraining)
+  kind: "defeat" | "loot" | "reach" | "serve";
   areaId: string;
   cacheId?: string;
+  // `serve`: who it is done for (an occupant id) and, where it is a choice, the answers
+  person?: string;
+  choices?: string[];
 }
 
 export interface Quest {
@@ -7091,6 +7095,10 @@ export interface Quest {
   reward?: { credits: number; items: string[]; experience: number };
   // Set when an objective is under the sea and the character cannot breathe water: sub-aquatic gear is required
   warning?: string;
+  // The objectives are done one after the other: only the first not done can be met, and the log shows no further (a trail of clues)
+  ordered?: boolean;
+  // The character level a training trial waits for (status "inactive" until then; see advanceTraining)
+  gate?: number;
 }
 
 const isHeld = (area: Area) => area.occupants.some((o) => o.disposition === "hostile" && !!o.hitPoints);
@@ -7179,6 +7187,7 @@ export function worldQuests(world: World, earnings = 0, aquatic = false): Quest[
 
 function targetMet(world: World, target: QuestTarget, hereId: string): boolean {
   const area = world.areas[target.areaId];
+  if (target.kind === "serve") return false;
   if (!area) return true;
   if (target.kind === "defeat") return !isHeld(area);
   if (target.kind === "loot") return area.loot.filter((c) => !target.cacheId || c.id === target.cacheId).filter((c) => !c.node).every((c) => c.looted);
@@ -7191,7 +7200,8 @@ export function advanceQuests(world: World, quests: Quest[], hereId: string): { 
   let changed = false;
   const next = (quests ?? []).map((quest) => {
     if (quest.status !== "active" || !Array.isArray(quest.objectives)) return quest;
-    const objectives = quest.objectives.map((o) => (o.completed || !o.target ? o : { ...o, completed: targetMet(world, o.target, hereId) }));
+    const first = quest.objectives.findIndex((o) => !o.completed);
+    const objectives = quest.objectives.map((o, i) => (o.completed || !o.target || (quest.ordered && i !== first) ? o : { ...o, completed: targetMet(world, o.target, hereId) }));
     const done = objectives.length > 0 && objectives.every((o) => o.completed);
     if (!done && !objectives.some((o, i) => o.completed !== quest.objectives[i].completed)) return quest;
     changed = true;
@@ -15764,4 +15774,433 @@ export function convoyResult(race: Race): { outcome: "through" | "lost" | "wreck
   const credits = (outcome === "wrecked" ? 0 : through * CONVOY.pay.hauler) + air.downed * CONVOY.pay.downed;
   const note = `${through} of ${haulers.length} haulers ${outcome === "lost" ? "left" : "through"}, ${air.downed} ${air.who} ship${air.downed === 1 ? "" : "s"} shot down, hull ${me.hull} of ${me.hullMax}${me.wrecked ? " (your craft was shot down: no pay for the cargo)" : ""} (house rule)`;
   return { outcome, through: outcome === "wrecked" ? 0 : through, lost, downed: air.downed, credits, note };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Weapon Masters (house rule, the user 2026-11-09; stage 1 of AUDIT/TRAINER_QUESTS_DESIGN.md). The books teach a weapon by the Training
+// downtime (10 workweeks, 250 cr each); in this game a weapon type is learned from a Master instead. Once the character has been to
+// TRAIL_SYSTEMS star systems and gained TRAIL_LEVELS levels since the log began, a teacher can be sought: a contact in a place visited earlier
+// tells of a star system, an informant there names the Master's place, and the Master sets five trials, each waiting for a level
+// (TRIAL_LEVELS). After the second the character is proficient with the type (simple and martial weapons), after the fifth a master of it
+// (house rule: +1 to attack rolls with it, and its exotic weapons are learned too). The log lives in the character's play state.
+// ---------------------------------------------------------------------------------------------
+
+export type WeaponKind = "blaster" | "vibroweapon" | "lightweapon";
+export const WEAPON_KINDS: WeaponKind[] = ["blaster", "vibroweapon", "lightweapon"];
+export const WEAPON_KIND_NAMES: Record<WeaponKind, string> = { blaster: "blasters", vibroweapon: "vibroweapons", lightweapon: "lightweapons" };
+export const TRAIL_SYSTEMS = 3;
+export const TRAIL_LEVELS = 3;
+export const TRIAL_LEVELS = [3, 5, 9, 13, 17];
+export const PROFICIENT_STAGE = 2;
+export const MASTERY_STAGE = 5;
+export const MASTERY_ATTACK = 1;
+
+// Someone of the trail: placed in `areaId` once the place they are to be found in (`within`: a settlement, or a star system not yet
+// mapped) has rooms to put them in
+export interface TrailPerson {
+  id: string;
+  name: string;
+  within: string;
+  areaId?: string;
+  haunt?: string; // what kind of place suits them (a RegExp source)
+}
+
+// Who or what a trial puts in the world when it begins: the Master's pupil to beat, a beast to hunt, a stolen weapon to bring back
+export interface TrailSpawn {
+  trial: number;
+  occupant?: Occupant;
+  cache?: LootCache;
+}
+
+export interface WeaponTrail {
+  kind: WeaponKind;
+  tradition: string;
+  seed: string;
+  contact: TrailPerson;
+  informant: TrailPerson;
+  master: TrailPerson;
+  found: boolean;
+  stage: number; // trials passed, 0 to 5
+  quests: Quest[]; // the search ("trail-find") and, once the Master is found, the trials ("trail-1" to "trail-5")
+  spawns: TrailSpawn[];
+  insight?: string; // the answer to the last trial
+}
+
+export interface TrainingLog {
+  startLevel: number;
+  systems: string[]; // star systems been to, in order
+  places: string[]; // settlements been to, in order
+  weapon?: WeaponTrail;
+  mastered?: { kind: WeaponKind; tradition: string; insight?: string }[];
+}
+
+// What a character is, for which Master fits them
+export interface TrainerTraits {
+  species?: string;
+  homeworld?: string;
+  className?: string;
+  background?: string;
+  forceAlign?: string;
+}
+
+export interface Tradition {
+  id: string;
+  title: string; // what the Master is, as the contact speaks of them
+  kinds: WeaponKind[];
+  fit: (t: TrainerTraits) => number;
+  haunt: RegExp; // the places such a Master keeps to
+  pupil: RegExp; // stat blocks the pupil is drawn from first
+  trials: [string, string, string, string, string];
+  insight: { question: string; choices: [string, string] };
+}
+
+const fitsText = (text: string | undefined, re: RegExp) => re.test(text ?? "");
+// Retold kinds of teacher (AUDIT/TRAINER_QUESTS_DESIGN.md 7.3); no names or words from the films and books
+export const TRADITIONS: Tradition[] = [
+  {
+    id: "temple-scholar", title: "a scholar of the old temples who still carries a blade", kinds: ["lightweapon"],
+    fit: (t) => (fitsText(t.forceAlign, /light|universal/i) ? 3 : 0) + (fitsText(t.className, /consular|guardian|sentinel/i) ? 2 : 0),
+    haunt: /ruin|temple|shrine|tomb|archive|library|cave/i, pupil: /monk|officer|knight/i,
+    trials: ["Spar with the Master's pupil until one of you yields", "Go into the most feared place of this world and come back", "Hunt the beast that troubles the wilds, alone", "Bring back the blade that was stolen from the Master", "Answer the Master's last question"],
+    insight: { question: "Your beaten rival kneels and asks for mercy. What do you do?", choices: ["Spare them", "Strike them down"] },
+  },
+  {
+    id: "dark-exile", title: "an exile who learned the blade on the dark side", kinds: ["lightweapon"],
+    fit: (t) => (fitsText(t.forceAlign, /dark/i) ? 4 : 0) + (fitsText(t.species, /sith/i) ? 2 : 0),
+    haunt: /ruin|tomb|cave|wreck|vault|crypt/i, pupil: /inquisitor|guard/i,
+    trials: ["Defeat the exile's other pupil: there is room for only one", "Spend a night in the most feared place of this world", "Kill the beast that hunts in the wilds, alone", "Take back the blade a rival stole from the exile", "Show the exile what you will do with power"],
+    insight: { question: "The exile hands you the beaten pupil's fate. What do you do?", choices: ["Spare them", "Strike them down"] },
+  },
+  {
+    id: "temple-guardian", title: "a guardian of a pilgrims' temple, staff and bow in hand", kinds: ["vibroweapon", "blaster"],
+    fit: (t) => (fitsText(t.forceAlign, /universal/i) ? 2 : 0) + (fitsText(t.className, /monk|consular/i) ? 2 : 0) + (fitsText(t.background, /acolyte|pilgrim|hermit/i) ? 2 : 0),
+    haunt: /temple|shrine|monastery|chapel|garden/i, pupil: /monk|guard/i,
+    trials: ["Hold the temple door against the guardian's pupil", "Walk the most feared road of this world without turning back", "Drive off the beast that preys on pilgrims", "Recover the relic weapon stolen from the temple", "Answer the guardian's question of faith"],
+    insight: { question: "A thief of the temple is caught. What do you do?", choices: ["Let them go, warned", "Hand them to the law"] },
+  },
+  {
+    id: "armorer", title: "a clan armorer who teaches the old warrior ways", kinds: ["blaster", "vibroweapon"],
+    fit: (t) => (fitsText(t.species, /mandalorian/i) ? 4 : 0) + (fitsText(t.className, /fighter|scout|berserker/i) ? 2 : 0) + (fitsText(t.background, /bounty|mercenary|soldier/i) ? 2 : 0),
+    haunt: /forge|workshop|armory|armoury|hangar|outpost|camp/i, pupil: /trooper|guard|warrior/i,
+    trials: ["Beat the armorer's foundling in the ring", "Go where the clan's dead fell and come back", "Hunt the beast and bring its hide to the forge", "Bring back the weapon a thief took from the clan", "Swear, or refuse, the creed"],
+    insight: { question: "The armorer asks if you will keep the clan's creed. What do you say?", choices: ["I will keep it", "I go my own way"] },
+  },
+  {
+    id: "desert-tribe", title: "an elder of a desert tribe who fights with the old staff and rifle", kinds: ["vibroweapon", "blaster"],
+    fit: (t) => (fitsText(t.species, /tusken/i) ? 4 : 0) + (fitsText(t.homeworld, /tatooine|desert|dune/i) ? 2 : 0) + (fitsText(t.background, /outlaw|outcast|hermit/i) ? 1 : 0),
+    haunt: /camp|cave|outpost|ruin|hut/i, pupil: /tusken|raider|brute/i,
+    trials: ["Beat the tribe's young warrior with the staff", "Cross the worst ground of this world and come back", "Kill the great beast of the wastes, alone", "Take back the rifle stolen from the tribe", "Choose what the tribe owes its enemies"],
+    insight: { question: "A raider who wronged the tribe is in your hands. What do you do?", choices: ["Send them away", "Take their life"] },
+  },
+  {
+    id: "forest-elder", title: "an elder hunter of the forest worlds, bowcaster and axe", kinds: ["blaster", "vibroweapon"],
+    fit: (t) => (fitsText(t.species, /wookiee/i) ? 4 : 0) + (fitsText(t.homeworld, /kashyyyk|forest|jungle/i) ? 2 : 0) + (fitsText(t.className, /scout|berserker/i) ? 1 : 0),
+    haunt: /lodge|camp|hut|grove|cave|outpost/i, pupil: /wookiee|hunter|berserker/i,
+    trials: ["Wrestle the elder's young hunter", "Go down to the dark floor of the wilds and come back", "Hunt the elder's chosen beast, alone", "Bring back the bow a poacher stole", "Decide what a hunter owes the hunted"],
+    insight: { question: "The poacher begs to keep a life's hunting. What do you do?", choices: ["Let them go", "Make an end of it"] },
+  },
+  {
+    id: "unarmed-school", title: "a teacher of the old fighting arts, open hand and blade", kinds: ["vibroweapon"],
+    fit: (t) => (fitsText(t.species, /echani/i) ? 4 : 0) + (fitsText(t.className, /monk/i) ? 3 : 0) + (fitsText(t.className, /operative/i) ? 1 : 0),
+    haunt: /school|dojo|arena|pit|gym|hall|garden/i, pupil: /brawl|wrestler|warrior|monk/i,
+    trials: ["Win a bout against the teacher's best pupil", "Fight in the most feared place of this world and come back", "Bring down the beast with your own hands", "Recover the blade stolen from the school", "Answer the teacher's question of restraint"],
+    insight: { question: "Your opponent is down and the crowd wants blood. What do you do?", choices: ["Step back", "Finish it"] },
+  },
+  {
+    id: "old-gunslinger", title: "an old gunslinger who has outlived every rival", kinds: ["blaster"],
+    fit: (t) => (fitsText(t.className, /operative|scout/i) ? 2 : 0) + (fitsText(t.background, /smuggler|criminal|spacer|scoundrel|gambler/i) ? 3 : 0),
+    haunt: /cantina|bar|tavern|den|casino|dock|hangar/i, pupil: /officer|trooper|thug|hunter/i,
+    trials: ["Outdraw the gunslinger's last partner", "Walk into the worst place of this world and walk out", "Bring down the beast the bounty boards have posted", "Get back the pistol the gunslinger lost at cards", "Keep your word, or don't"],
+    insight: { question: "You can keep your word to a rival and lose the prize, or break it. What do you do?", choices: ["Keep my word", "Take the prize"] },
+  },
+  {
+    id: "cell-leader", title: "a resistance cell leader who trains fighters for the long war", kinds: ["blaster"],
+    fit: (t) => (fitsText(t.background, /soldier|rebel|insurgent|resistance|refugee/i) ? 3 : 0) + (fitsText(t.className, /fighter|scout/i) ? 1 : 0),
+    haunt: /safehouse|bunker|warehouse|outpost|camp|cellar/i, pupil: /trooper|officer|guard/i,
+    trials: ["Beat the cell's best shot in a live drill", "Scout the most dangerous place of this world and report back", "Clear the beast from the cell's supply route", "Recover the rifles taken in a raid", "Obey the cell leader's hardest order, or refuse it"],
+    insight: { question: "The leader orders you to leave a wounded prisoner behind. What do you do?", choices: ["Refuse the order", "Obey it"] },
+  },
+];
+
+// The teachers of a weapon type, best fitted first
+export function masterTraditions(kind: WeaponKind, traits: TrainerTraits): Tradition[] {
+  // (a tie goes to the one listed first: a character with no Force alignment is not sent to the dark side)
+  return TRADITIONS.filter((t) => t.kinds.includes(kind)).sort((a, b) => b.fit(traits) - a.fit(traits) || TRADITIONS.indexOf(a) - TRADITIONS.indexOf(b));
+}
+
+// Add where the character is now to the log: its star system and settlement, once each. Null when nothing changed
+export function noteTravel(log: TrainingLog | undefined, world: World, hereId: string, level: number): TrainingLog | null {
+  const base: TrainingLog = log ?? { startLevel: level, systems: [], places: [] };
+  const system = ancestor(world, hereId, "system")?.id;
+  const place = ancestor(world, hereId, "settlement")?.id;
+  const systems = system && !base.systems.includes(system) ? [...base.systems, system] : base.systems;
+  const places = place && !base.places.includes(place) ? [...base.places, place] : base.places;
+  if (log && systems === base.systems && places === base.places) return null;
+  return { ...base, systems, places };
+}
+
+// How far the character is from being able to seek a Master
+export function trailReadiness(log: TrainingLog | undefined, level: number): { systems: number; levels: number; open: boolean } {
+  const systems = log?.systems.length ?? 0;
+  const levels = Math.max(0, level - (log?.startLevel ?? level));
+  return { systems, levels, open: !!log && !log.weapon && systems >= TRAIL_SYSTEMS && levels >= TRAIL_LEVELS };
+}
+
+const TRAIL_SYLLABLES = ["ka", "ren", "tho", "vel", "mar", "isa", "dun", "or", "zee", "lan", "qua", "bel", "tor", "ny", "sha", "rik", "om", "ves"];
+// A made-up name for someone of a trail
+function trailName(seed: string): string {
+  const part = (salt: string, n: number) => Array.from({ length: n }, (_, i) => TRAIL_SYLLABLES[Math.floor(unitOf(`${seed}|${salt}|${i}`) * TRAIL_SYLLABLES.length)]).join("");
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+  return `${cap(part("given", 2))} ${cap(part("family", 2 + Math.floor(unitOf(`${seed}|len`) * 2)))}`;
+}
+
+// The best room under an area for someone to wait in: one whose name or type fits `haunt`, then one of a building that does, then any
+// room; a building or the area itself when nothing beneath it is mapped yet
+function spotUnder(world: World, areaId: string, haunt: RegExp, seed: string): string {
+  const under: Area[] = [];
+  const walk = (id: string) => childrenOf(world, id).forEach((c) => { under.push(c); walk(c.id); });
+  walk(areaId);
+  const fits = (a: Area) => haunt.test(`${a.name} ${a.type}`);
+  const rooms = under.filter((a) => a.kind === "room" && !a.occupants.some((o) => o.disposition === "hostile"));
+  const building = (a: Area) => (a.parentId ? world.areas[a.parentId] : undefined);
+  const ranked = [
+    rooms.filter(fits),
+    rooms.filter((a) => { const b = building(a); return !!b && fits(b); }),
+    rooms,
+    under.filter((a) => a.kind === "building"),
+    under.filter((a) => a.kind === "settlement"),
+  ].find((list) => list.length);
+  if (!ranked) return areaId;
+  const sorted = [...ranked].sort((a, b) => a.id.localeCompare(b.id));
+  return sorted[Math.floor(unitOf(`${seed}|spot`) * sorted.length)].id;
+}
+
+const trailOccupant = (p: TrailPerson, role: string): Occupant => ({ id: p.id, name: p.name, role, disposition: "friendly", count: 1, loadout: [] });
+
+// "Back room, The Rusty Coupling, Mos Teth"
+function spotName(world: World, areaId: string): string {
+  return trailOf(world, areaId).filter((a) => ["planet", "settlement", "building", "room"].includes(a.kind)).reverse().map((a) => a.name).slice(0, 3).join(", ");
+}
+
+// Put the trail's people where they can be met, as far as the world is mapped: someone not yet placed goes into a room under the place
+// they are to be found in, once it has one; someone whose area lost them (a place re-rolled) is put back. The Master is placed only once
+// the informant has spoken. The world and the trail are returned as they were when there is nothing to do.
+export function placeTrailPeople(world: World, trail: WeaponTrail): { world: World; trail: WeaponTrail } {
+  let next = world;
+  let t = trail;
+  const keys: ("contact" | "informant" | "master")[] = ["contact", "informant", "master"];
+  for (const key of keys) {
+    const p = t[key];
+    if (!next.areas[p.within]) continue;
+    if (key === "master" && !t.quests.find((q) => q.id === "trail-find")?.objectives[2]?.completed) continue;
+    let areaId = p.areaId && next.areas[p.areaId] ? p.areaId : undefined;
+    if (!areaId) {
+      const spot = spotUnder(next, p.within, new RegExp(p.haunt ?? "cantina|bar|tavern|market|port", "i"), `${t.seed}|${key}`);
+      if (next.areas[spot].kind === "system") continue; // nothing mapped there yet
+      areaId = spot;
+    }
+    if (p.areaId === areaId && next.areas[areaId].occupants.some((o) => o.id === p.id)) continue;
+    if (next === world) next = copyOf(world);
+    next.areas[areaId].occupants = [...next.areas[areaId].occupants.filter((o) => o.id !== p.id), trailOccupant(p, key)];
+    t = { ...t, [key]: { ...p, areaId } };
+  }
+  if (t === trail) return { world, trail };
+  // The search's objectives point at where the people now are
+  const quests = t.quests.map((q) => {
+    if (q.id !== "trail-find") return q;
+    const objectives = q.objectives.map((o, i) => {
+      if (!o.target) return o;
+      if (i === 0 && t.contact.areaId) return { ...o, target: { ...o.target, areaId: t.contact.areaId } };
+      if (i === 2 && t.informant.areaId) return { ...o, target: { ...o.target, areaId: t.informant.areaId } };
+      if ((i === 3 || i === 4) && t.master.areaId) return { ...o, description: i === 3 ? `Go to ${spotName(next, t.master.areaId)}` : o.description, target: { ...o.target, areaId: t.master.areaId } };
+      return o;
+    });
+    return { ...q, objectives };
+  });
+  return { world: next, trail: { ...t, quests } };
+}
+
+const nearestSystems = (world: World, fromId: string, skip: string[]) =>
+  Object.values(world.areas)
+    .filter((a) => a.kind === "system" && !skip.includes(a.id))
+    .map((s) => ({ s, steps: findPath(world, fromId, s.id)?.length ?? Infinity }))
+    .filter((x) => Number.isFinite(x.steps))
+    .sort((a, b) => a.steps - b.steps || a.s.id.localeCompare(b.s.id))
+    .map((x) => x.s);
+
+// Begin the search for a Master of a weapon type. `monsters` and `equipment` are the rules data (the pupil and the beast are stat blocks),
+// so this runs on the server. The contact is someone in a settlement visited before (one of another star system first), the informant
+// is in the nearest star system not yet been to, and the Master is in the informant's system.
+export function startWeaponTrail(world: World, data: { monsters: Sw5eMonster[]; equipment: Sw5eEquipment[] }, log: TrainingLog, kind: WeaponKind, traits: TrainerTraits, hereId: string, seed: string): { world: World; log: TrainingLog } | { error: string } {
+  if (log.weapon) return { error: "You are already following the trail of a Master." };
+  const tradition = masterTraditions(kind, traits)[0];
+  if (!tradition) return { error: "No Master teaches that kind of weapon." };
+  const hereSystem = ancestor(world, hereId, "system")?.id ?? "";
+  const hereSettlement = ancestor(world, hereId, "settlement")?.id;
+  const earlier = log.places.filter((id) => world.areas[id] && id !== hereSettlement);
+  const contactAt = earlier.find((id) => ancestor(world, id, "system")?.id !== hereSystem) ?? earlier[0];
+  if (!contactAt) return { error: "You need to have been somewhere before, where a rumour can be heard." };
+  const informantSystem = nearestSystems(world, hereId, [...log.systems, hereSystem])[0] ?? nearestSystems(world, hereId, [hereSystem])[0];
+  if (!informantSystem) return { error: "There is no other star system to send you to." };
+  const key = `${seed}|${kind}`;
+  const contact: TrailPerson = { id: `trail-${seed}-contact`, name: trailName(`${key}|contact`), within: contactAt };
+  const informant: TrailPerson = { id: `trail-${seed}-informant`, name: trailName(`${key}|informant`), within: informantSystem.id };
+  const master: TrailPerson = { id: `trail-${seed}-master`, name: trailName(`${key}|master`), within: informantSystem.id, haunt: tradition.haunt.source };
+  const find: Quest = {
+    id: "trail-find",
+    title: `Find a Master of ${WEAPON_KIND_NAMES[kind]}`,
+    description: `Somewhere is ${tradition.title}. Others have heard of them: start where you have been before. (House rule: weapons are learned from a Master.)`,
+    status: "active",
+    ordered: true,
+    objectives: [
+      { description: `Ask ${contact.name} in ${world.areas[contactAt].name} about a teacher`, completed: false, target: { kind: "serve", areaId: contactAt, person: contact.id } },
+      { description: `Travel to ${systemName(informantSystem.name)}`, completed: false, target: { kind: "reach", areaId: informantSystem.id } },
+      { description: `Find ${informant.name}, who knows where the Master is`, completed: false, target: { kind: "serve", areaId: informantSystem.id, person: informant.id } },
+      { description: "Go where the informant sent you", completed: false, target: { kind: "reach", areaId: informantSystem.id } },
+      { description: `Ask ${master.name} to teach you`, completed: false, target: { kind: "serve", areaId: informantSystem.id, person: master.id } },
+    ],
+  };
+  // The pupil (a person of the tradition's kind near the first trial's level) and the beast (near the third's)
+  const near = (pool: Sw5eMonster[], cr: number) => [...pool].sort((a, b) => Math.abs(crValue(a.challengeRating) - cr) - Math.abs(crValue(b.challengeRating) - cr) || a.name.localeCompare(b.name))[0];
+  const people = data.monsters.filter((m) => m.hitPoints > 0 && /humanoid/i.test(String(m.types ?? "")));
+  // (a pupil for one character of the first trial's level, fought alone: challenge 1 or less)
+  const pupilBlock = near(people.filter((m) => tradition.pupil.test(m.name) && crValue(m.challengeRating) <= 1), 1) ?? near(people, 1);
+  const beasts = data.monsters.filter((m) => m.hitPoints > 0 && /beast/i.test(String(m.types ?? "")));
+  const beastBlock = near(beasts, Math.ceil(TRIAL_LEVELS[2] / 2));
+  const spawns: TrailSpawn[] = [];
+  if (pupilBlock) spawns.push({ trial: 1, occupant: { ...statBlockOccupant(pupilBlock, data.equipment, `trail-${seed}-pupil`, 1, "pupil"), name: `${trailName(`${key}|pupil`)} (the Master's pupil)` } });
+  if (beastBlock) spawns.push({ trial: 3, occupant: { ...statBlockOccupant(beastBlock, data.equipment, `trail-${seed}-beast`, 1, "creature"), name: `${beastBlock.name} (the Master's quarry)` } });
+  const weapon = data.equipment.find((e) => new RegExp(`^Martial${kind}$`, "i").test(String((e as { weaponClassification?: string }).weaponClassification ?? "")));
+  spawns.push({ trial: 4, cache: { id: `trail-${seed}-relic`, name: "Stolen weapon case", kind: "case", credits: 0, items: weapon ? [{ name: weapon.name, quantity: 1, source: "equipment" }] : [], locked: 12 } });
+  const trail: WeaponTrail = { kind, tradition: tradition.id, seed, contact, informant, master, found: false, stage: 0, quests: [find], spawns };
+  const placed = placeTrailPeople(world, trail);
+  return { world: placed.world, log: { ...log, weapon: placed.trail } };
+}
+
+// "the Hoth System", "the Kessel system"
+const systemName = (name: string) => `the ${name}${/system$/i.test(name) ? "" : " system"}`;
+const traditionOf = (trail: WeaponTrail) => TRADITIONS.find((t) => t.id === trail.tradition) ?? TRADITIONS[0];
+const isTrial = (q: Quest) => /^trail-\d$/.test(q.id);
+
+// The five trials, set when the Master is found. Each waits for its level; its objectives are picked when it begins (advanceTraining)
+function trialQuests(trail: WeaponTrail): Quest[] {
+  return traditionOf(trail).trials.map((title, i) => ({
+    id: `trail-${i + 1}`,
+    title: `Trial ${i + 1} of ${trail.master.name}: ${title}`,
+    description: i + 1 === PROFICIENT_STAGE ? `Passing it makes you proficient with ${WEAPON_KIND_NAMES[trail.kind]}.` : i + 1 === MASTERY_STAGE ? `Passing it makes you a master of ${WEAPON_KIND_NAMES[trail.kind]} (house rule: +${MASTERY_ATTACK} to attack with them, exotic ones learned too).` : `Opens at level ${TRIAL_LEVELS[i]}.`,
+    status: "inactive" as const,
+    gate: TRIAL_LEVELS[i],
+    ordered: true,
+    objectives: [],
+  }));
+}
+
+// The objectives of a trial as it begins, read off the Master's world: the pupil in the Master's room, the most dangerous place of the
+// Master's planet, the beast in a place held by enemies there, the stolen weapon in another, and the last question
+function trialObjectives(world: World, trail: WeaponTrail, i: number): Quest["objectives"] {
+  const masterAt = trail.master.areaId ?? trail.master.within;
+  const planet = ancestor(world, masterAt, "planet");
+  const onPlanet = planet ? Object.values(world.areas).filter((a) => a.id !== masterAt && a.kind !== "planet" && ancestor(world, a.id, "planet")?.id === planet.id) : [];
+  const worst = [...onPlanet].sort((a, b) => b.danger - a.danger || a.id.localeCompare(b.id))[0];
+  const held = onPlanet.filter(isHeld).sort((a, b) => b.danger - a.danger || a.id.localeCompare(b.id));
+  const back = { description: `Return to ${trail.master.name}`, completed: false, target: { kind: "serve" as const, areaId: masterAt, person: trail.master.id } };
+  const pupil = trail.spawns.find((s) => s.trial === 1)?.occupant;
+  const beast = trail.spawns.find((s) => s.trial === 3)?.occupant;
+  if (i === 1) return pupil ? [{ description: `Beat ${pupil.name}`, completed: false, target: { kind: "defeat", areaId: masterAt } }, back] : [back];
+  if (i === 2) return worst ? [{ description: `Go to ${spotName(world, worst.id)} and come back`, completed: false, target: { kind: "reach", areaId: worst.id } }, back] : [back];
+  if (i === 3) {
+    const lair = held.find((a) => a.id !== worst?.id) ?? worst;
+    return lair && beast ? [{ description: `Hunt down ${beast.name} at ${spotName(world, lair.id)}`, completed: false, target: { kind: "defeat", areaId: lair.id } }, back] : [back];
+  }
+  if (i === 4) {
+    const den = held[0] ?? worst;
+    return den ? [{ description: `Take the stolen weapon back from ${spotName(world, den.id)}`, completed: false, target: { kind: "loot", areaId: den.id, cacheId: `trail-${trail.seed}-relic` } }, back] : [back];
+  }
+  const ask = traditionOf(trail).insight;
+  return [{ description: ask.question, completed: false, target: { kind: "serve", areaId: masterAt, person: trail.master.id, choices: [...ask.choices] } }];
+}
+
+// What a trial puts in the world as it begins: the pupil turns on you in the Master's room, the beast waits in its lair, the case is hidden
+function spawnTrial(world: World, trail: WeaponTrail, i: number, objectives: Quest["objectives"]): World {
+  const spawn = trail.spawns.find((s) => s.trial === i);
+  const at = objectives[0]?.target?.areaId;
+  if (!spawn || !at || !world.areas[at] || objectives.length < 2) return world;
+  const next = copyOf(world);
+  const area = next.areas[at];
+  if (spawn.occupant && !area.occupants.some((o) => o.id === spawn.occupant!.id)) area.occupants = [...area.occupants, { ...spawn.occupant, disposition: "hostile" }];
+  if (spawn.cache && !area.loot.some((c) => c.id === spawn.cache!.id)) area.loot = [...area.loot, spawn.cache];
+  return next;
+}
+
+// What the trail comes to as the world changes: its people placed as their places are mapped, the search's and the trials' objectives
+// ticked (see advanceQuests), the next trial begun once the one before is passed and the character has its level, and the stage raised
+// as each is passed. `gained` is what the character gained this time, if anything. A master made ends the trail; the log starts again
+// for the next one.
+export function advanceTraining(world: World, log: TrainingLog, hereId: string, level: number): { world: World; log: TrainingLog; finished: Quest[]; changed: boolean; gained?: "proficient" | "master" } {
+  if (!log.weapon) return { world, log, finished: [], changed: false };
+  const placed = placeTrailPeople(world, log.weapon);
+  let w = placed.world;
+  let trail = placed.trail;
+  let changed = w !== world || trail !== log.weapon;
+  const ticked = advanceQuests(w, trail.quests, hereId);
+  if (ticked.changed) {
+    trail = { ...trail, quests: ticked.quests };
+    changed = true;
+  }
+  const waiting = trail.quests.find((q) => isTrial(q) && q.status === "inactive");
+  if (waiting && !trail.quests.some((q) => isTrial(q) && q.status === "active") && level >= (waiting.gate ?? 1)) {
+    const i = Number(waiting.id.slice(-1));
+    const objectives = trialObjectives(w, trail, i);
+    w = spawnTrial(w, trail, i, objectives);
+    trail = { ...trail, quests: trail.quests.map((q) => (q.id === waiting.id ? { ...q, status: "active" as const, objectives } : q)) };
+    changed = true;
+  }
+  const passed = trail.quests.filter((q) => isTrial(q) && q.status === "completed").length;
+  let gained: "proficient" | "master" | undefined;
+  if (passed !== trail.stage) {
+    gained = passed >= MASTERY_STAGE ? "master" : passed >= PROFICIENT_STAGE && trail.stage < PROFICIENT_STAGE ? "proficient" : undefined;
+    trail = { ...trail, stage: passed };
+    changed = true;
+  }
+  const next: TrainingLog = trail.stage >= MASTERY_STAGE
+    ? { startLevel: level, systems: [], places: [], mastered: [...(log.mastered ?? []), { kind: trail.kind, tradition: trail.tradition, insight: trail.insight }] }
+    : { ...log, weapon: trail };
+  return { world: w, log: changed ? next : log, finished: ticked.finished, changed, gained };
+}
+
+// Do what an objective asks of a person (ask, return, answer): only the next objective of its quest, and only where that person is.
+// Finding the Master sets the trials. `choice` is the answer to a question.
+export function serveTraining(world: World, log: TrainingLog, questId: string, index: number, hereId: string, choice?: string): { log: TrainingLog; message: string; finished?: Quest } | { error: string } {
+  const trail = log.weapon;
+  const quest = trail?.quests.find((q) => q.id === questId);
+  const objective = quest?.objectives[index];
+  if (!trail || !quest || quest.status !== "active" || !objective || objective.completed || objective.target?.kind !== "serve") return { error: "There is nothing to do here." };
+  if (quest.ordered && quest.objectives.findIndex((o) => !o.completed) !== index) return { error: "Something else has to be done first." };
+  const target = objective.target;
+  const at = world.areas[target.areaId];
+  if (!at || !at.occupants.some((o) => o.id === target.person) || !trailOf(world, hereId).some((a) => a.id === at.id)) return { error: "The one you are looking for is not here." };
+  if (target.choices && (!choice || !target.choices.includes(choice))) return { error: "An answer is needed." };
+  const objectives = quest.objectives.map((o, i) => (i === index ? { ...o, completed: true } : o));
+  const done = objectives.every((o) => o.completed);
+  let quests = trail.quests.map((q) => (q.id === questId ? { ...q, objectives, status: done ? ("completed" as const) : q.status } : q));
+  const tradition = traditionOf(trail);
+  let message: string;
+  if (questId === "trail-find" && index === 0) message = `${trail.contact.name} lowers their voice: "There is ${tradition.title}. Go to ${systemName(world.areas[trail.informant.within]?.name ?? "a far")} and ask for ${trail.informant.name}."`;
+  else if (questId === "trail-find" && index === 2) message = `${trail.informant.name}: "${trail.master.name} keeps to themselves, not far from here. I'll tell you where, and you didn't hear it from me."`;
+  else if (questId === "trail-find" && index === 4) {
+    message = `${trail.master.name} looks you over for a long moment. "We will see what you are made of." Five trials, each when you are ready for it.`;
+    quests = [...quests, ...trialQuests(trail)];
+  } else if (target.choices) message = `${trail.master.name} hears your answer, "${choice}", nods, and says no more about it.`;
+  else message = `${trail.master.name}: "Good. Rest, and come back when you are ready for more."`;
+  const weapon: WeaponTrail = { ...trail, quests, found: trail.found || (questId === "trail-find" && done), insight: target.choices ? choice : trail.insight };
+  return { log: { ...log, weapon }, message, ...(done ? { finished: quests.find((q) => q.id === questId) } : {}) };
+}
+
+// The weapon types a character has learned from Masters: proficient (stage 2) or master (stage 5)
+export function weaponTraining(log: TrainingLog | undefined): Partial<Record<WeaponKind, "proficient" | "master">> {
+  const out: Partial<Record<WeaponKind, "proficient" | "master">> = {};
+  for (const m of log?.mastered ?? []) out[m.kind] = "master";
+  const t = log?.weapon;
+  if (t && !out[t.kind] && t.stage >= PROFICIENT_STAGE) out[t.kind] = t.stage >= MASTERY_STAGE ? "master" : "proficient";
+  return out;
 }
