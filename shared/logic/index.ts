@@ -1975,7 +1975,7 @@ export interface RoomLayout {
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
 // way in, rows = ranks across the floor), size in squares, how many, and flags:
 //   b blocks movement   c gives cover   s staff stand at it   t people sit at it
-type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "rows", size: string, count: string, flags?: string];
+type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "rows" | "grid", size: string, count: string, flags?: string];
 interface RoomPlan { match: RegExp; size: [number, number, number, number]; items: Furnishing[] }
 
 const ROOM_PLANS: RoomPlan[] = [
@@ -1993,30 +1993,31 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /landing platform|platform office/i, size: [12, 14, 9, 11], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "1-2", "bc"], ["Tool cart", "wall", "1x1", "1", "bcs"]] },
   { match: /detention/i, size: [8, 10, 6, 7], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "1"]] },
   { match: /barracks|tents/i, size: [8, 10, 6, 8], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
-  { match: /docking|hangar|landing|berth|\barm\b/i, size: [13, 16, 10, 12], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
-  { match: /main bar|^cantina$/i, size: [11, 13, 9, 11], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
-  { match: /bar\b|cantina|common room|commons/i, size: [9, 11, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
-  { match: /stall|market|promenade|trade|shopfront/i, size: [10, 13, 7, 9], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
-  { match: /dance floor|gambling|gaming floor|high-stakes|lounge|salon|dining/i, size: [9, 12, 7, 9], items: [["Sabacc table", "center", "2x2", "1-3", "bct"], ["Table", "center", "1x1", "2-4", "bct"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /docking|hangar|landing|berth|\barm\b/i, size: [13, 16, 10, 12], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"], ["Fuel drum", "corner", "1x1", "0-2", "bcn"], ["Tire stack", "corner", "1x1", "0-1", "bcn"]] },
+  { match: /main bar|^cantina$/i, size: [11, 13, 9, 11], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"], ["Banner", "wall", "1x1", "0-2", "n"], ["Floor lamp", "corner", "1x1", "0-1", "n"]] },
+  { match: /bar\b|cantina|common room|commons/i, size: [9, 11, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"], ["Banner", "wall", "1x1", "0-1", "n"], ["Floor lamp", "corner", "1x1", "0-1", "n"]] },
+  { match: /stall|market|promenade|trade|shopfront/i, size: [10, 13, 7, 9], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"], ["Water jar", "corner", "1x1", "0-1", "n"]] },
+  { match: /dance floor|gambling|gaming floor|high-stakes|lounge|salon|dining/i, size: [9, 12, 7, 9], items: [["Sabacc table", "center", "2x2", "1-3", "bct"], ["Table", "center", "1x1", "2-4", "bct"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Security camera", "wall", "1x1", "1"], ["Banner", "wall", "1x1", "0-2", "n"], ["Floor lamp", "corner", "1x1", "0-1", "n"]] },
   { match: /sales floor|upgrade showroom/i, size: [8, 11, 6, 8], items: [["Sales counter", "far", "4x1", "1", "bcs"], ["Display shelf", "wall", "3x1", "2-4", "bc"], ["Display table", "center", "2x1", "1-2", "bc"], ["Wares rack", "corner", "1x1", "1-2", "bc"], ["Security camera", "wall", "1x1", "1"]] },
   // A droid dealer's shop (2026-10-21, the user's design): the droids for sale stand on plinths in rows, the customizations it sells on
   // its parts shelves, a counter, a charging station; the repair bay has a rig to work on a droid
   { match: /^droid showroom$/i, size: [9, 12, 8, 10], items: [["Sales counter", "far", "4x1", "1", "bcs"], ["Droid plinth", "rows", "1x1", "4-6", "bc"], ["Droid parts shelf", "wall", "3x1", "2", "bc"], ["Display case", "center", "2x1", "1", "bc"], ["Charging station", "corner", "1x1", "1-2", "b"], ["Security camera", "wall", "1x1", "1"]] },
   { match: /^droid repair bay$/i, size: [7, 9, 6, 8], items: [["Droid repair rig", "center", "2x2", "1", "bcs"], ["Workbench", "wall", "3x1", "1", "bs"], ["Droid parts shelf", "wall", "3x1", "1", "bc"], ["Parts bin", "corner", "1x1", "1-2", "bc"], ["Charging station", "corner", "1x1", "1", "b"]] },
-  { match: /kitchen|pantry|dispensary|forge room|tailor|repair counter/i, size: [6, 8, 5, 7], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Shelving", "wall", "3x1", "1-2", "b"], ["Parts bin", "center", "1x1", "1-2", "bc"]] },
+  { match: /forge room/i, size: [6, 8, 5, 7], items: [["Forge", "wall", "2x1", "1", "bsn"], ["Workbench", "wall", "3x1", "1", "bsn"], ["Tool rack", "wall", "2x1", "1", "bn"], ["Fuel drum", "corner", "1x1", "1-2", "bcn"], ["Water jar", "corner", "1x1", "0-1", "n"]] },
+  { match: /kitchen|pantry|dispensary|forge room|tailor|repair counter/i, size: [6, 8, 5, 7], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Shelving", "wall", "3x1", "1-2", "b"], ["Parts bin", "center", "1x1", "1-2", "bc"], ["Kitchen counter", "wall", "2x1", "0-1", "bsn"], ["Stove", "wall", "1x1", "0-1", "bn"], ["Water jar", "corner", "1x1", "0-1", "n"]] },
   { match: /parade yard/i, size: [9, 12, 7, 9], items: [["Barricade", "center", "2x1", "1-2", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"]] },
-  { match: /bedchambers|guest rooms|palatial suite|grand hall|^hall$/i, size: [8, 11, 6, 8], items: [["Bed", "wall", "2x1", "2-4", "b"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1-2", "bct"], ["Cabinet", "corner", "1x1", "1-2", "b"], ["Pillar", "center", "1x1", "0-2", "bc"]] },
-  { match: /ward|surgery|reception/i, size: [7, 9, 6, 7], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
-  { match: /reactor|engine/i, size: [8, 10, 7, 9], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"]] },
-  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics|machine shop|pump house|scrapyard|salvage heap/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
-  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"], ["Access panel", "wall", "1x1", "0-1"], ["Security camera", "wall", "1x1", "0-1"]] },
-  { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "0-1"]] },
+  { match: /bedchambers|guest rooms|palatial suite|grand hall|^hall$/i, size: [8, 11, 6, 8], items: [["Bed", "wall", "2x1", "2-4", "b"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1-2", "bct"], ["Cabinet", "corner", "1x1", "1-2", "b"], ["Pillar", "grid", "1x1", "0-2", "bc"], ["Brazier", "corner", "1x1", "0-2", "bn"], ["Banner", "wall", "1x1", "1-2", "n"], ["Rug", "center", "2x2", "0-1", "n"], ["Statue", "corner", "1x1", "0-1", "bcn"]] },
+  { match: /ward|surgery|reception/i, size: [7, 9, 6, 7], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"], ["Privacy screen", "wall", "2x1", "0-2", "bn"], ["IV stand", "corner", "1x1", "0-2", "n"], ["Sink", "wall", "1x1", "0-1", "bn"]] },
+  { match: /reactor|engine/i, size: [8, 10, 7, 9], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Generator", "corner", "1x1", "0-1", "bcn"]] },
+  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics|machine shop|pump house|scrapyard|salvage heap/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"], ["Engine block", "center", "1x1", "0-1", "bcn"], ["Fuel drum", "corner", "1x1", "0-2", "bcn"]] },
+  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"], ["Access panel", "wall", "1x1", "0-1"], ["Security camera", "wall", "1x1", "0-1"], ["Locker", "wall", "2x1", "0-2", "bn"]] },
+  { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "0-1"], ["Server rack", "wall", "1x1", "0-2", "bn"], ["Console bank", "wall", "3x1", "0-1", "bsn"]] },
   { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"], ["Security camera", "wall", "1x1", "0-1"], ["Alarm panel", "wall", "1x1", "0-1"]] },
-  { match: /booth|den\b|tent|quarters|apartments/i, size: [5, 7, 5, 6], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"]] },
+  { match: /booth|den\b|tent|quarters|apartments/i, size: [5, 7, 5, 6], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"], ["Floor lamp", "corner", "1x1", "0-1", "n"], ["Cushions", "center", "1x1", "0-1", "n"], ["Water jar", "corner", "1x1", "0-1", "n"]] },
   { match: /^roof/i, size: [6, 10, 5, 8], items: [["Vent stack", "corner", "1x1", "1-2", "bc"], ["Water tank", "corner", "2x2", "0-1", "bc"], ["Antenna mast", "wall", "1x1", "1", "b"], ["Equipment crate", "wall", "2x1", "1-2", "bc"], ["Cooling unit", "center", "2x1", "0-1", "bc"]] },
   { match: /crypt|sanctum/i, size: [8, 10, 7, 9], items: [["Sarcophagus", "center", "1x2", "1-3", "bc"], ["Broken pillar", "corner", "1x1", "2-4", "bc"], ["Altar", "far", "2x1", "1", "bc"], ["Rubble", "wall", "1x1", "2-4", "bc"]] },
   { match: /cave|tunnel|chamber|mouth|breach|trailhead|perimeter|shelter|rooftop|collapsed|hull/i, size: [7, 11, 6, 9], items: [["Boulder", "center", "1x1", "2-4", "bc"], ["Rubble", "wall", "2x1", "2-4", "bc"], ["Rock pillar", "corner", "1x1", "1-3", "bc"], ["Campfire ring", "center", "1x1", "0-1", "t"]] },
-  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"], ["Security camera", "wall", "1x1", "0-1"], ["Info kiosk", "wall", "1x1", "0-1", "b"], ["Alarm panel", "wall", "1x1", "0-1"]] },
+  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "grid", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"], ["Security camera", "wall", "1x1", "0-1"], ["Info kiosk", "wall", "1x1", "0-1", "b"], ["Alarm panel", "wall", "1x1", "0-1"], ["Statue", "corner", "1x1", "0-2", "bcn"], ["Banner", "wall", "1x1", "1-3", "n"], ["Fountain", "center", "2x2", "0-1", "bcn"], ["Brazier", "corner", "1x1", "0-2", "bn"]] },
   { match: /./, size: [6, 8, 5, 7], items: [["Crate", "wall", "1x1", "1-3", "bc"], ["Bench", "wall", "2x1", "1-2", "t"], ["Terminal", "wall", "1x1", "0-1", "bs"]] },
 ];
 
@@ -2069,7 +2070,7 @@ function addPanels(world: World, r: Random) {
       const kind = useKindOf(name);
       if (!kind || have.has(kind)) continue;
       const [w, h] = size.split("x").map(Number);
-      for (let i = 0, wanted = range(count, r); i < wanted; i++) {
+    for (let i = 0, wanted = range(count, r); i < wanted; i++) {
         const spot = findSpot(room.layout, r, place, w, h);
         if (!spot) break;
         const asset: RoomAsset = { id: `${room.id}-p${room.layout.assets.length + 1}`, kind: "furniture", name, ...spot, ...(flags.includes("b") ? { blocks: true } : {}) };
@@ -2623,6 +2624,26 @@ export function fallOutcome(plan: FallPlan, checks: { burst?: number; jump?: num
 const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
   side === "n" ? { x: along, y: 0 } : side === "s" ? { x: along, y: layout.height - 1 } : side === "w" ? { x: 0, y: along } : { x: layout.width - 1, y: along };
 
+// Where the pillars of a hall stand (2026-11-09; the user: pillars "seem to be placed too often and randomly ... need updated logic to be placed regularly"): a colonnade, two rows
+// along the longer side at a quarter and three quarters of the way across (one row down the middle of a narrow room), a pillar every three squares, the run centred and mirrored so
+// that both ends match. Listed centre first and in pairs, so that a room that takes fewer pillars takes the middle ones, evenly; the caller keeps those that fit.
+export function colonnade(width: number, height: number): { x: number; y: number }[] {
+  const alongX = width >= height;
+  const L = alongX ? width : height;
+  const S = alongX ? height : width;
+  if (L < 5 || S < 4) return [];
+  const a = Math.max(1, Math.round(S * 0.25));
+  const rows = S - 1 - a > a ? [a, S - 1 - a] : [Math.floor((S - 1) / 2)];
+  // (an even run has no middle square: it takes an even number of pillars, so that the ends match)
+  let m = Math.max(1, Math.floor((L - 2) / 3));
+  if (L % 2 === 0 && m % 2 === 1) m = Math.max(2, m - 1);
+  const columns = Array.from({ length: m }, (_, j) => {
+    const p = (L - 1) / 2 + (j - (m - 1) / 2) * 3;
+    return { j, at: j < (m - 1) / 2 ? Math.floor(p) : Math.ceil(p) };
+  }).sort((p, q) => Math.abs(p.j - (m - 1) / 2) - Math.abs(q.j - (m - 1) / 2) || p.j - q.j);
+  return columns.flatMap(({ at }) => rows.map((row) => (alongX ? { x: at, y: row } : { x: row, y: at })));
+}
+
 // Somewhere for an asset of the given size, where nothing stands and no way in is blocked
 function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number, h: number, awayFrom?: Side): { x: number; y: number; w: number; h: number } | undefined {
   const taken = (x: number, y: number, ww: number, hh: number) =>
@@ -2656,6 +2677,11 @@ function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number
       if (x + ww <= W && y + hh <= H && onRim(x, y, ww, hh) && far(x, y, ww, hh)) add(x, y, ww, hh);
     }
     if (!options.length && place !== "far") for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (onRim(x, y, w, h)) add(x, y, w, h);
+  } else if (place === "grid") {
+    // (the next free place of the colonnade, in its order: a regular row, not a roll of the dice)
+    for (const p of colonnade(W, H)) add(p.x, p.y, w, h);
+    if (options.length) r.pick(options);
+    return options[0];
   } else if (place === "corner") {
     for (const [x, y] of [[0, 0], [W - w, 0], [0, H - h], [W - w, H - h]]) add(x, y, w, h);
   } else if (place === "wall" || place === "far") {
@@ -2679,17 +2705,25 @@ function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number
 export function furnishRoom(room: Area, r: Random, buildingType: string) {
   const layout = room.layout!;
   const plan = planFor(room, buildingType);
+  const own = createRandom(Number(room.id.replace(/D/g, "") || 1) * 7919 + 131);
   const wayIn = layout.assets.find((a) => a.kind === "exit" || a.kind === "door")?.side;
   let n = layout.assets.length;
   for (const [name, place, size, count, flags = ""] of plan.items) {
     const [w, h] = size.split("x").map(Number);
-    for (let i = 0, wanted = range(count, r); i < wanted; i++) {
+    // (the pieces added in 2026-11-09 are flagged "n": they draw from a generator of their own, so that the dice the rest of the world is made with fall as they did; and a colonnade
+    // has the same on both sides, so its pillars come in pairs, the rest of what was drawn only spending its dice)
+    const fresh = flags.includes("n");
+    const dice = fresh ? own : r;
+    const drawn = range(count, dice);
+    const paired = place === "grid" ? (drawn ? Math.max(2, drawn - (drawn % 2)) : 0) : drawn;
+    for (let i = 0, wanted = drawn; i < wanted; i++) {
       // (an arena's pit is in the very middle of its floor)
       const middle = name === "Fighting pit" ? { x: Math.floor((layout.width - w) / 2), y: Math.floor((layout.height - h) / 2), w, h } : undefined;
-      const spot = middle && !layout.assets.some((a) => a.x < middle.x + w && middle.x < a.x + a.w && a.y < middle.y + h && middle.y < a.y + a.h) ? middle : findSpot(layout, r, place, w, h, wayIn)
+      const spot = middle && !layout.assets.some((a) => a.x < middle.x + w && middle.x < a.x + a.w && a.y < middle.y + h && middle.y < a.y + a.h) ? middle : findSpot(layout, dice, place, w, h, wayIn)
         // (a band's stage that finds no 3x2 corner takes a smaller one: audit T-045, the same fallback as `livenWorld`)
         ?? (name === "Bandstand" ? findSpot(layout, r, "corner", 2, 2, wayIn) ?? findSpot(layout, r, "wall", 2, 1, wayIn) : undefined);
       if (!spot) break;
+      if (i >= paired) continue;
       const asset: RoomAsset = { id: `${room.id}-${++n}`, kind: "furniture", name, ...spot, ...(flags.includes("b") ? { blocks: true } : {}), ...(flags.includes("c") ? { cover: true } : {}) };
       layout.assets.push(asset);
       if (asset.blocks && floorFaults(layout)) layout.assets.pop();
