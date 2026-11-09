@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { useCharacter, Character } from "./useCharacter";
 import { rollDice, sumDiceResults, playerRoll, throwFor, type TableDie } from "@/lib/sw5e/dice";
 import { rollOnTable } from "@/lib/stores/useDice";
-import { conditionMechanics, motionFeet, sizeRank, type PowerMotion } from "@/lib/sw5e/rules";
+import { buffMechanics, buffSummary, conditionMechanics, motionFeet, sizeRank, type BuffMods, type PowerMotion } from "@/lib/sw5e/rules";
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
 import type { RoomAsset, StatProfile, StatAttack, StatSpecial, StatSave, ShipFight as ShipFightData, ShipSheet as ShipSheetData, ShipHelmAction, ShipBoost } from "@shared/logic";
 import type { AmmoRider } from "@shared/logic";
@@ -270,6 +270,8 @@ export interface ActiveCondition {
   endsOnDamage?: boolean;
   // Ends at the start of the creature's next turn ("blinded until the start of their next turn")
   untilStart?: boolean;
+  // A boon from a power (rules.ts powerBuff): the condition then has no entry in the conditions data, and these are what it does
+  mods?: BuffMods;
 }
 
 export const LASTING = 100;
@@ -609,7 +611,12 @@ function stepTowards(arena: Arena, combatants: Combatant[], mover: Combatant, ta
   return best;
 }
 
-const mechanicsOf = (c: Combatant) => (c.conditions ?? []).map((condition) => ({ condition, m: conditionMechanics(condition.name) }));
+const mechanicsOf = (c: Combatant) => (c.conditions ?? []).map((condition) => ({ condition, m: condition.mods ? buffMechanics(condition.mods) : conditionMechanics(condition.name) }));
+// What the boons of powers on a creature add up to: armor class, a bonus to saving throws, and the damage types they halve
+const boonsOf = (c: Combatant) => {
+  const mods = (c.conditions ?? []).flatMap((x) => (x.mods ? [x.mods] : []));
+  return { ac: mods.reduce((n, m) => n + (m.ac ?? 0), 0), saves: mods.reduce((n, m) => n + (m.saves ?? 0), 0), resist: mods.flatMap((m) => m.resist ?? []) };
+};
 
 // The condition that keeps a creature from acting, if any
 export const cannotAct = (c: Combatant): string | undefined => mechanicsOf(c).find((x) => x.m.incapacitated)?.condition.name;
@@ -693,10 +700,13 @@ function savingThrow(c: Combatant, ability: string, dc: number, type?: string): 
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
   const high = c.high && c.high.ability === ability ? roll(1, c.high.die ?? 3) * (c.high.low ? -1 : 1) : 0;
   const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
-  const mode = all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened || (c.exhaustion ?? 0) >= 3 ? -1 : 0;
+  const down = all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened || (c.exhaustion ?? 0) >= 3;
+  // A power's boon: advantage on saving throws, set against any disadvantage
+  const up = all.some((x) => x.m.advantageSaves.includes(ability) || x.m.advantageSaves.includes("all"));
+  const mode = Number(up) - Number(down);
   const d = c.isPlayer ? playerD20(mode, `Saving throw (${ability})`) : rollD20(mode);
   const insulated = type && /^(ion|lightning)$/i.test(type) ? c.armorProps?.insulated ?? 0 : 0;
-  return Math.max(d, insulated) + (c.saves?.[ability] ?? 0) + high >= dc;
+  return Math.max(d, insulated) + (c.saves?.[ability] ?? 0) + high + boonsOf(c).saves >= dc;
 }
 
 // ---- Grappling and shoving (Player's Handbook, Making an Attack: Grappling, Shoving a Creature; 2026-10-26: the fight had neither, and
@@ -760,8 +770,13 @@ const lasts = (rounds: number) => (rounds >= LASTING ? "for the fight" : rounds 
 export interface CombatPower {
   name: string;
   cost: number;
-  kind: "attack" | "save" | "heal" | "condition" | "other";
+  kind: "attack" | "save" | "heal" | "condition" | "buff" | "other";
   dice?: string;
+  // A boon for the caster (kind "buff"; rules.ts powerBuff)
+  buff?: BuffMods;
+  temp?: string;
+  dodge?: boolean;
+  flat?: boolean;
   save?: string;
   halfOnSave?: boolean;
   conditions?: string[];
@@ -1008,7 +1023,8 @@ export const damageFactor = (c: Combatant, type?: string): number => {
   const stance = c.stance?.resist ?? [];
   if ((c.immune ?? []).includes(t) || (c.profile?.immunities ?? []).includes(t)) return 0;
   if ((c.vulnerable ?? []).includes(t) || (c.profile?.vulnerabilities ?? []).includes(t)) return 2;
-  if ((c.resist ?? []).includes(t) || (c.profile?.resistances ?? []).includes(t) || stance.includes(t)) return 0.5;
+  const boon = boonsOf(c).resist;
+  if ((c.resist ?? []).includes(t) || (c.profile?.resistances ?? []).includes(t) || stance.includes(t) || boon.includes(t) || boon.includes("all")) return 0.5;
   return 1;
 };
 
@@ -1137,8 +1153,8 @@ function damageCreature(w: Work, at: number, amount: number, type?: string, atta
 
 // A creature's armor class now: what it wears, a tool's prepared die (spent once), and what it
 // holds up until its next turn (Force Shield)
-const armorClassNow = (c: Combatant, attackerId?: number | string) =>
-  c.armorClass + (c.acUntil ?? 0)
+export const armorClassNow = (c: Combatant, attackerId?: number | string) =>
+  c.armorClass + (c.acUntil ?? 0) + boonsOf(c).ac
   // Reactive armour: more AC against the next attack of whoever hit it; an Imbalanced shield, none after a critical hit
   + (attackerId !== undefined && c.reactiveFrom?.includes(attackerId) ? c.armorProps?.reactive ?? 0 : 0)
   - (c.open ? c.armorProps?.shield ?? 0 : 0);
@@ -1247,6 +1263,14 @@ function landHit(w: Work, hit: Omit<PendingHit, "options">, choice: PendingHit["
     const extra = rollDamage(hit.extra.dice, hit.crit);
     w.log.push(`${target.name} takes ${Math.floor(extra * damageFactor(after, hit.extra.type))} more ${hit.extra.type ?? ""} damage.`.replace("  ", " "));
     damageCreature(w, ti, extra, hit.extra.type, attacker?.name);
+  }
+  // A power's boon on the attacker: extra dice on each weapon hit (Force Focus, Dark Aura)
+  for (const mods of (attacker?.conditions ?? []).flatMap((x) => (x.mods?.extra ? [x.mods.extra] : []))) {
+    if (w.combatants[ti].hp <= 0) break;
+    const more = rollDamage(mods.dice, hit.crit);
+    const type = mods.type ?? hit.damageType;
+    w.log.push(`${target.name} takes ${Math.floor(more * damageFactor(w.combatants[ti], type))} more ${type ?? ""} damage.`.replace("  ", " "));
+    damageCreature(w, ti, more, type, attacker?.name);
   }
   const now = w.combatants[ti];
   // A stat block's grapple on a hit: held until it escapes (its escape DC), and restrained too where the text says so
@@ -3415,9 +3439,17 @@ export const useCombat = create<CombatState>((set, get) => ({
         return { ...state, ...patchOf(w), objectId: null };
       }
       if (power.kind === "heal") {
-        const amount = Math.max(1, rollDamage(power.dice!, false, 0, false, false, caster.isPlayer ? `${power.name} (healing)` : undefined) + power.modifier + (power.bonus ?? 0));
+        const amount = Math.max(1, rollDamage(power.dice!, false, 0, false, false, caster.isPlayer ? `${power.name} (healing)` : undefined) + (power.flat ? 0 : power.modifier + (power.bonus ?? 0)));
         combatants[selfIndex] = { ...combatants[selfIndex], hp: Math.min(combatants[selfIndex].maxHp, combatants[selfIndex].hp + amount) };
         log.push(`${caster.name} casts ${power.name} and regains ${amount} hit points.`);
+      } else if (power.kind === "buff") {
+        // A boon on the caster: temporary hit points now, a Dodge action, and the rest as a condition that keeps its turns and its concentration
+        const me = combatants[selfIndex];
+        const [dice, flat] = (power.temp ?? "").split("+");
+        const temp = power.temp ? (dice.includes("d") ? rollDamage(dice, false, 0, false, false, `${power.name} (temporary hit points)`) : Number(dice)) + Number(flat ?? 0) : 0;
+        const lasting = power.buff && Object.keys(power.buff).length ? [{ name: power.name, rounds: power.conditionRounds ?? 1, by: caster.id, source: power.name, concentration: power.concentration, mods: power.buff }] : [];
+        combatants[selfIndex] = { ...withConditions(me, lasting), tempHp: Math.max(me.tempHp ?? 0, temp), ...(power.dodge ? { dodging: true } : {}) };
+        log.push(`${caster.name} casts ${power.name}: ${[temp && `${temp} temporary hit points`, power.dodge && "takes the Dodge action", power.buff && Object.keys(power.buff).length && `${buffSummary(power.buff)} ${lasts(power.conditionRounds ?? 1)}`].filter(Boolean).join("; ")}.`);
       } else if (power.kind === "condition" && power.onSelf) {
         log.push(`${caster.name} casts ${power.name} and is ${afflict(selfIndex)}.`);
       } else if (power.kind === "attack" || power.kind === "save" || power.kind === "condition") {

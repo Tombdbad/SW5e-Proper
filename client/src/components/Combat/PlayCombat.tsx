@@ -148,7 +148,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                   {c.reckless && <span className="rounded bg-red-900/70 px-1 text-xs text-red-100">reckless</span>}
                   {c.guarding !== undefined && <span className="rounded bg-sky-900/70 px-1 text-xs text-sky-100">guarding</span>}
                   {c.conditions?.map((condition) => (
-                    <span key={condition.name} className="rounded bg-purple-900/60 px-1 text-xs text-purple-100" title={conditionSummary(condition.name)}>
+                    <span key={condition.name} className="rounded bg-purple-900/60 px-1 text-xs text-purple-100" title={conditionSummary(condition.name, condition.mods)}>
                       {condition.name}
                       {condition.rounds < LASTING ? ` ${condition.rounds}` : ""}
                     </span>
@@ -383,12 +383,12 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
         )}
         {(() => {
           // What the conditions in force do, in plain words
-          const inForce = Array.from(new Set(combatants.filter((c) => c.hp > 0).flatMap((c) => (c.conditions ?? []).map((x) => x.name))));
-          return inForce.length ? (
+          const inForce = new Map(combatants.filter((c) => c.hp > 0).flatMap((c) => (c.conditions ?? []).map((x) => [x.name, x.mods] as const)));
+          return inForce.size ? (
             <div className="text-xs text-purple-200 mb-2" data-testid="condition-notes">
-              {inForce.map((name) => (
+              {Array.from(inForce).map(([name, mods]) => (
                 <div key={name}>
-                  {name}: {conditionSummary(name)}
+                  {name}: {conditionSummary(name, mods)}
                 </div>
               ))}
             </div>

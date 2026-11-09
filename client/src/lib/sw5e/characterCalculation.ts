@@ -685,7 +685,23 @@ function maneuverFeatures(character: any, ctx: FeatureContext): CombatFeature[] 
   const dice = superiorityDice(character);
   if (!dice) return [];
   const known = new Set(combatChoicesOf(character).maneuvers);
-  return maneuverList.filter((m) => known.has(m.name)).map((m) => maneuverFeature(m, character, ctx, dice));
+  return maneuverList.filter((m) => known.has(m.name) && !checkSkillOf(m)).map((m) => maneuverFeature(m, character, ctx, dice));
+}
+
+// The skill a maneuver adds a superiority die to ("When you make a Persuasion check, you can expend a superiority die, rolling the die and
+// adding it to the d20 roll": Assist, Conceal, Persuade, Threaten ...). Such a maneuver is for the checks of play, not for a fight.
+const checkSkillOf = (m: Maneuver): string | undefined =>
+  m.description.replace(/\s+/g, " ").match(/When you make an? ([A-Za-z ]+?) check, you can expend a superiority die, rolling the die and adding it to the d20 roll/i)?.[1]?.toLowerCase();
+
+// The chosen maneuvers that help a skill check, with the character's superiority dice (the pool is "Maneuver:dice", shared with the fight)
+export function checkManeuvers(character: any): { name: string; skill: string; size: number; count: number }[] {
+  const dice = superiorityDice(character);
+  if (!dice) return [];
+  const known = new Set(combatChoicesOf(character).maneuvers);
+  return maneuverList.filter((m) => known.has(m.name)).flatMap((m) => {
+    const skill = checkSkillOf(m);
+    return skill ? [{ name: m.name, skill, size: dice.size, count: dice.count }] : [];
+  });
 }
 
 // The size of die a minimum roll threshold treats as its lowest result ("2 for d4 ... 8 for d20")

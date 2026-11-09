@@ -43,7 +43,7 @@ import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
-import { gearOf as figureGearOf, carriedWeapons, castingKind, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
+import { gearOf as figureGearOf, carriedWeapons, castingKind, characterFeatures, checkManeuvers, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById, species as speciesList } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
@@ -835,11 +835,25 @@ export default function GameBoard() {
     const roll = passive ? passiveD20(up && !burdened ? 1 : burdened && !up ? -1 : 0) : up && !burdened ? Math.max(first, thrown[1]) : burdened && !up ? Math.min(first, thrown[1]) : first;
     const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * (subDie ? thrown[twice ? 2 : 1] : 0) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
-    const bonus = option.bonus + s + (plan.extra ?? 0);
-    const total = roll + bonus;
+    let bonus = option.bonus + s + (plan.extra ?? 0);
+    let total = roll + bonus;
+    // A maneuver of the skill: a superiority die is spent on a check that would fail and that the die could save (the book lets the
+    // player wait until after the roll, before the outcome is said; house rule: it is spent for them, and only then)
+    let maneuverNote = "";
+    if (mine && !passive && option.skill && total < plan.dc) {
+      const help = checkManeuvers(character).find((m) => m.skill === option.skill);
+      const spentDice = play.featureUses?.["Maneuver:dice"] ?? 0;
+      if (help && spentDice < help.count && total + help.size >= plan.dc) {
+        const die = (await rollOnTable(`${help.name} (superiority die)`, [`d${help.size}` as TableDie]))[0];
+        bonus += die;
+        total += die;
+        maneuverNote = ` (${help.name}: +${die} from a superiority die)`;
+        patchPlay({ featureUses: { ...(play.featureUses ?? {}), "Maneuver:dice": spentDice + 1 } });
+      }
+    }
     const success = total >= plan.dc;
     const who = mine ? "" : `${(character.companionData?.party ?? []).find((c: Companion) => c.id === rollerId)?.name}: `;
-    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${passive ? "passive " : ""}${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}. ${success ? "Success." : "Failed."}`);
+    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${passive ? "passive " : ""}${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}${maneuverNote}. ${success ? "Success." : "Failed."}`);
     return { success, total, roll, bonus };
   };
   const finishCheck = async (rollerId: string | null, skill: string | null) => {
@@ -2195,7 +2209,7 @@ export default function GameBoard() {
     const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
     const melee = weapons.find((w) => !w.ranged);
     const ranged = weapons.find((w) => w.ranged);
-    const order = { attack: 0, save: 0, condition: 1, heal: 1, other: 2 };
+    const order = { attack: 0, save: 0, condition: 1, buff: 1, heal: 1, other: 2 };
     const isLight = (w?: { properties: string[] }) => !!w?.properties.some((p) => /^light/i.test(p));
     // A second light weapon in the other hand (Two-Weapon Fighting)
     const other = isLight(melee) ? weapons.find((w) => !w.ranged && !w.natural && w !== melee && isLight(w)) : undefined;
@@ -3447,7 +3461,8 @@ export default function GameBoard() {
   const castHealing = (power: any) => {
     const cost = powerCost(power);
     if (!character || (character.currentForcePoints ?? 0) < cost) return;
-    const healed = Math.max(1, rollDamage(powerEffect(power, level).dice!, false) + castingStats(character.abilityScores, level, power).modifier);
+    const healing = powerEffect(power, level);
+    const healed = Math.max(1, rollDamage(healing.dice!, false) + (healing.flat ? 0 : castingStats(character.abilityScores, level, power).modifier));
     lastSavedHp.current = Math.min(hpCap(), character.currentHp + healed);
     lastSavedPoints.current = character.currentForcePoints - cost;
     saveCharacter({ currentHp: lastSavedHp.current, currentForcePoints: lastSavedPoints.current });

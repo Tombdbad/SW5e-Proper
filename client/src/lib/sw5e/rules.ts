@@ -387,9 +387,16 @@ export interface PowerEffect {
   // attack: the caster rolls to hit; save: the target saves against the caster's DC;
   // heal: the caster regains hit points; condition: a condition lands without a roll;
   // other: nothing the app can resolve by itself
-  kind: "attack" | "save" | "heal" | "condition" | "other";
+  kind: "attack" | "save" | "heal" | "condition" | "buff" | "other";
   dice?: string;
   damageType?: string;
+  // A boon for the caster (kind "buff"): what it gives, the temporary hit points it brings ("5", "1d4 + 4"), and whether it
+  // is a Dodge action taken in the casting
+  buff?: BuffMods;
+  temp?: string;
+  dodge?: boolean;
+  // A heal of a set amount ("regains 70 hit points", "4d8+15"): the casting modifier is not added to it
+  flat?: boolean;
   save?: keyof AbilityScores;
   halfOnSave?: boolean;
   // The condition the power puts on its target, for how many of the target's turns, and
@@ -421,8 +428,53 @@ export interface ConditionMechanics {
   meleeHitsCrit: boolean;
   autoFailSaves: string[];
   disadvantageSaves: string[];
+  // Advantage on saving throws ("all", or the abilities), from a power's boon rather than a condition
+  advantageSaves: string[];
   // What is left of its speed: 1 all of it, 0.5 half, 0 none
   speed: number;
+}
+
+// What a power gives the caster for as long as it lasts (a boon: a power with no roll to resolve, read from its text by powerBuff).
+// It rides on the caster as a condition with these `mods`, so its length, concentration and ending are the conditions' own.
+export interface BuffMods {
+  // A bonus to armor class, and to every saving throw
+  ac?: number;
+  saves?: number;
+  // Advantage on saving throws ("all" or the abilities), on the caster's attack rolls, and disadvantage on attacks against the caster
+  advSaves?: string[];
+  advAttacks?: boolean;
+  disAgainst?: boolean;
+  // Damage types taken at half ("all" for every one)
+  resist?: string[];
+  // Extra damage on each of the caster's weapon hits ("your weapon attacks deal an extra 1d4 force damage on a hit"); no type: the weapon's
+  extra?: { dice: string; type?: string };
+}
+
+// The boon's mechanics in the shape a condition has, so the fight reads both the same way
+export function buffMechanics(mods: BuffMods): ConditionMechanics {
+  return {
+    incapacitated: false,
+    cantAttackSource: false,
+    ownAttacks: { melee: mods.advAttacks ? 1 : 0, ranged: mods.advAttacks ? 1 : 0 },
+    attacksAgainst: { melee: mods.disAgainst ? -1 : 0, ranged: mods.disAgainst ? -1 : 0 },
+    meleeHitsCrit: false,
+    autoFailSaves: [],
+    disadvantageSaves: [],
+    advantageSaves: mods.advSaves ?? [],
+    speed: 1,
+  };
+}
+
+export function buffSummary(mods: BuffMods): string {
+  return [
+    mods.ac && `+${mods.ac} AC`,
+    mods.saves && `+${mods.saves} to saving throws`,
+    mods.advSaves?.length && `advantage on ${mods.advSaves.join(" and ")} saving throws`,
+    mods.advAttacks && "advantage on attack rolls",
+    mods.disAgainst && "attacks against you have disadvantage",
+    mods.resist?.length && `resists ${mods.resist.join(", ")} damage`,
+    mods.extra && `+${mods.extra.dice} ${mods.extra.type ?? ""} damage on weapon hits`.replace("  ", " "),
+  ].filter(Boolean).join("; ") || "no effect on the dice";
 }
 
 const ABILITY_WORDS = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
@@ -443,6 +495,7 @@ export function conditionMechanics(name: string, seen: string[] = []): Condition
     meleeHitsCrit: /hits the creature is a critical hit if the attacker is within 5 feet/i.test(text),
     autoFailSaves: abilities(/automatically fails ([\w ]+?) saving throws/i),
     disadvantageSaves: abilities(/disadvantage on ([\w ]+?) saving throws/i),
+    advantageSaves: [],
     speed: /speed becomes 0|can't move/i.test(text) ? 0 : /speed is reduced by half/i.test(text) ? 0.5 : 1,
   };
   const sign = (word: string) => (/^dis/i.test(word) ? -1 : 1);
@@ -468,7 +521,8 @@ export function conditionMechanics(name: string, seen: string[] = []): Condition
 }
 
 // The plain-words line shown beside a condition in a fight
-export function conditionSummary(name: string): string {
+export function conditionSummary(name: string, boon?: BuffMods): string {
+  if (boon) return buffSummary(boon);
   const m = conditionMechanics(name);
   const word = (n: number) => (n > 0 ? "advantage" : "disadvantage");
   const both = (v: { melee: number; ranged: number }, what: string) =>
@@ -533,8 +587,68 @@ function powerCondition(power: { description?: string; duration?: string; concen
   return undefined;
 }
 
+// The boons a power gives its caster, read from its text: temporary hit points ("You gain 5 temporary hit points"), "a +2 bonus to AC",
+// "advantage on all saving throws", "advantage on attack rolls", "creatures have disadvantage on attack rolls against you",
+// "resistance to acid, cold ... damage", "you take the Dodge action". A power that offers a choice of effects, that works only if a
+// target fails a save, or whose boon is bound to a condition ("against effects that cause ...", "against melee attacks") is left to the
+// player. (HOUSE RULE: a boon meant for "a creature you touch" or "willing creatures" goes on the caster in the fight.)
+const ABILITY_LIST = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
+const DAMAGE_KINDS = ["acid", "cold", "energy", "fire", "force", "ion", "kinetic", "lightning", "necrotic", "poison", "psychic", "sonic"];
+
+export function powerBuff(power: { description?: string; duration?: string }): { mods: BuffMods; temp?: string; dodge?: boolean; rounds: number } | undefined {
+  const text = (power.description ?? "").split(/\*\*\*(?:Force Potency|Overcharge Tech|Tech Potency)/i)[0].replace(/\s+/g, " ");
+  if (/\*\*\*|(?:one|any number) of the following|On a (?:failed|successful) save/i.test(text)) return undefined;
+  const mods: BuffMods = {};
+  const temp = text.match(/\bgains? (\d+d\d+(?: ?\+ ?\d+)?|\d+) temporary hit points/i)?.[1].replace(/\s+/g, "");
+  const ac = text.match(/\+(\d+) (?:bonus )?to (?:your |its |their |the target's )?(?:AC|Armor Class)\b(?! against)( and saving throws)?/i);
+  if (ac) {
+    mods.ac = Number(ac[1]);
+    if (ac[2]) mods.saves = Number(ac[1]);
+  }
+  const abilities = new RegExp(`advantage on (all|(?:${ABILITY_LIST})(?:,? (?:and |or )?(?:${ABILITY_LIST}))*) saving throws(?! against)`, "i").exec(text);
+  if (abilities) mods.advSaves = abilities[1].toLowerCase() === "all" ? ["all"] : (abilities[1].toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => !["and", "or"].includes(w));
+  if (/(?:you|it|the target|the creature) (?:have|has) advantage on attack rolls(?!,? (?:and |or )?(?:against|made))/i.test(text) && !/(?<!dis)advantage on attack rolls against/i.test(text)) mods.advAttacks = true;
+  if (/advantage on attack rolls, ability checks, and saving throws/i.test(text)) mods.advSaves = ["all"];
+  if (/(?:any creature|other creatures|creatures|attackers?) (?:has|have) disadvantage on attack rolls against (?:you|them|the target|it)\b/i.test(text)) mods.disAgainst = true;
+  const resist: string[] = [];
+  for (const m of text.matchAll(/resistance to ((?:[a-z]+,? (?:and |or )?)*[a-z]+) damage/gi)) {
+    if (/^all\b/i.test(m[1])) resist.push("all");
+    else resist.push(...(m[1].toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => DAMAGE_KINDS.includes(w)));
+  }
+  if (resist.length) mods.resist = Array.from(new Set(resist));
+  // (a mark on one target, "to the target whenever you hit it", is not read: the boon has no target to keep)
+  const rider = text.match(/(?:your weapon attacks|weapon attacks you make|any attack you make|attacks? you make) deals? an extra (\d+d\d+)(?: (\w+))? damage(?: on a hit| when you hit)?/i)
+    ?? text.match(/deals an extra (\d+d\d+)() damage with weapon attacks/i);
+  if (rider) mods.extra = { dice: rider[1], ...(rider[2] && DAMAGE_KINDS.includes(rider[2].toLowerCase()) ? { type: rider[2].toLowerCase() } : {}) };
+  const dodge = /you take the Dodge action/i.test(text);
+  if (!temp && !dodge && !Object.keys(mods).length) return undefined;
+  return { mods, temp, dodge: dodge || undefined, rounds: durationRounds(power.duration ?? "") ?? 1 };
+}
+
+// A heal of a fixed amount, in the sentence that casts it ("The target regains 4d8+15 hit points", "causing it to regain 70 hit points",
+// "regains all its hit points"); what a power lets its caster do later ("you can use a bonus action to cause ... to regain", "at the start of
+// each of its turns") is not the cast. 9999 stands for all of them.
+function fixedHeal(text: string): string | undefined {
+  for (const sentence of text.replace(/\*\*\*/g, "").split(/(?<=\.)\s+/)) {
+    if (/\b(?:can use|bonus action|reaction|at the start|each (?:of its )?turns?|whenever|if the|if you|when you)\b/i.test(sentence)) continue;
+    if (/\bregains? all (?:its|their|the) hit points/i.test(sentence)) return "9999";
+    const set = sentence.match(/\bregains? (\d+d\d+(?: ?\+ ?\d+)?|\d{2,}) hit points/i);
+    if (set) return set[1].replace(/\s+/g, "");
+  }
+  return undefined;
+}
+
 // Points a power costs: its level + 1; at-will powers (level 0) are free
 export const powerCost = (power: { level: number }): number => (power.level > 0 ? power.level + 1 : 0);
+
+// A power read as a boon for its caster (see powerBuff), as the effect the fight plays
+function boonOf(power: { level: number; description?: string; duration?: string; concentration?: boolean }): PowerEffect | undefined {
+  const boon = powerBuff(power);
+  if (!boon) return undefined;
+  const lastsFor = boon.rounds >= 100 ? "the fight" : boon.rounds === 1 ? "1 turn" : `${boon.rounds} turns`;
+  const summary = [boon.temp && `${boon.temp.replace("+", " + ")} temporary hit points`, boon.dodge && "Dodge action", Object.keys(boon.mods).length && buffSummary(boon.mods)].filter(Boolean).join("; ");
+  return { kind: "buff", buff: boon.mods, temp: boon.temp, dodge: boon.dodge, conditionRounds: boon.rounds, concentration: !!power.concentration, onSelf: true, summary: `${summary} for ${lastsFor}` };
+}
 
 export function powerEffect(power: { level: number; description?: string; duration?: string; concentration?: boolean }, casterLevel: number): PowerEffect {
   const text = power.description ?? "";
@@ -547,6 +661,8 @@ export function powerEffect(power: { level: number; description?: string; durati
     const dice = `${Number(heal[1]) * steps}d${heal[2]}`;
     return { kind: "heal", dice, summary: `heals ${dice} + casting modifier` };
   }
+  const fixed = fixedHeal(text);
+  if (fixed) return { kind: "heal", dice: fixed, flat: true, summary: fixed === "9999" ? "restores all hit points" : `heals ${fixed.replace("+", " + ")}` };
   const imposed = powerCondition(power);
   const lasting = imposed
     ? `${imposed.conditions.join(" and ").toLowerCase()} for ${imposed.conditionRounds >= 100 ? "the fight" : imposed.conditionRounds === 1 ? "1 turn" : `${imposed.conditionRounds} turns`}${imposed.repeatSave ? ", save each turn" : ""}`
@@ -554,7 +670,7 @@ export function powerEffect(power: { level: number; description?: string; durati
   const saveMatch = text.match(new RegExp(`(${ABILITY_WORDS}) sav(?:ing throw|e)`));
   const save = saveMatch?.[1].toLowerCase() as keyof AbilityScores | undefined;
   if (!damage) {
-    if (!imposed) return { kind: "other", summary: "effect described in its text" };
+    if (!imposed) return boonOf(power) ?? { kind: "other", summary: "effect described in its text" };
     if (save) return { kind: "save", save, ...imposed, summary: `${saveMatch![1]} save or ${lasting}` };
     // No roll: on the caster when the text speaks of the caster or a willing creature, else on the enemy
     const onSelf = /willing creatures?|You or a creature you touch|A creature you touch becomes|You become/.test(text);
@@ -587,7 +703,7 @@ export function powerEffect(power: { level: number; description?: string; durati
       summary: `${saveMatch![1]} save, ${dice} ${damageType}${halfOnSave ? " (half on a save)" : ""}${imposed ? `, ${lasting} on a failure` : ""}`,
     };
   }
-  return { kind: "other", summary: "effect described in its text" };
+  return boonOf(power) ?? { kind: "other", summary: "effect described in its text" };
 }
 
 // ---------------------------------------------------------------------------------------------
