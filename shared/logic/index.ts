@@ -26,6 +26,8 @@ import type { Base } from "./bases";
 export * from "./bases";
 import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShipPart, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
+import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
+export * from "./starshipInterior";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -2021,11 +2023,43 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /./, size: [6, 8, 5, 7], items: [["Crate", "wall", "1x1", "1-3", "bc"], ["Bench", "wall", "2x1", "1-2", "t"], ["Terminal", "wall", "1x1", "0-1", "bs"]] },
 ];
 
+
+// The compartments of a starship's interior (2026-11-09, shared/logic/starshipInterior.ts; house rule: the books give ships no deck plans). They are for the rooms of a building
+// of type "starship" only (planFor): a building's own rooms of the same names (a cantina's lounge, a palace's library) keep their plans, so that the worlds are made as they were.
+// A ship's rooms are sized by the ship's plan, not by `size` here; the seats are the ship's stations (the plan gives them a `station:` ref once it has furnished the room).
+const SHIP_PLANS: RoomPlan[] = [
+  { match: /^cockpit$/i, size: [4, 6, 4, 8], items: [["Pilot's seat", "far", "1x1", "1", "b"], ["Co-pilot's seat", "far", "1x1", "1", "b"], ["Navigation console", "wall", "1x1", "1", "bs"], ["Console bank", "wall", "2x1", "0-1", "bsn"]] },
+  { match: /^bridge$/i, size: [8, 14, 6, 14], items: [["Pilot's seat", "far", "1x1", "1", "b"], ["Co-pilot's seat", "far", "1x1", "1", "b"], ["Navigation console", "wall", "1x1", "1", "bs"], ["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "3-5", "bs"], ["Command chair", "center", "1x1", "1", "bt"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Console bank", "wall", "3x1", "0-1", "bsn"]] },
+  { match: /^(navigation chamber|communications room|sensor suite|war room|briefing room|conference room|ready room|computer core)$/i, size: [5, 9, 5, 9], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Terminal", "wall", "1x1", "1-2", "bs"], ["Bench", "wall", "2x1", "1-2", "t"], ["Server rack", "wall", "1x1", "0-2", "bn"], ["Security camera", "wall", "1x1", "0-1"]] },
+  { match: /^(captain's cabin|admiral's suite|officers' quarters|passenger cabin|guest suites|cabin|residences)$/i, size: [4, 8, 4, 8], items: [["Bed", "wall", "2x1", "1-2", "b"], ["Desk", "wall", "2x1", "1", "bs"], ["Cabinet", "corner", "1x1", "1-2", "b"], ["Locker", "wall", "2x1", "0-1", "bn"], ["Couch", "wall", "2x1", "0-1", "bt"], ["Low table", "center", "1x1", "0-1", "bct"], ["Floor lamp", "corner", "1x1", "0-1", "n"]] },
+  { match: /^(crew quarters|barracks|troop bay|clone barracks|colonist quarters|droid rack bay)$/i, size: [5, 9, 5, 9], items: [["Bunk", "wall", "2x1", "4-8", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Locker", "wall", "2x1", "1-2", "bn"], ["Mess table", "center", "2x1", "0-1", "bct"]] },
+  { match: /^(galley|refectory)$/i, size: [4, 8, 4, 8], items: [["Kitchen counter", "wall", "2x1", "1-2", "bsn"], ["Stove", "wall", "1x1", "1", "bn"], ["Shelving", "wall", "3x1", "1", "b"], ["Table", "center", "1x1", "1-3", "bct"], ["Water jar", "corner", "1x1", "0-1", "n"]] },
+  { match: /^(mess hall|officers' mess|dining room)$/i, size: [5, 9, 5, 9], items: [["Table", "center", "2x1", "3-6", "bct"], ["Bench", "wall", "2x1", "2-4", "t"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Banner", "wall", "1x1", "0-2", "n"]] },
+  { match: /^(lounge|recreation room|casino|grand salon|main hold|salon)$/i, size: [6, 10, 5, 9], items: [["Couch", "wall", "2x1", "1-3", "bt"], ["Low table", "center", "1x1", "1-3", "bct"], ["Sabacc table", "center", "2x2", "0-2", "bct"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Banner", "wall", "1x1", "0-2", "n"], ["Floor lamp", "corner", "1x1", "0-1", "n"]] },
+  { match: /^(medbay|surgery|quarantine ward|pharmacy)$/i, size: [5, 9, 5, 9], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"], ["Privacy screen", "wall", "2x1", "0-2", "bn"]] },
+  { match: /^(brig|interrogation room|holding pens)$/i, size: [5, 9, 5, 9], items: [["Holding cell", "wall", "2x2", "3-5", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /^(armory|security station|munitions store|magazine)$/i, size: [5, 9, 5, 9], items: [["Weapon rack", "wall", "2x1", "3-5", "b"], ["Locker", "wall", "2x1", "1-3", "bn"], ["Workbench", "wall", "3x1", "0-1", "bs"], ["Crate stack", "rows", "2x2", "0-2", "bc"], ["Guard console", "wall", "2x1", "0-1", "bs"]] },
+  { match: /^(training room|training hall|gym|meditation chamber)$/i, size: [6, 10, 6, 10], items: [["Barricade", "center", "2x1", "1-2", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"], ["Rug", "center", "2x2", "0-1", "n"]] },
+  { match: /^(hyperdrive core|power room|reactor control|shield generator|life support|coolant pumps|fuel cells)$/i, size: [5, 9, 5, 9], items: [["Monitoring console", "wall", "2x1", "2-3", "bs"], ["Generator", "center", "2x2", "0-1", "bcn"], ["Coolant tank", "corner", "1x1", "1-2", "b"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Server rack", "wall", "1x1", "0-2", "bn"]] },
+  { match: /^(machine shop|droid bay|maintenance bay|fabrication shop|spare parts store)$/i, size: [5, 9, 5, 9], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Charging station", "corner", "1x1", "0-1", "b"], ["Droid repair rig", "center", "2x2", "0-1", "bcs"]] },
+  { match: /^(cargo hold|cargo bay|hold annex|boarding hold)$/i, size: [6, 12, 5, 9], items: [["Crate stack", "rows", "2x2", "3-6", "bc"], ["Crate", "corner", "1x1", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-2", "b"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"], ["Locker", "wall", "2x1", "0-1", "bn"]] },
+  { match: /^(fighter bay|vehicle bay|launch bay|flight deck|dropship bay)$/i, size: [10, 24, 8, 16], items: [["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Fuel pump", "wall", "1x1", "1-2", "b"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"], ["Fuel drum", "corner", "1x1", "0-2", "bcn"]] },
+  { match: /^(laboratory|observatory|archive|library|specimen hold|data center)$/i, size: [5, 9, 5, 9], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Server rack", "wall", "1x1", "1-3", "bn"], ["Holo-table", "center", "2x2", "0-1", "bcs"], ["Display case", "center", "2x1", "0-1", "bc"], ["Terminal", "wall", "1x1", "1-2", "bs"], ["Shelving", "wall", "3x1", "1-2", "b"]] },
+  { match: /^(arboretum|hydroponics|seed vault)$/i, size: [6, 10, 5, 9], items: [["Planter", "center", "2x1", "3-5", "bc"], ["Water tank", "corner", "1x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"], ["Workbench", "wall", "3x1", "0-1", "bs"]] },
+  { match: /^(foundry|assembly line|refinery|droid factory|forge room)$/i, size: [6, 12, 5, 9], items: [["Engine block", "center", "1x1", "1-2", "bcn"], ["Forge", "wall", "2x1", "1-2", "bsn"], ["Workbench", "wall", "3x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Parts bin", "center", "1x1", "1-2", "bc"], ["Fuel drum", "corner", "1x1", "0-2", "bcn"]] },
+  { match: /^(throne room|trophy hall|audience hall|pleasure pit)$/i, size: [6, 12, 6, 10], items: [["Dais", "far", "3x1", "1", "c"], ["Couch", "wall", "2x1", "2-3", "bt"], ["Low table", "center", "1x1", "1-2", "bct"], ["Banner", "wall", "1x1", "1-3", "n"], ["Brazier", "corner", "1x1", "0-2", "bn"], ["Rug", "center", "2x2", "0-1", "n"]] },
+  { match: /^(refresher|locker room|laundry)$/i, size: [3, 6, 3, 6], items: [["Sink", "wall", "1x1", "1-2", "bn"], ["Locker", "wall", "2x1", "1-2", "bn"], ["Bench", "wall", "2x1", "0-1", "t"]] },
+  { match: /^(gunnery station|gun turret|point defence station)$/i, size: [3, 4, 3, 6], items: [["Gunnery seat", "far", "1x1", "1", "b"], ["Console", "wall", "1x1", "0-1", "bs"], ["Locker", "wall", "2x1", "0-1", "bn"]] },
+  { match: /^(escape pod bay|lifeboat bay|equipment locker|crawlway|access shaft)$/i, size: [2, 4, 2, 6], items: [["Locker", "wall", "2x1", "0-2", "bn"], ["Pipe run", "wall", "3x1", "0-1", "b"], ["Parts bin", "corner", "1x1", "0-1", "bc"]] },
+  { match: /^engine bay$/i, size: [3, 4, 5, 8], items: [["Power coupling", "far", "1x1", "1", "b"], ["Pipe run", "wall", "3x1", "1", "b"], ["Parts bin", "corner", "1x1", "1", "bc"]] },
+  { match: /^engine room$/i, size: [5, 12, 6, 14], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Generator", "corner", "1x1", "0-1", "bcn"]] },
+];
+
 // Caves, ruins and trails are rock and rubble whatever a chamber is called
 const planFor = (room: Area, buildingType: string): RoomPlan => {
   // A droid dealer's showroom and repair bay are a shop's, whatever older worlds call them
   const named = buildingType === "droid dealer" && /^(showroom|repair bay)$/i.test(room.name) ? `droid ${room.name.toLowerCase()}` : room.name;
-  const plan = ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : named))!;
+  const plan = (buildingType === "starship" ? SHIP_PLANS.find((p) => p.match.test(room.name)) : undefined) ?? ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : named))!;
   // A shop shows its wares: pieces of its own line stand on its sales floor
   const wares = /sales floor|upgrade showroom/i.test(room.name) ? SHOP_WARES[buildingType] : undefined;
   // (a round shop has aisles of its shelving down the middle too, two or three rows of them, its shelves round the curve, 2026-11-06, the user:
@@ -2187,7 +2221,7 @@ function walkable(layout: RoomLayout): boolean {
 // (the gap between them is too narrow to walk through, so a square on either side is cut off
 // from the other), a stretch of floor that cannot be walked to from the rest, or a way in or out
 // that cannot be reached. Furniture is placed only where this stays at nothing.
-function floorFaults(layout: RoomLayout): number {
+export function floorFaults(layout: RoomLayout): number {
   const free = freeSquares(layout);
   const { width: W, height: H } = layout;
   let faults = walkable(layout) ? 0 : 1;
@@ -2621,7 +2655,7 @@ export function fallOutcome(plan: FallPlan, checks: { burst?: number; jump?: num
 }
 
 // The square inside a room that touches the given wall at the given step along it
-const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
+export const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
   side === "n" ? { x: along, y: 0 } : side === "s" ? { x: along, y: layout.height - 1 } : side === "w" ? { x: 0, y: along } : { x: layout.width - 1, y: along };
 
 // Where the pillars of a hall stand (2026-11-09; the user: pillars "seem to be placed too often and randomly ... need updated logic to be placed regularly"): a colonnade, two rows
@@ -5721,27 +5755,55 @@ export function crewOf(seats: Seat[], assigned: Record<string, string> | undefin
   return { seated, crew: Math.min(4, counted.length), gunners: counted.filter(([seatId]) => seats.find((x) => x.id === seatId)?.station === "guns").length };
 }
 
-// The ship's own building and deck (made on the first boarding; `from` is the room it was boarded
-// from, so that the party steps back out where it came in)
-export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" | "role">, berthId: string, from?: string): { world: World; deckId: string } {
+// The ship's own building and its inside (made on the first boarding; `from` is the room it was boarded from, so that the party steps back out where it came
+// in). A ship with more than a cockpit (hasInterior: a Small shuttle, Medium and up) has the plan of starshipInterior.ts, a building of several decks whose
+// boarding room is `deckIdOf` (made again if the ship was boarded before the plans: the ship's building carries the tag `interior:` and its version); the others
+// have the one deck of shipDeck.
+export const INTERIOR_VERSION = 1;
+export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" | "role"> & Partial<Pick<Ship, "owner">>, berthId: string, from?: string): { world: World; deckId: string } {
   const deckId = deckIdOf(ship.id);
   const buildingId = shipBuildingIdOf(ship.id);
   const parent = world.areas[berthId];
   const areas = { ...world.areas };
   const base = { description: "", danger: 0, occupants: [], ships: [], loot: [], position: parent?.position ?? { x: 0, y: 0, z: 0 } };
-  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: [`ship:${ship.id}`], description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
+  const faction = shipFactionOf(ship.owner);
   const old = areas[deckId];
-  const deck: Area = {
-    ...base, ...(old ?? {}),
-    id: deckId, kind: "room", name: `${ship.name}, main deck`, parentId: buildingId, type: "deck",
-    tags: [`ship:${ship.id}`, ...(from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:")))],
-    // (a deck is a fixed plan for its size, laid out again each boarding so that a world saved with an older plan, one that shut a corner in, is mended)
-    layout: shipDeck(ship),
-  } as Area;
+  const tagsOf = (extra: string[]) => [`ship:${ship.id}`, `kit:${faction}`, ...extra];
+  const fresh = !areas[buildingId]?.tags.includes(`interior:${INTERIOR_VERSION}`);
+  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: tagsOf(hasInterior(ship) ? [`interior:${INTERIOR_VERSION}`] : []), description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
   areas[buildingId] = building;
-  areas[deckId] = deck;
-  return { world: { ...world, areas }, deckId };
+  let paths = world.paths;
+  const comeFrom = from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:"));
+  if (hasInterior(ship)) {
+    if (fresh) {
+      // (the rooms of an earlier plan, and their passages, go)
+      for (const a of Object.values(areas)) if (a.parentId === buildingId) delete areas[a.id];
+      paths = paths.filter((p) => !p.id.startsWith(`${buildingId}-p`));
+      const built = shipInteriorOf(ship, buildingId, deckId, hashOf(`${world.seed}|${ship.id}`));
+      for (const room of built.rooms) areas[room.id] = room;
+      paths = [...paths, ...built.paths];
+    }
+    const entry = areas[deckId];
+    areas[deckId] = { ...entry, tags: [...entry.tags.filter((t) => !t.startsWith("from:")), ...comeFrom] };
+  } else {
+    areas[deckId] = {
+      ...base, ...(old ?? {}),
+      id: deckId, kind: "room", name: `${ship.name}, main deck`, parentId: buildingId, type: "deck",
+      tags: [`ship:${ship.id}`, ...comeFrom],
+      // (a deck is a fixed plan for its size, laid out again each boarding so that a world saved with an older plan, one that shut a corner in, is mended)
+      layout: shipDeck(ship),
+    } as Area;
+  }
+  return { world: { ...world, areas, paths }, deckId };
 }
+
+// The stations of a ship (the seats of every room of its inside, helm first), and the ship a room is aboard
+const STATION_ORDER = ["helm", "copilot", "nav", "guns", "engines"];
+export function seatsOfShip(world: World, shipId: string): Seat[] {
+  const seats = childrenOf(world, shipBuildingIdOf(shipId)).flatMap((room) => seatsOf(room.layout));
+  return seats.sort((p, q) => STATION_ORDER.indexOf(p.station) - STATION_ORDER.indexOf(q.station));
+}
+export const aboardShipId = (area: Pick<Area, "kind" | "tags"> | null | undefined): string | undefined => (area?.kind === "room" ? area.tags.find((t) => t.startsWith("ship:"))?.slice(5) : undefined);
 
 // The ship has flown: its building stands where it now is
 export function moveShipInterior(world: World, shipId: string, berthId: string): World {

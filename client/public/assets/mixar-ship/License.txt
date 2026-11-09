@@ -1,0 +1,1 @@
+Original models of this project, built in Mixar from scripted geometry (2026-11-09; tools/blender/build-shipint.py): the starship interior kits of the seven makers (imperial, rebel, republic, separatist, mandalorian, criminal, civilian): bulkhead tiles, seats, consoles, bunks, lockers and engine cores. Creative Commons Zero (CC0 1.0): public domain, no attribution needed.

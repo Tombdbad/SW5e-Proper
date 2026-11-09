@@ -3,7 +3,7 @@
 import { useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { WALL_FILES, wallTiles } from "./packs";
+import { WALL_FILES, isBaked, wallTiles } from "./packs";
 import { useModels } from "./assets";
 import { AIM } from "./aim";
 import { WALL_TILE, WallOrigin, boxUV, wallMaterial, type WallSet } from "../surfaces";
@@ -59,15 +59,15 @@ function bend(model: THREE.BufferGeometry, rc: number, phi0: number, dphi: numbe
 }
 
 // The tiles of a rounded corner as geometries: a tile to about every square of its arc (two at least), each bent to the ring
-export function cornerGeometries(c: WallCorner, width: number, height: number, wallH: number, thick: number, files: Record<string, THREE.BufferGeometry | null>): THREE.BufferGeometry[] | null {
+export function cornerGeometries(c: WallCorner, width: number, height: number, wallH: number, thick: number, files: Record<string, THREE.BufferGeometry | null>, kit: typeof WALL_FILES = WALL_FILES): THREE.BufferGeometry[] | null {
   const [cx, cz] = cornerCentre(c, width, height);
   const from = c.from ?? CORNER_START[c.corner];
   const arc = (c.to ?? CORNER_START[c.corner] + Math.PI / 2) - from;
   const n = Math.max(c.from === undefined && c.to === undefined ? 2 : 1, Math.round(c.r * arc));
   const depth = Math.max(thick, 0.2) / KIT_DEPTH;
   const out: THREE.BufferGeometry[] = [];
-  for (const [i, tile] of wallTiles(n, c.corner).entries()) {
-    const model = files[tile.file] ?? files[WALL_FILES.plain];
+  for (const [i, tile] of wallTiles(n, c.corner, kit).entries()) {
+    const model = files[tile.file] ?? files[kit.plain];
     if (!model) return null;
     out.push(bend(model, c.r, from + (i * arc) / n, arc / n, cx, cz, wallH, depth));
   }
@@ -75,10 +75,10 @@ export function cornerGeometries(c: WallCorner, width: number, height: number, w
 }
 
 // The tiles of the runs and rounded corners as one geometry. `files` holds the models that have loaded (by url), each on its floor and centred
-export function wallsGeometry(runs: WallRun[], width: number, height: number, wallH: number, thick: number, files: Record<string, THREE.BufferGeometry | null>, corners: WallCorner[] = []): THREE.BufferGeometry | null {
+export function wallsGeometry(runs: WallRun[], width: number, height: number, wallH: number, thick: number, files: Record<string, THREE.BufferGeometry | null>, corners: WallCorner[] = [], kit: typeof WALL_FILES = WALL_FILES): THREE.BufferGeometry | null {
   const parts: THREE.BufferGeometry[] = [];
   for (const c of corners) {
-    const bent = cornerGeometries(c, width, height, wallH, thick, files);
+    const bent = cornerGeometries(c, width, height, wallH, thick, files, kit);
     if (!bent) return null;
     parts.push(...bent);
   }
@@ -88,8 +88,8 @@ export function wallsGeometry(runs: WallRun[], width: number, height: number, wa
     const start = run.a - (run.a === 0 ? thick / 2 : 0);
     const end = run.b + ((run.side === "n" || run.side === "s" ? run.b === width : run.b === height) ? thick / 2 : 0);
     const seed = Math.round(run.a * 7) + run.side.charCodeAt(0);
-    for (const tile of wallTiles(end - start, seed)) {
-      const model = files[tile.file] ?? files[WALL_FILES.plain];
+    for (const tile of wallTiles(end - start, seed, kit)) {
+      const model = files[tile.file] ?? files[kit.plain];
       if (!model) return null;
       const g = model.clone();
       g.scale(tile.length, wallH, depth);
@@ -107,18 +107,19 @@ export function wallsGeometry(runs: WallRun[], width: number, height: number, wa
 }
 
 // The walls of a room in a pack's palette; `fallback` (the plain walls) stands until the kit has loaded
-export function PackWalls({ runs, corners = [], width, height, wallH, thick, tone, wall, fallback }: { runs: WallRun[]; corners?: WallCorner[]; width: number; height: number; wallH: number; thick: number; tone: Tone; wall: WallSet; fallback: ReactNode }) {
-  const files = useModels(Object.values(WALL_FILES), "base", tone);
+export function PackWalls({ runs, corners = [], width, height, wallH, thick, tone, wall, fallback, kit = WALL_FILES }: { runs: WallRun[]; corners?: WallCorner[]; width: number; height: number; wallH: number; thick: number; tone: Tone; wall: WallSet; fallback: ReactNode; kit?: typeof WALL_FILES }) {
+  // (a ship's tiles were coloured when they were built: they are not toned again)
+  const files = useModels(Object.values(kit), "base", isBaked(kit.plain) ? undefined : tone);
   const origin = useContext(WallOrigin);
   const key = runs.map((r) => `${r.side}${r.a}-${r.b}`).join(",") + corners.map((c) => `c${c.corner}${c.r}:${c.from ?? ""}-${c.to ?? ""}`).join(",");
   // The walls (straight and curved) are projected in squares, so that the wall set repeats evenly round the room
   const geometry = useMemo(() => {
-    const kit = wallsGeometry(runs, width, height, wallH, thick, files, corners);
-    if (!kit) return null;
-    const textured = boxUV(kit, 1 / WALL_TILE, origin);
-    kit.dispose();
+    const built = wallsGeometry(runs, width, height, wallH, thick, files, corners, kit);
+    if (!built) return null;
+    const textured = boxUV(built, 1 / WALL_TILE, origin);
+    built.dispose();
     return textured;
-  }, [key, width, height, wallH, thick, files, origin.join(",")]);
+  }, [key, width, height, wallH, thick, files, origin.join(","), kit.plain]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
   const mesh = useRef<THREE.Mesh>(null);
   // What blocks the view and the shot, for the crosshair (aim.ts)

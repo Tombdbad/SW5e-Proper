@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { PACKS, WALL_FILES, codeTurn, facing, fitPiece, maxHeightOf, packOf, pieceOf, stretches, wallPackOf, wallTiles } from "../../client/src/components/Map/interiors/packs";
+import { PACKS, SHIP_KITS, WALL_FILES, codeTurn, facing, fitPiece, isBaked, maxHeightOf, packOf, pieceOf, stretches, wallFilesOf, wallPackOf, wallTiles } from "../../client/src/components/Map/interiors/packs";
 import { TONES } from "../../client/src/components/Map/interiors/tones";
 
 test("a room takes its pack by its name, then by its building, one pack at most", () => {
@@ -39,7 +39,8 @@ test("every piece a pack draws is in its folder, converted, with its licence, an
 
 test("the packs with walls are the ones of built places, and the frontier's rooms keep their own", () => {
   const walled = Object.entries(PACKS).filter(([, p]) => "walls" in p && p.walls).map(([id]) => id).sort();
-  assert.deepEqual(walled, ["hull", "industrial", "medical", "military", "station"]);
+  // (and each maker's ship kit, 2026-11-09)
+  assert.deepEqual(walled, ["hull", "industrial", "medical", "military", ...SHIP_KITS.map((f) => `ship_${f}`).sort(), "station"].sort());
 });
 
 test("a piece faces away from the wall it stands against", () => {
@@ -163,4 +164,30 @@ test("a round room's wall pieces have their curved versions, and a curved piece 
   assert.equal(pieceOf("cantina", "Bar counter", true, true), "/assets/mixar-modular/curve_bar.glb");
   assert.equal(pieceOf("cantina", "Bar counter", true, false), "/assets/mixar-modular/cantina_bar_straight.glb");
   assert.equal(pieceOf("cantina", "Bar counter", false, true), "/assets/mixar-modular/cantina_bar_straight.glb", "a piece carrying stock stays as it is");
+});
+
+test("a starship's rooms are all of its maker's kit: its walls, seats, consoles, bunks, lockers and engine core", () => {
+  for (const f of SHIP_KITS) {
+    const id = `ship_${f}` as const;
+    assert.equal(packOf("Bridge", "starship", f), id);
+    assert.equal(packOf("Lounge", "starship", f), id, "whatever the room is called: a lounge is not a cantina on a ship");
+    assert.equal(wallPackOf("starship", f), id);
+    assert.equal(packOf("Bridge", "starship"), "hull", "a ship with no maker keeps the old hull pack");
+    assert.equal(packOf("Main bar", "cantina", f), "cantina", "the maker counts only on a ship");
+    const walls = wallFilesOf(id);
+    assert.deepEqual(Object.keys(walls), ["plain", "detail", "panel"]);
+    for (const url of Object.values(walls)) assert.ok(fs.existsSync(`client/public${url}`) && isBaked(url), url);
+    for (const name of ["Pilot's seat", "Gunnery seat", "Console", "Console bank", "Bunk", "Locker", "Reactor core"]) {
+      const file = pieceOf(id, name);
+      assert.ok(file?.includes(`/mixar-ship/${f}_`), `${f}: ${name} -> ${file}`);
+      assert.ok(fs.existsSync(`client/public${file}`), file);
+    }
+    // a piece the kit lacks is the room's usual one, in the maker's palette
+    assert.equal(pieceOf(id, "Workbench"), "/assets/mixar-modular/tech_workbench.glb");
+  }
+  assert.equal(isBaked("/assets/mixar-modular/tech_workbench.glb"), false);
+  // the ship's wall tiles: a detailed and a porthole tile among the plain, the Space Station Kit's tiles as they were
+  const own = wallTiles(12, 0, wallFilesOf("ship_imperial")).map((t) => t.file);
+  assert.ok(own.some((u) => u.endsWith("imperial_wall_detail.glb")) && own.some((u) => u.endsWith("imperial_wall_port.glb")) && own.some((u) => u.endsWith("imperial_wall.glb")));
+  assert.deepEqual(wallTiles(12, 0).map((t) => t.file), wallTiles(12, 0, WALL_FILES).map((t) => t.file));
 });

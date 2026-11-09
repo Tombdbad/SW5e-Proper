@@ -23,7 +23,7 @@ import { Atmosphere } from "./interiors/Atmosphere.tsx";
 import { Stock } from "./interiors/Stock.tsx";
 import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, RockArch, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
-import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf, wallPackOf } from "./interiors/packs";
+import { PACKS, facing, hasWalls, isBaked, packOf, pieceOf, wallFilesOf, wallPackOf } from "./interiors/packs";
 import { loadModel } from "./interiors/assets";
 import { PackWalls, cornerCentre, CORNER_START, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
@@ -1287,7 +1287,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // whatever the building was of (2026-10-27, the user: texture clashes on walls)
   biome?: string;
   // A room whose walls are another room's (a gallery's balustrade is its host's, a roof's parapet is the room under it): its pack and wall set
-  like?: { buildingType: string; roomName: string };
+  like?: { buildingType: string; roomName: string; kit?: string };
   // Where the room stands against a round room's curve (`meetsOf`): it is filled out to the curve, and its doors there stand on it
   meets?: Meet[];
   height: number;
@@ -1296,7 +1296,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // The building's look, for its doors and windows
   style?: Style;
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
-  mood?: { buildingType: string; roomName: string; biome: string };
+  mood?: { buildingType: string; roomName: string; biome: string; kit?: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
   plan?: Pick<RoomLayout, "level" | "aloft" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape" | "open" | "tube">;
   assets: RoomAsset[];
@@ -1386,8 +1386,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   }, [roofAbove]);
   // The kit this room is furnished and walled from, and its palette
   // (a room that is `like` another has that room's walls but none of its furniture, light or air: `pack` is for the walls only)
-  const wallPack = mood && !rocky ? wallPackOf(mood.buildingType) : like ? wallPackOf(like.buildingType) : undefined;
-  const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
+  const wallPack = mood && !rocky ? wallPackOf(mood.buildingType, mood.kit) : like ? wallPackOf(like.buildingType, like.kit) : undefined;
+  const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType, mood.kit) : undefined;
   const wallLook = useMemo(() => (wallPack ? packTone(PACKS[wallPack], wall) : undefined), [wallPack, wall]);
   const packLook = useMemo(() => (pack === wallPack ? wallLook : pack ? packTone(PACKS[pack], wall) : undefined), [pack, wallPack, wallLook, wall]);
   const wallTexture = wallSet(wallPack, mood?.biome ?? biome ?? "");
@@ -1530,7 +1530,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               <>
                 {wallLook && wallPack && hasWalls(wallPack) && !rocky ? (
                   <>
-                    <PackWalls runs={standing} corners={cornerList.filter((c) => c.r < INTERIOR_BAY_MIN_R)} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={wallLook!} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
+                    <PackWalls runs={standing} corners={cornerList.filter((c) => c.r < INTERIOR_BAY_MIN_R)} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={wallLook!} wall={wallTexture} kit={wallFilesOf(wallPack)} fallback={<>{solid(standing)}{corner}</>} />
                     {corner.filter((_, i) => cornerList[i].r >= INTERIOR_BAY_MIN_R)}
                     {solid(railed)}
                   </>
@@ -3897,18 +3897,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       }
     }
     for (const r of rooms) {
-      const pack = packOf(r.name, typeOf(r));
-      const wallPack = wallPackOf(typeOf(r));
+      const pack = packOf(r.name, typeOf(r), kit);
+      const wallPack = wallPackOf(typeOf(r), kit);
       jobs.set(`wall:${wallSet(wallPack, biome)}`, () => void wallMaterial(wallSet(wallPack, biome), { vertexColors: true }));
       if (wallPack && hasWalls(wallPack)) {
         const wallTone = packTone(PACKS[wallPack], wall);
-        for (const url of Object.values(WALL_FILES)) jobs.set(`file:${wallTone.id}|${url}`, () => void loadModel(url, "base", wallTone));
+        for (const url of Object.values(wallFilesOf(wallPack))) jobs.set(`file:${isBaked(url) ? "baked" : wallTone.id}|${url}`, () => void loadModel(url, "base", isBaked(url) ? undefined : wallTone));
       }
       if (!pack) continue;
       const tone = packTone(PACKS[pack], wall);
       for (const a of r.layout?.assets ?? []) {
         const file = a.kind === "furniture" ? pieceOf(pack, a.name) : undefined;
-        if (file) jobs.set(`file:${tone.id}|${file}`, () => void loadModel(file, "base", tone));
+        if (file) jobs.set(`file:${isBaked(file) ? "baked" : tone.id}|${file}`, () => void loadModel(file, "base", isBaked(file) ? undefined : tone));
       }
     }
     const todo = [...jobs.values()];
@@ -4968,7 +4968,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   }
   const sizeOfGround = Math.max(240, ground.w + 80, ground.h + 80);
   // The ground round the building: a textured plane where the world has one (siteAssets groundTexture), else the plain colour
-  const groundTex = groundTexture(biome, building.type, GROUND[biome] ?? "#1c222b");
+  // (a ship's inside has no ground round it: the dark of the hull's skin, not the sand of the field it stands on)
+  const hullDark = building.type === "starship";
+  const groundTex = hullDark ? undefined : groundTexture(biome, building.type, GROUND[biome] ?? "#1c222b");
   // (the textured plane runs past the ground that can be walked on, so a tap beyond it walks nowhere)
   const walkHere = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
@@ -5012,10 +5014,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const insideRadii = (room: Area) => (room.layout?.shape ? radiiOf(room) : radiiOf(room).map((r) => Math.min(r, 1.1))) as [number, number, number, number];
   // The room whose walls a roof or a gallery shares (2026-10-27): the roof's is the room under it (same footprint), the gallery's its host
   const roofUnder = (l: RoomLayout) => rooms.find((o) => roofed.has(o.id) && o.layout!.x === l.x && o.layout!.y === l.y && o.layout!.width === l.width && o.layout!.height === l.height);
-  const likeOf = (room: Area): { buildingType: string; roomName: string } | undefined => {
+  // (a ship's rooms are furnished and walled from its maker's kit, the tag `kit:` its building has)
+  const kit = building.type === "starship" ? building.tags.find((t) => t.startsWith("kit:"))?.slice(4) : undefined;
+  const likeOf = (room: Area): { buildingType: string; roomName: string; kit?: string } | undefined => {
     const f = formOf(room);
     const from = f === "gallery" ? rooms.find((r) => room.tags.includes(`host:${r.id}`)) : f === "roof" && room.layout ? roofUnder(room.layout) : undefined;
-    return from ? { buildingType: building.type, roomName: from.name } : undefined;
+    return from ? { buildingType: building.type, roomName: from.name, kit } : undefined;
   };
 
   return (
@@ -5028,7 +5032,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         </mesh>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground && !groundTex}>
           <planeGeometry args={[sizeOfGround, sizeOfGround]} />
-          <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
+          <meshBasicMaterial color={hullDark ? "#06080b" : GROUND[biome] ?? "#1c222b"} />
         </mesh>
         {/* The ground round the building: a tap walks there. The textured plane covers the whole of the ground, so no dark rim shows round it */}
         {water === "sea" ? (
@@ -5054,7 +5058,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         ) : (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? walkHere : undefined}>
             <planeGeometry args={[ground.w, ground.h]} />
-            <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
+            <meshLambertMaterial color={hullDark ? "#0b0e13" : new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
           </mesh>
         )}
         {/* (on a textured ground nothing is laid under a building: its dark patch was a fixed fake shadow, there by night and pointing
@@ -5126,7 +5130,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   plan={l}
                   corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
                   style={style}
-                  mood={(formOf(room) && building.type !== "cave") || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome }}
+                  mood={(formOf(room) && building.type !== "cave") || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome, kit }}
                   biome={biome}
                   like={likeOf(room)}
                   width={l.width}
@@ -5197,7 +5201,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 {l.well ? (
                   <Terrace w={l.width} h={l.height} well={l.well} wall={dimWall(wall, !!opened && !bowl)} base={l.level === 1 ? levelY(l) : 0} />
                 ) : (
-                  <RoomShell plan={l} corners={insideRadii(room)} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} fullWalls wallHeight={LEVEL_H} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name }} />
+                  <RoomShell plan={l} corners={insideRadii(room)} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} fullWalls wallHeight={LEVEL_H} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name, kit }} />
                 )}
                 {!l.well && /^arena floor$/i.test(room.name) && <PitBout arena={room.parentId!} width={l.width} height={l.height} />}
                 {!duel && setting && people.length > 0 && (
@@ -5352,7 +5356,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : lookedFrom ? (
                 // The room under a mezzanine is looked down into, not boxed in: its floor, low walls and what is in it
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} bay={{ room, based: based[room.id] }} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name }} />
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} bay={{ room, based: based[room.id] }} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name, kit }} />
                   {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (

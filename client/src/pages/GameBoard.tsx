@@ -76,9 +76,9 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
-  heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
+  heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -1515,7 +1515,7 @@ export default function GameBoard() {
     if (!shipRows.length) return void toast.info("The ship data is still loading.");
     const prof = Math.ceil(1 + level / 4);
     // The party members seated at the stations of the ship's deck are its crew (a ship never boarded: the companions in order)
-    const seats = seatsOf(world.areas[deckIdOf(mine.id)]?.layout);
+    const seats = seatsOfShip(world, mine.id);
     const crewing = crewOf(seats.length ? seats : [{ id: "g1", name: "Gunnery seat", station: "guns" }, { id: "g2", name: "Gunnery seat", station: "guns" }, { id: "g3", name: "Gunnery seat", station: "guns" }, { id: "g4", name: "Gunnery seat", station: "guns" }], seats.length ? mine.crew : undefined, crewMembers());
     // (the shooter mode: flown in real time, the dogfight against these very ships, never turn by turn)
     if (playMode === "shooter") {
@@ -5998,7 +5998,7 @@ export default function GameBoard() {
   // Aboard the party's own ship (see "Ships in the round" in shared logic): its deck is a room of a
   // building that stands where the ship does. The pilot's seat opens the helm, which lists every
   // take-off, landing and jump from there; the ramp leads out.
-  const aboardId = here?.type === "deck" ? here.tags.find((t) => t.startsWith("ship:"))?.slice(5) : undefined;
+  const aboardId = aboardShipId(here);
   const aboardShip = aboardId ? ships.find((s) => s.id === aboardId) : undefined;
   const [helmOpen, setHelmOpen] = useState(false);
   // ---- The ship's hold (2026-11-03; the user: "mechanics to hide contraband on ships"). Aboard, what the party carries can be stowed in the
@@ -6054,7 +6054,7 @@ export default function GameBoard() {
     const out = boardShip(world, ship, ship.areaId, here.kind === "room" ? here.id : undefined);
     setCameFrom(here.id);
     saveCampaign({ galaxyMap: out.world, currentLocation: out.deckId });
-    toast.info(`You board ${ship.name}. Tap the pilot's seat to take the helm, the ramp to leave.`);
+    toast.info(`You board ${ship.name}. Tap the pilot's seat to take the helm, the ramp to leave.${hasInterior(ship) ? " The decks are joined by stairwells." : ""}${ship.size === "Huge" || ship.size === "Gargantuan" ? ` A ${ship.size} ship is far bigger than a map: this is the part of it the crew works in, its long passages folded (house rule).` : ""}`);
   };
   const disembarkNow = () => {
     if (!world || !aboardShip) return;
@@ -6197,7 +6197,7 @@ export default function GameBoard() {
     saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, crew: next } : s)) });
   };
   const crewPanel = (ship: PartyShip) => {
-    const seats = seatsOf(world?.areas[deckIdOf(ship.id)]?.layout);
+    const seats = world ? seatsOfShip(world, ship.id) : [];
     if (!seats.length) return null;
     const members = crewMembers();
     const crewing = crewOf(seats, ship.crew, members);

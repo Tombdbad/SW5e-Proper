@@ -5,13 +5,13 @@ import { create } from "zustand";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
-import { speederKind } from "@shared/logic";
+import { shipFactionOf, speederKind, type ShipFaction } from "@shared/logic";
 import { genderOf } from "@shared/logic/relations";
 import { boxUV, surfaceMaterial, SURFACE_GRAIN, WALL_TILE, wallMaterial, type WallSet } from "./surfaces";
 import { shaderPatch } from "./babylon";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
-import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
+import { codeTurn, fitPiece, isBaked, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, modParts, useModParts, modIntParts, useModIntParts, speciesParts, useSpeciesParts, shipParts, useShipParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
@@ -852,7 +852,8 @@ export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, ba
 }
 
 function PackPiece({ file, name, w, h, seed, look, tone, face }: { file: string; name: string; w: number; h: number; seed: number; look?: RoomLook; tone?: Tone; face: number }) {
-  const geometry = useModels([file], "base", tone)[file];
+  // (a ship's piece is coloured already, in its maker's paint)
+  const geometry = useModels([file], "base", isBaked(file) ? undefined : tone)[file];
   const placed = useMemo(() => {
     if (!geometry) return null;
     geometry.computeBoundingBox();
@@ -2328,16 +2329,9 @@ export type KitShip = { faction: string; size: string; role: string; box: number
 export const SHIP_KIT = (shipKitJson as { ships: Record<string, KitShip> }).ships;
 // Whose make a ship is, by its owner: a faction's own yards (the Empire's Sienar and Kuat, the Rebels' Incom and Corellian warships, the Republic's,
 // the Separatists' droid foundries, the Mandalorians', the Hutts' and the underworld's), else the freighter yards everyone else buys from
-export type ShipFaction = "imperial" | "rebel" | "republic" | "separatist" | "mandalorian" | "criminal" | "civilian";
-const FACTION_OF: [RegExp, ShipFaction][] = [
-  [/separatist|trade federation|techno union|banking clan|confedera|droid army/i, "separatist"],
-  [/mandalor|death watch/i, "mandalorian"],
-  [/empire|imperial|first order|sith/i, "imperial"],
-  [/rebel|resistance|new republic/i, "rebel"],
-  [/republic|jedi/i, "republic"],
-  [/hutt|black sun|pirate|crimson dawn|pyke|cartel|syndicate|smuggl|crime|zann/i, "criminal"],
-];
-export const shipFaction = (owner = ""): ShipFaction => FACTION_OF.find(([re]) => re.test(owner))?.[1] ?? "civilian";
+// (the same list names the faction of a ship's inside: shared/logic/starshipInterior.ts)
+export type { ShipFaction };
+export const shipFaction = shipFactionOf;
 const KIT_SIZES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
 // The kit's hull for a ship: its faction's of its size (a shuttle's own where the faction has one), else the freighter yards'
 export function shipKitName(ship: Pick<ShipLook, "size" | "role" | "owner">): string {

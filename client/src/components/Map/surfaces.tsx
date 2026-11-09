@@ -153,6 +153,8 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
 // plaster elsewhere). `wallSet` is pure; the sets are the Poly Haven wall sets in public/textures/wall.
 export type WallSet = "painted_plaster_wall" | "brick_wall_001" | "concrete_wall_003" | "corrugated_iron_02" | "rusty_metal_02" | "sandstone_blocks_05";
 export function wallSet(pack: string | undefined, biome: string): WallSet {
+  // (a ship's plain bulkheads: clean concrete-grey plating, rusted for the freighters and the underworld's)
+  if (pack?.startsWith("ship_")) return pack === "ship_civilian" || pack === "ship_criminal" ? "rusty_metal_02" : "concrete_wall_003";
   switch (pack) {
     case "industrial": return "corrugated_iron_02";
     case "hull": return "rusty_metal_02";

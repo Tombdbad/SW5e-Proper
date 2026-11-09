@@ -12,6 +12,8 @@ export interface Pack {
   walls?: boolean;
   // Furniture by the name `ROOM_PLANS` gives it: the file under /assets (without ".glb")
   pieces: Record<string, string>;
+  // A ship's kit (2026-11-09, tools/blender/build-shipint.py): its own wall tiles, and pieces coloured in the faction's paint when they were built (not toned again)
+  wallKit?: { plain: string; detail: string; panel: string };
 }
 
 const SPACE = "kenney-space";
@@ -22,7 +24,29 @@ const FURNITURE = "kenney-furniture";
 const MOD = "mixar-modular";
 const CONSOLES = Object.fromEntries(["Console", "Monitoring console", "Guard console", "Navigation console", "Terminal", "Data terminal", "Information terminal", "Desk"].map((n) => [n, `${SPACE}/desk_computer`]));
 
+// The starship interior kits, one for each maker (the same names as the exteriors: models.tsx SHIP_PAINT). Each has its own bulkhead tiles, seats, consoles, bunks,
+// lockers and engine core, built in Mixar in the maker's shape language; everything else in a ship's room is the room's usual piece in the maker's palette.
+const SHIPKIT = "mixar-ship";
+export const SHIP_KITS = ["imperial", "rebel", "republic", "separatist", "mandalorian", "criminal", "civilian"] as const;
+type ShipKit = (typeof SHIP_KITS)[number];
+const shipPack = (f: ShipKit) => ({
+  tone: `ship_${f}`,
+  walls: true,
+  wallKit: { plain: `/assets/${SHIPKIT}/${f}_wall.glb`, detail: `/assets/${SHIPKIT}/${f}_wall_detail.glb`, panel: `/assets/${SHIPKIT}/${f}_wall_port.glb` },
+  pieces: {
+    ...Object.fromEntries(["Pilot's seat", "Co-pilot's seat", "Gunnery seat", "Command chair"].map((n) => [n, `${SHIPKIT}/${f}_seat`])),
+    ...Object.fromEntries(["Navigation console", "Console", "Monitoring console", "Guard console", "Desk", "Terminal", "Data terminal"].map((n) => [n, `${SHIPKIT}/${f}_console`])),
+    "Console bank": `${SHIPKIT}/${f}_console_bank`,
+    Bunk: `${SHIPKIT}/${f}_bunk`,
+    Bed: `${SHIPKIT}/${f}_bunk`,
+    Locker: `${SHIPKIT}/${f}_locker`,
+    "Reactor core": `${SHIPKIT}/${f}_reactor`,
+    Footlocker: `${STATION}/container`,
+  },
+}) satisfies Pack;
+
 export const PACKS = {
+  ...(Object.fromEntries(SHIP_KITS.map((f) => [`ship_${f}`, shipPack(f)])) as Record<`ship_${ShipKit}`, ReturnType<typeof shipPack>>),
   // Dignitaries: the Space Station Kit's walls and furniture in the Imperial palette (blue-greys and white, crimson trim), with
   // a sofa and a low table from the Furniture Kit (the station kit has neither)
   station: {
@@ -92,6 +116,10 @@ export const PACKS = {
 
 export type PackId = keyof typeof PACKS;
 export const hasWalls = (id: PackId): boolean => !!(PACKS[id] as Pack).walls;
+// A piece of the ship kits is coloured already: it is drawn as it was built
+export const isBaked = (file: string): boolean => file.includes(`/${SHIPKIT}/`);
+// The wall tiles of a pack: the Space Station Kit's, or the ship kit's own
+export const wallFilesOf = (id: PackId | undefined): { plain: string; detail: string; panel: string } => (id && (PACKS[id] as Pack).wallKit) || WALL_FILES;
 
 // Which pack a room is furnished from: first by the room's own name (a palace's servants live like servants), then by the
 // kind of building. The first rule that matches decides; none is the code's own furniture and plain walls.
@@ -109,8 +137,10 @@ const BUILDINGS: [RegExp, PackId][] = [
   [/^(residences|tenements|rooming house)$/, "furniture"],
 ];
 
-export function packOf(roomName: string, buildingType = ""): PackId | undefined {
+export function packOf(roomName: string, buildingType = "", kit?: string): PackId | undefined {
   const building = buildingType.toLowerCase();
+  // A ship's rooms are all of its maker's kit, whatever they are called
+  if (building === "starship" && kit && (SHIP_KITS as readonly string[]).includes(kit)) return `ship_${kit}` as PackId;
   // A hideout's den is a raider's, not a resident's
   if (/^(hideout|camp)$/.test(building)) return "criminal";
   const byRoom = ROOMS.find(([match]) => match.test(roomName))?.[1];
@@ -120,7 +150,7 @@ export function packOf(roomName: string, buildingType = ""): PackId | undefined 
 
 // The pack a building's walls are drawn from: one for the whole building, whatever its rooms are furnished like (two rooms that
 // share a wall must not each draw it in its own texture: 2026-11-01, the user)
-export const wallPackOf = (buildingType = ""): PackId | undefined => packOf("", buildingType);
+export const wallPackOf = (buildingType = "", kit?: string): PackId | undefined => packOf("", buildingType, kit);
 
 // What the project's own pieces are called in the room plans (2026-11-09): any room, with a pack or none, draws these by their name where its pack has no piece of the name. The
 // kits' pieces (a pack's `pieces`) win where a pack names one; these fill in the rest, in the pieces' own colours (a room with no pack) or the pack's palette (one with)
@@ -237,11 +267,13 @@ export interface WallTile {
   length: number;
 }
 export const WALL_FILES = { plain: `/assets/${STATION}/wall.glb`, detail: `/assets/${STATION}/wall-detail.glb`, panel: `/assets/${STATION}/wall-window.glb` };
-export function wallTiles(length: number, seed = 0): WallTile[] {
+export function wallTiles(length: number, seed = 0, files: { plain: string; detail: string; panel: string } = WALL_FILES): WallTile[] {
   const n = Math.max(1, Math.round(length));
   const each = length / n;
+  // (a ship's kit has a detailed tile of its own as well: the Space Station Kit's detail tile is not used)
+  const own = files !== WALL_FILES;
   return Array.from({ length: n }, (_, i) => ({
-    file: n >= 3 && i > 0 && i < n - 1 && (i + seed) % 3 === 0 ? WALL_FILES.panel : WALL_FILES.plain,
+    file: n >= 3 && i > 0 && i < n - 1 && (i + seed) % 3 === 0 ? files.panel : own && n >= 3 && i > 0 && i < n - 1 && (i + seed) % 3 === 1 ? files.detail : files.plain,
     at: (i + 0.5) * each,
     length: each,
   }));

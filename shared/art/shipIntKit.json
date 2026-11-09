@@ -1,0 +1,635 @@
+{
+ "units": "squares of the map; x along, y up, z the front; each file under /assets/mixar-ship",
+ "pieces": {
+  "imperial_wall": {
+   "faction": "imperial",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.34
+   ],
+   "tris": 72
+  },
+  "imperial_wall_detail": {
+   "faction": "imperial",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 156
+  },
+  "imperial_wall_port": {
+   "faction": "imperial",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.38
+   ],
+   "tris": 48
+  },
+  "imperial_seat": {
+   "faction": "imperial",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.23,
+    0.82
+   ],
+   "tris": 224
+  },
+  "imperial_console": {
+   "faction": "imperial",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.27,
+    0.61
+   ],
+   "tris": 168
+  },
+  "imperial_console_bank": {
+   "faction": "imperial",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "imperial_bunk": {
+   "faction": "imperial",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "imperial_locker": {
+   "faction": "imperial",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "imperial_reactor": {
+   "faction": "imperial",
+   "piece": "reactor",
+   "size": [
+    1.863,
+    2.05,
+    1.952
+   ],
+   "tris": 764
+  },
+  "rebel_wall": {
+   "faction": "rebel",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.34
+   ],
+   "tris": 84
+  },
+  "rebel_wall_detail": {
+   "faction": "rebel",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 168
+  },
+  "rebel_wall_port": {
+   "faction": "rebel",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.375
+   ],
+   "tris": 272
+  },
+  "rebel_seat": {
+   "faction": "rebel",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.08,
+    0.83
+   ],
+   "tris": 224
+  },
+  "rebel_console": {
+   "faction": "rebel",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.25,
+    0.61
+   ],
+   "tris": 168
+  },
+  "rebel_console_bank": {
+   "faction": "rebel",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "rebel_bunk": {
+   "faction": "rebel",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "rebel_locker": {
+   "faction": "rebel",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "rebel_reactor": {
+   "faction": "rebel",
+   "piece": "reactor",
+   "size": [
+    1.885,
+    2.05,
+    1.863
+   ],
+   "tris": 796
+  },
+  "republic_wall": {
+   "faction": "republic",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.325
+   ],
+   "tris": 48
+  },
+  "republic_wall_detail": {
+   "faction": "republic",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 132
+  },
+  "republic_wall_port": {
+   "faction": "republic",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.053,
+    0.37
+   ],
+   "tris": 152
+  },
+  "republic_seat": {
+   "faction": "republic",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.13,
+    0.83
+   ],
+   "tris": 224
+  },
+  "republic_console": {
+   "faction": "republic",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.23,
+    0.61
+   ],
+   "tris": 168
+  },
+  "republic_console_bank": {
+   "faction": "republic",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "republic_bunk": {
+   "faction": "republic",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "republic_locker": {
+   "faction": "republic",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "republic_reactor": {
+   "faction": "republic",
+   "piece": "reactor",
+   "size": [
+    1.863,
+    2.05,
+    1.952
+   ],
+   "tris": 764
+  },
+  "separatist_wall": {
+   "faction": "separatist",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.338
+   ],
+   "tris": 60
+  },
+  "separatist_wall_detail": {
+   "faction": "separatist",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 144
+  },
+  "separatist_wall_port": {
+   "faction": "separatist",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.365
+   ],
+   "tris": 60
+  },
+  "separatist_seat": {
+   "faction": "separatist",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.28,
+    0.81
+   ],
+   "tris": 224
+  },
+  "separatist_console": {
+   "faction": "separatist",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.31,
+    0.61
+   ],
+   "tris": 168
+  },
+  "separatist_console_bank": {
+   "faction": "separatist",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "separatist_bunk": {
+   "faction": "separatist",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "separatist_locker": {
+   "faction": "separatist",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "separatist_reactor": {
+   "faction": "separatist",
+   "piece": "reactor",
+   "size": [
+    1.863,
+    2.05,
+    1.952
+   ],
+   "tris": 764
+  },
+  "mandalorian_wall": {
+   "faction": "mandalorian",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.365
+   ],
+   "tris": 128
+  },
+  "mandalorian_wall_detail": {
+   "faction": "mandalorian",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.365
+   ],
+   "tris": 212
+  },
+  "mandalorian_wall_port": {
+   "faction": "mandalorian",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.36
+   ],
+   "tris": 72
+  },
+  "mandalorian_seat": {
+   "faction": "mandalorian",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.1,
+    0.84
+   ],
+   "tris": 224
+  },
+  "mandalorian_console": {
+   "faction": "mandalorian",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.25,
+    0.61
+   ],
+   "tris": 168
+  },
+  "mandalorian_console_bank": {
+   "faction": "mandalorian",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "mandalorian_bunk": {
+   "faction": "mandalorian",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "mandalorian_locker": {
+   "faction": "mandalorian",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "mandalorian_reactor": {
+   "faction": "mandalorian",
+   "piece": "reactor",
+   "size": [
+    1.863,
+    2.05,
+    1.952
+   ],
+   "tris": 764
+  },
+  "criminal_wall": {
+   "faction": "criminal",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.345
+   ],
+   "tris": 84
+  },
+  "criminal_wall_detail": {
+   "faction": "criminal",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 168
+  },
+  "criminal_wall_port": {
+   "faction": "criminal",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.375
+   ],
+   "tris": 272
+  },
+  "criminal_seat": {
+   "faction": "criminal",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.26,
+    0.85
+   ],
+   "tris": 224
+  },
+  "criminal_console": {
+   "faction": "criminal",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.21,
+    0.61
+   ],
+   "tris": 168
+  },
+  "criminal_console_bank": {
+   "faction": "criminal",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "criminal_bunk": {
+   "faction": "criminal",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "criminal_locker": {
+   "faction": "criminal",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "criminal_reactor": {
+   "faction": "criminal",
+   "piece": "reactor",
+   "size": [
+    1.885,
+    2.05,
+    1.863
+   ],
+   "tris": 796
+  },
+  "civilian_wall": {
+   "faction": "civilian",
+   "piece": "wall",
+   "size": [
+    1.0,
+    1.0,
+    0.36
+   ],
+   "tris": 56
+  },
+  "civilian_wall_detail": {
+   "faction": "civilian",
+   "piece": "wall_detail",
+   "size": [
+    1.0,
+    1.0,
+    0.364
+   ],
+   "tris": 140
+  },
+  "civilian_wall_port": {
+   "faction": "civilian",
+   "piece": "wall_port",
+   "size": [
+    1.0,
+    1.0,
+    0.375
+   ],
+   "tris": 368
+  },
+  "civilian_seat": {
+   "faction": "civilian",
+   "piece": "seat",
+   "size": [
+    0.66,
+    1.16,
+    0.84
+   ],
+   "tris": 224
+  },
+  "civilian_console": {
+   "faction": "civilian",
+   "piece": "console",
+   "size": [
+    1.56,
+    1.25,
+    0.61
+   ],
+   "tris": 168
+  },
+  "civilian_console_bank": {
+   "faction": "civilian",
+   "piece": "console_bank",
+   "size": [
+    3.0,
+    1.35,
+    0.67
+   ],
+   "tris": 324
+  },
+  "civilian_bunk": {
+   "faction": "civilian",
+   "piece": "bunk",
+   "size": [
+    2.03,
+    0.7,
+    1.0
+   ],
+   "tris": 108
+  },
+  "civilian_locker": {
+   "faction": "civilian",
+   "piece": "locker",
+   "size": [
+    2.04,
+    1.745,
+    0.69
+   ],
+   "tris": 228
+  },
+  "civilian_reactor": {
+   "faction": "civilian",
+   "piece": "reactor",
+   "size": [
+    1.885,
+    2.05,
+    1.863
+   ],
+   "tris": 796
+  }
+ }
+}

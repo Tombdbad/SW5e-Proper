@@ -8,5 +8,12 @@
   "medical": { "ramp": ["#20282b", "#8aa5aa", "#f1f6f6"], "accent": "#cf3b3b" },
   "criminal": { "ramp": ["#171214", "#4d3a3c", "#a08a80"], "accent": "#c8372d" },
   "hull": { "ramp": ["#14202e", "#4a6178", "#b9cad8"], "accent": "#e07a2a" },
-  "ruin": { "ramp": ["#2a2822", "#6e6a5c", "#b8b29a"], "accent": "#5f7a48" }
+  "ruin": { "ramp": ["#2a2822", "#6e6a5c", "#b8b29a"], "accent": "#5f7a48" },
+  "ship_imperial": { "ramp": ["#14171a", "#454b53", "#999ca0"], "accent": "#8f2233" },
+  "ship_rebel": { "ramp": ["#5a5c5b", "#d3cebf", "#e7e4dc"], "accent": "#b8473e" },
+  "ship_republic": { "ramp": ["#696d72", "#e6e6e0", "#f1f1ee"], "accent": "#a3322b" },
+  "ship_separatist": { "ramp": ["#3c424a", "#a68f66", "#cec1ab"], "accent": "#c0392b" },
+  "ship_mandalorian": { "ramp": ["#1e2227", "#66727d", "#abb1b8"], "accent": "#36679e" },
+  "ship_criminal": { "ramp": ["#301d24", "#8e4254", "#c197a1"], "accent": "#c9a24a" },
+  "ship_civilian": { "ramp": ["#5d5a53", "#cbc3b1", "#e2ded4"], "accent": "#b0623a" }
 }
