@@ -414,12 +414,13 @@ const WILD_SITES: Record<string, string[]> = {
 const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "horror"; rooms: string[] }> = {
   spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
   // The hangars and yards round a spaceport (see SITES). A ship that puts down chooses one of them;
-  // each is a ground-floor hangar (GROUND_HANGARS), and keeps berths free for visitors ("berths:n").
+  // each is a ground-floor hangar (GROUND_HANGARS), and keeps berths free for visitors ("berths:n", Medium ones, or "berths:n:<size>").
+  // A town's landing field keeps one for a Large ship (a party's corvette has somewhere to put down).
   "refuelling depot": { rooms: ["Refuelling hangar|s d berths:2", "Pump house|d L:workshop K", "Depot office|s L:coin K @0"] },
   "cargo hangar": { rooms: ["Freight hangar|S s d L:cargo berths:1", "Cargo office|s L:coin K @0", "Customs bond store|L:cargo K g @0"] },
   "public hangar": { rooms: ["Public hangar|S s d berths:2", "Passenger lounge|p p s @0"] },
   "private hangar": { rooms: ["Private hangar|S s berths:1", "Owners' lounge|p s K @0"] },
-  "landing field": { rooms: ["Landing field|S s", "Fuel depot|d L:workshop", "Port office|s L:coin K @0"] },
+  "landing field": { rooms: ["Landing field|S s berths:1:Large", "Fuel depot|d L:workshop", "Port office|s L:coin K @0"] },
   "landing pad": { rooms: ["Landing pad|S s", "Fuel depot|d L:workshop"] },
   "docking ring": { rooms: ["Airlock|s", "Docking arm|S d", "Customs lock|s g @0", "Freight lift|L:cargo @2"] },
   "city gate": { rooms: ["Gate|g", "Guard room|g L:armory K"] },
@@ -2789,7 +2790,7 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   // (a hangar keeps berths free for visitors too: empty ship places, which a ship that puts down takes)
   const berths: { name: string; size: string; ref: string }[] = [
     ...room.ships.map((ship) => ({ name: ship.name, size: ship.size, ref: ship.id })),
-    ...Array.from({ length: visitorBerths(room) }, (_, i) => ({ name: "Visitors' berth", size: "Medium", ref: `${room.id}-berth${i + 1}` })),
+    ...visitorBerthSizes(room).map((size, i) => ({ name: "Visitors' berth", size, ref: `${room.id}-berth${i + 1}` })),
   ];
   const feet = berths.map((b) => footprintOf(b.size));
   const spread = feet.reduce((sum, [fw]) => sum + Math.min(W - 4, fw), 0) + 2 * Math.max(0, feet.length - 1);
@@ -5561,21 +5562,24 @@ export const footprintOf = (size: string): [number, number] => SHIP_FOOTPRINT[si
 export const SHIP_STOREYS: Record<string, number> = { Tiny: 1, Small: 2, Medium: 3, Large: 7, Huge: 7, Gargantuan: 7 };
 // Whether a ship of a size can put down on a world (the user, 2026-11-09: Huge and Gargantuan ships stay in orbit)
 export const shipLands = (size: string) => size !== "Huge" && size !== "Gargantuan";
-// The storeys a hangar stands for the ships that berth in it (a berth kept free for visitors counts as a Medium ship's)
+// The storeys a hangar stands for the ships that berth in it (a berth kept free for visitors counts as a ship of its size)
 export function hangarStoreys(room: Pick<Area, "ships"> & Partial<Pick<Area, "tags">>): number {
-  const sizes = [...room.ships.map((s) => s.size), ...(visitorBerths(room) ? ["Medium"] : [])];
+  const sizes = [...room.ships.map((s) => s.size), ...visitorBerthSizes(room)];
   return Math.max(1, ...sizes.map((size) => SHIP_STOREYS[size] ?? 2));
 }
 
-// Berths a hangar keeps free for ships that put down in it (code berths:<n>)
-export const visitorBerths = (room: Partial<Pick<Area, "tags">>): number => Number(room.tags?.find((t) => t.startsWith("code:berths:"))?.slice(12) ?? 0);
+// Berths a hangar keeps free for ships that put down in it (code berths:<n>[:<size>]): the size of each, Medium unless the tag gives one
+export function visitorBerthSizes(room: Partial<Pick<Area, "tags">>): string[] {
+  const [n, size] = room.tags?.find((t) => t.startsWith("code:berths:"))?.slice(12).split(":") ?? [];
+  return Array.from({ length: Number(n) || 0 }, () => (size && size in SHIP_STOREYS ? size : "Medium"));
+}
+export const visitorBerths = (room: Partial<Pick<Area, "tags">>): number => visitorBerthSizes(room).length;
 
 // The floor a hangar needs for the ships that berth in it (an empty berth is for a Medium ship)
 export function hangarRange(room: Pick<Area, "ships"> & Partial<Pick<Area, "tags">>): [number, number, number, number] {
   const base = ROOM_PLANS.find((p) => p.match.test("hangar"))!.size;
-  // (berths kept free for visiting ships count as Medium ones)
-  const free = visitorBerths(room);
-  const feet = [...room.ships.map((s) => s.size), ...Array.from({ length: free }, () => "Medium")].map((size) => footprintOf(size));
+  // (berths kept free for visiting ships count as ships of their size)
+  const feet = [...room.ships.map((s) => s.size), ...visitorBerthSizes(room)].map((size) => footprintOf(size));
   if (!feet.length) feet.push(footprintOf("Medium"));
   const width = feet.reduce((sum, [w]) => sum + w, 0) + 2 * (feet.length - 1) + 8;
   const height = Math.max(...feet.map(([, h]) => h)) + 6;
@@ -8670,22 +8674,30 @@ export function withPartyShips<T extends World>(world: T, ships: PartyShip[]): T
   for (const ship of ships) {
     const place = world.areas[ship.areaId];
     if (!place) continue;
-    // Berth rooms under the settlement (or the building) the ship is at, the ones holding ships first; the
-    // hangar it put down in before any other
+    // Berth rooms under the settlement (or the building) the ship is at; the hangar it put down in before any other. It takes the
+    // smallest free berth it fits (its footprint, SHIP_FOOTPRINT), in that hangar or else anywhere in the place; only where none
+    // is big enough the largest free one (where it is drawn smaller, to fit)
     const rooms = Object.values(world.areas)
       .filter((a) => a.kind === "room" && a.layout && trailOf(world, a.id).some((t) => t.id === place.id) && a.layout.assets.some((x) => x.kind === "ship"))
       .sort((p, q) => Number(q.parentId === ship.hangar) - Number(p.parentId === ship.hangar));
-    for (const room of rooms) {
-      const current = areas[room.id];
-      const berth = current.layout!.assets.find((a) => a.kind === "ship" && !used.has(a.id) && !current.ships.some((s) => s.id === a.ref));
-      if (!berth) continue;
-      used.add(berth.id);
-      areas[room.id] = {
+    const [fw, fh] = footprintOf(ship.size);
+    const free = rooms.flatMap((room, order) =>
+      areas[room.id].layout!.assets
+        .filter((a) => a.kind === "ship" && !used.has(a.id) && !areas[room.id].ships.some((s) => s.id === a.ref))
+        .map((berth) => ({ room: room.id, berth, order, fits: Math.max(berth.w, berth.h) >= Math.max(fw, fh) && Math.min(berth.w, berth.h) >= Math.min(fw, fh) })),
+    );
+    const area = (b: RoomAsset) => b.w * b.h;
+    const fitting = free.filter((f) => f.fits).sort((p, q) => p.order - q.order || area(p.berth) - area(q.berth));
+    // (the hangar it put down in is kept to only while it has a berth it fits)
+    const best = fitting.find((f) => f.order === 0 && rooms[0].parentId === ship.hangar) ?? fitting.sort((p, q) => area(p.berth) - area(q.berth))[0] ?? free.sort((p, q) => area(q.berth) - area(p.berth))[0];
+    if (best) {
+      const current = areas[best.room];
+      used.add(best.berth.id);
+      areas[best.room] = {
         ...current,
         ships: [...current.ships, ship],
-        layout: { ...current.layout!, assets: current.layout!.assets.map((a) => (a === berth ? { ...a, ref: ship.id, name: ship.name } : a)) },
+        layout: { ...current.layout!, assets: current.layout!.assets.map((a) => (a === best.berth ? { ...a, ref: ship.id, name: ship.name } : a)) },
       };
-      break;
     }
   }
   return { ...world, areas };

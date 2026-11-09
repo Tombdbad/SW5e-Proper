@@ -68,8 +68,8 @@ export const WEAPON_FILE = TOUCH ? "/figures/weapons.lo.glb" : "/figures/weapons
 // Where each head's eyes are, and what the code no longer adds to it, is in shared/art/speciesHeads.json
 export const SPECIES_FILE = "/figures/species.glb";
 // The starship kit (2026-11-09, tools/blender/build-ships.py): `ship_<faction>_<size>[_<role>]`, built in metres, each with its regions; the sizes
-// are in shared/art/shipKit.json
-export const SHIP_FILE = "/figures/ships.glb";
+// are in shared/art/shipKit.json. A phone loads ships.lo.glb (`--lo`: rounds of fewer sides, half the dressing of the big ships)
+export const SHIP_FILE = TOUCH ? "/figures/ships.lo.glb" : "/figures/ships.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);

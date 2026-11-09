@@ -61,13 +61,13 @@
     -0.0,
     -18.0,
     50.0,
-    22.763,
+    22.75,
     18.0
    ],
    "length": 102.8,
    "beam": 36.0,
-   "height": 22.76,
-   "tris": 1688
+   "height": 22.75,
+   "tris": 3892
   },
   "ship_imperial_huge": {
    "faction": "imperial",
@@ -78,13 +78,13 @@
     -155.0,
     -320.0,
     600.0,
-    255.08,
+    260.16,
     320.0
    ],
    "length": 1245.21,
    "beam": 640.0,
-   "height": 410.08,
-   "tris": 1712
+   "height": 415.16,
+   "tris": 7934
   },
   "ship_imperial_gargantuan": {
    "faction": "imperial",
@@ -92,16 +92,16 @@
    "role": "",
    "box": [
     -1699.32,
-    -60.0,
+    -63.349,
     -450.0,
     1650.0,
-    390.058,
+    400.48,
     450.0
    ],
    "length": 3349.32,
    "beam": 900.0,
-   "height": 450.06,
-   "tris": 2412
+   "height": 463.83,
+   "tris": 9816
   },
   "ship_rebel_tiny": {
    "faction": "rebel",
@@ -163,13 +163,13 @@
     -0.0,
     -15.1,
     53.0,
-    23.954,
+    27.508,
     15.1
    ],
    "length": 106.24,
    "beam": 30.2,
-   "height": 23.95,
-   "tris": 2244
+   "height": 27.51,
+   "tris": 3110
   },
   "ship_rebel_huge": {
    "faction": "rebel",
@@ -180,13 +180,13 @@
     3.174,
     -175.131,
     600.0,
-    256.826,
+    262.0,
     175.131
    ],
    "length": 1229.03,
    "beam": 350.26,
-   "height": 253.65,
-   "tris": 1776
+   "height": 258.83,
+   "tris": 4512
   },
   "ship_rebel_gargantuan": {
    "faction": "rebel",
@@ -197,13 +197,13 @@
     -14.646,
     -343.844,
     1600.0,
-    640.0,
+    673.807,
     343.844
    ],
    "length": 3213.51,
    "beam": 687.69,
-   "height": 654.65,
-   "tris": 3332
+   "height": 688.45,
+   "tris": 7742
   },
   "ship_republic_tiny": {
    "faction": "republic",
@@ -265,13 +265,13 @@
     -0.0,
     -16.0,
     55.0,
-    23.5,
+    27.68,
     16.0
    ],
    "length": 108.47,
    "beam": 32.0,
-   "height": 23.5,
-   "tris": 840
+   "height": 27.68,
+   "tris": 1614
   },
   "ship_republic_huge": {
    "faction": "republic",
@@ -279,7 +279,7 @@
    "role": "",
    "box": [
     -607.456,
-    -80.0,
+    -81.176,
     -274.0,
     568.5,
     238.38,
@@ -287,8 +287,8 @@
    ],
    "length": 1175.96,
    "beam": 548.0,
-   "height": 318.38,
-   "tris": 1320
+   "height": 319.56,
+   "tris": 5264
   },
   "ship_republic_gargantuan": {
    "faction": "republic",
@@ -305,7 +305,7 @@
    "length": 3249.32,
    "beam": 800.0,
    "height": 436.2,
-   "tris": 1512
+   "tris": 7396
   },
   "ship_separatist_tiny": {
    "faction": "separatist",
@@ -367,13 +367,13 @@
     -0.0,
     -13.315,
     55.0,
-    27.0,
+    30.324,
     13.315
    ],
    "length": 107.46,
    "beam": 26.63,
-   "height": 27.0,
-   "tris": 1820
+   "height": 30.32,
+   "tris": 2456
   },
   "ship_separatist_huge": {
    "faction": "separatist",
@@ -382,15 +382,15 @@
    "box": [
     -590.704,
     11.993,
-    -106.868,
+    -107.62,
     590.0,
-    290.0,
-    106.868
+    290.59,
+    107.62
    ],
    "length": 1180.7,
-   "beam": 213.74,
-   "height": 278.01,
-   "tris": 1828
+   "beam": 215.24,
+   "height": 278.6,
+   "tris": 3682
   },
   "ship_separatist_gargantuan": {
    "faction": "separatist",
@@ -407,7 +407,7 @@
    "length": 3060.15,
    "beam": 3159.61,
    "height": 1240.86,
-   "tris": 1828
+   "tris": 4212
   },
   "ship_mandalorian_tiny": {
    "faction": "mandalorian",
@@ -469,13 +469,13 @@
     -0.0,
     -22.033,
     40.0,
-    25.0,
+    30.471,
     22.033
    ],
    "length": 90.46,
    "beam": 44.07,
-   "height": 25.0,
-   "tris": 1292
+   "height": 30.47,
+   "tris": 1940
   },
   "ship_mandalorian_huge": {
    "faction": "mandalorian",
@@ -486,13 +486,13 @@
     0.0,
     -162.016,
     450.0,
-    215.0,
+    215.297,
     162.016
    ],
    "length": 935.88,
    "beam": 324.03,
-   "height": 215.0,
-   "tris": 480
+   "height": 215.3,
+   "tris": 3984
   },
   "ship_mandalorian_gargantuan": {
    "faction": "mandalorian",
@@ -503,13 +503,13 @@
     0.0,
     -430.0,
     1500.0,
-    520.0,
+    629.924,
     430.0
    ],
    "length": 3161.76,
    "beam": 860.0,
-   "height": 520.0,
-   "tris": 372
+   "height": 629.92,
+   "tris": 4308
   },
   "ship_criminal_tiny": {
    "faction": "criminal",
@@ -569,15 +569,15 @@
    "box": [
     -48.079,
     -0.0,
-    -12.71,
+    -12.761,
     54.0,
     27.6,
-    12.71
+    12.761
    ],
    "length": 102.08,
-   "beam": 25.42,
+   "beam": 25.52,
    "height": 27.6,
-   "tris": 972
+   "tris": 1594
   },
   "ship_criminal_huge": {
    "faction": "criminal",
@@ -594,7 +594,7 @@
    "length": 875.88,
    "beam": 328.39,
    "height": 386.88,
-   "tris": 812
+   "tris": 2264
   },
   "ship_criminal_gargantuan": {
    "faction": "criminal",
@@ -605,13 +605,13 @@
     142.347,
     -476.427,
     1700.0,
-    518.276,
+    524.2,
     318.364
    ],
    "length": 3158.13,
    "beam": 794.79,
-   "height": 375.93,
-   "tris": 2196
+   "height": 381.85,
+   "tris": 4394
   },
   "ship_civilian_tiny": {
    "faction": "civilian",
@@ -671,15 +671,15 @@
    "box": [
     -53.462,
     -0.0,
-    -9.0,
+    -9.8,
     51.0,
-    18.15,
-    9.0
+    23.276,
+    9.8
    ],
    "length": 104.46,
-   "beam": 18.0,
-   "height": 18.15,
-   "tris": 1772
+   "beam": 19.6,
+   "height": 23.28,
+   "tris": 2088
   },
   "ship_civilian_huge": {
    "faction": "civilian",
@@ -687,16 +687,16 @@
    "role": "",
    "box": [
     -560.0,
-    26.094,
-    -130.0,
+    -3.0,
+    -133.0,
     485.0,
-    233.906,
-    130.0
+    263.0,
+    133.0
    ],
    "length": 1045.0,
-   "beam": 260.0,
-   "height": 207.81,
-   "tris": 1808
+   "beam": 266.0,
+   "height": 266.0,
+   "tris": 4032
   },
   "ship_civilian_gargantuan": {
    "faction": "civilian",
@@ -713,7 +713,7 @@
    "length": 3471.98,
    "beam": 1620.0,
    "height": 846.07,
-   "tris": 1204
+   "tris": 3496
   },
   "ship_imperial_small_shuttle": {
    "faction": "imperial",

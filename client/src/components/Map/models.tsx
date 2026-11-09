@@ -6182,10 +6182,32 @@ function hullWreck(k: Kit, color = "#8b9299") {
 }
 
 export function BuildingModel({ type, wall }: { type: string; wall: string }) {
-  return <Model id={`bldg:${type}:${wall}`} build={(k) => buildBuilding(k, type, wall)} />;
+  // (a landing bay holds the starship kit's freighter once it is in, drawn on its own; the old procedural one until then)
+  useShipParts();
+  const bay = BAY_TYPES.test(type);
+  const kit = bay && !!shipParts()?.[BAY_SHIP];
+  return (
+    <>
+      <Model id={`bldg:${type}:${wall}:${kit ? "kit" : ""}`} build={(k) => buildBuilding(k, type, wall, kit)} />
+      {kit && <BayShip />}
+    </>
+  );
+}
+const BAY_TYPES = /spaceport|landing|docking|speeder platform/;
+const BAY_SHIP = "ship_civilian_medium";
+// The freighter in a round landing bay: a building's model is a token, not drawn to the street's scale, so the ship is fitted to the bay's pit
+// (the saucer freighter, 3 long and at most 2.4 across, set down on its floor and turned a little) rather than drawn at its real size
+function BayShip() {
+  const kit = SHIP_KIT[BAY_SHIP];
+  const s = Math.min(3 / kit.length, 2.4 / kit.beam);
+  return (
+    <group position={[0, 0.12, 0]} rotation={[0, 0.6, 0]}>
+      <KitHull ship={{ size: "Medium", role: "freighter", status: "landed", name: "bay freighter" }} name={BAY_SHIP} s={s} />
+    </group>
+  );
 }
 
-function buildBuilding(k: Kit, type: string, wall: string) {
+function buildBuilding(k: Kit, type: string, wall: string, kitShip = false) {
   const trim = shade(wall, 0.75);
   if (/cantina/.test(type)) {
     // A great dome with smaller ones round it, an arched way in under a lit sign, vaporators
@@ -6198,14 +6220,14 @@ function buildBuilding(k: Kit, type: string, wall: string) {
     vaporator(k, [-1.3, 0, -0.9]);
     return;
   }
-  if (/spaceport|landing|docking|speeder platform/.test(type)) {
-    // A round bay sunk into the ground, ringed with lights, a control tower, a ship in it
+  if (BAY_TYPES.test(type)) {
+    // A round bay sunk into the ground, ringed with lights, a control tower, a ship in it (BayShip, the kit's, when it is in)
     k.lathe([[2.4, 0], [2.4, 0.45], [2.2, 0.5], [2.15, 0.12], [0, 0.12]], /docking/.test(type) ? C.steel : wall, { seg: 36 });
     k.cyl(2.12, 0.02, "#2c333b", { at: [0, 0.13, 0], seg: 36 });
     k.torus(1.8, 0.03, C.amber, { at: [0, 0.15, 0], rot: [Math.PI / 2, 0, 0], seg: [4, 40], finish: "glow" });
     for (let i = 0; i < 8; i++) k.sphere(0.07, "#ff5a5a", { at: [Math.cos(i * 0.785) * 2.3, 0.5, Math.sin(i * 0.785) * 2.3], finish: "glow", seg: [6, 4] });
     if (/spaceport|docking/.test(type)) tower(k, [2.2, 0, -2.0], 0.36, 2.4, /docking/.test(type) ? C.steel : wall);
-    k.group([0, 0.4, 0], [0, 0.6, 0], 0.5, () => buildShip(k, "freighter", false, false, "#b9b1a0"));
+    if (!kitShip) k.group([0, 0.4, 0], [0, 0.6, 0], 0.5, () => buildShip(k, "freighter", false, false, "#b9b1a0"));
     return;
   }
   if (/market|promenade/.test(type)) {

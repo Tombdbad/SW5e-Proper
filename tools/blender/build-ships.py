@@ -3,7 +3,7 @@
 #   imperial (Sienar, Kuat), rebel (Incom, Corellian military), republic (Kuat, Rendili), separatist (Hoersch-Kessel, Haor Chall),
 #   mandalorian (MandalMotors), criminal (Hutt, Black Sun, pirates) and civilian (Corellian Engineering and the freighter yards),
 # and a ship of each faction for each starship size, assembled from its kit AT REAL SIZE IN METRES (the game multiplies by UNITS_PER_M).
-#   mixar.exe|blender --background --python tools/blender/build-ships.py -- <out-dir> [--kit <dir>] [--only a,b]
+#   mixar.exe|blender --background --python tools/blender/build-ships.py -- <out-dir> [--lo] [--kit <dir>] [--only a,b]
 # writes <out-dir>/ships.glb (meshes `ship_<faction>_<size>[_<role>]`) and shared/art/shipKit.json (each ship's faction, size, role, box in
 # metres, triangles); --kit <dir> also writes <dir>/ships_kit.glb, every kit part on its own (`kit_<faction>_<part>`) for review in Mixar
 # (not used by the game). `_REGION` per vertex:
@@ -23,6 +23,14 @@ def arg(name):
 OUT = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "."
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HULL, PANEL, GLOW, GLASS, LIVERY, METAL = 0, 1, 2, 3, 4, 5
+# --lo (a phone's file, ships.lo.glb): rounds of fewer sides, half the scattered detail, and a coarser angle for smooth shading
+HI = "--lo" not in sys.argv
+SEGF = 1.0 if HI else 0.6
+SMOOTH = math.radians(40 if HI else 62)
+
+def few(n, least=1):
+    """a count of scattered detail: all of it, or half in the phone's file"""
+    return n if HI else max(least, n // 2)
 
 # ---- The mesh builder: primitives in the code's axes under a stack of transforms ------------------------------------------------------------
 
@@ -31,7 +39,10 @@ class Hull:
         self.name = name
         self.bm = bmesh.new()
         self.rl = self.bm.verts.layers.float.new("_REGION")
+        # (decals: flat quads laid on the hull, kept out of the normals' recalculation, which cannot tell a lone quad's outside)
+        self.dl = self.bm.faces.layers.int.new("decal")
         self.stack = [Matrix.Identity(4)]
+        self.tree, self.tree_at = None, None
 
     # `with h.at(pos, rot, scale):` places what is built inside it
     def at(self, pos=(0, 0, 0), rot=(0, 0, 0), scale=1.0):
@@ -64,8 +75,87 @@ class Hull:
         except ValueError:
             pass
 
+    # ---- Laying things on what is built: rays against the hull so far (in the ship's own axes; the stack of transforms is not used)
+    def tree_now(self):
+        bm = self.bm
+        key = (len(bm.verts), len(bm.faces))
+        if self.tree_at != key:
+            bm.verts.index_update()
+            cos = [v.co for v in bm.verts]
+            self.tree = bvhtree.BVHTree.FromPolygons(cos, [[v.index for v in f.verts] for f in bm.faces])
+            lo = [min(c[i] for c in cos) for i in range(3)]
+            hi = [max(c[i] for c in cos) for i in range(3)]
+            self.extent = max(hi[i] - lo[i] for i in range(3))
+            self.tree_at = key
+        return self.tree
+
+    def cast(self, o, d):
+        """the first point of the hull a ray from o along d meets, and the surface's normal facing the ray (Blender's axes), or None"""
+        tree = self.tree_now()
+        db = Vector(P(*d)).normalized()
+        loc, nor, idx, dist = tree.ray_cast(Vector(P(*o)), db)
+        if loc is None:
+            return None
+        n = Vector(nor).normalized()
+        return loc, (-n if n.dot(db) > 0 else n)
+
+    def far(self):
+        self.tree_now()
+        return self.extent * 2.0
+
+    def top(self, x, z, default=0.0, below=None):
+        """the height of the hull's top at (x, z) (a ray from above, or from `below` downwards)"""
+        hit = self.cast((x, self.far() if below is None else below, z), (0, -1, 0))
+        return default if hit is None else hit[0].z
+
+    def sticks(self, items):
+        """decals: for each (origin, direction, w, hgt, region[, up]) a flat quad w by hgt laid where the ray first meets the hull (or a decal laid
+        before), lifted off it a little; it takes the surface's slant, and `up` (default the bow) turns it: w runs square to `up`, hgt along it"""
+        bm = self.bm
+        tree = self.tree_now()
+        lift = max(0.003, self.extent * 0.0005)
+        hits = []
+        for it in items:
+            o, d, w, hgt, region = it[:5]
+            hit = self.cast(o, d)
+            if not hit:
+                continue
+            loc, n = hit
+            up = Vector(P(*(it[5] if len(it) > 5 else (1, 0, 0))))
+            r = up.cross(n)
+            if r.length < 1e-4:
+                r = Vector((0, 0, 1)).cross(n)
+            r.normalize()
+            u = n.cross(r)
+            # (only where the whole quad lies on the surface: each corner looked at from in front must meet it about where the middle did, so
+            # that a plate does not stick out over a step, an edge or a curve)
+            back = w + hgt
+            tol = 0.04 * max(w, hgt) + lift
+            fits = True
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                c = loc + r * (sx * w / 2) + u * (sy * hgt / 2)
+                got = tree.ray_cast(c + n * back, -n, back * 2)
+                if got[0] is None or abs((got[0] - loc).dot(n)) > tol:
+                    fits = False
+                    break
+            if fits:
+                hits.append((loc, n, r, u, w, hgt, region))
+        for loc, n, r, u, w, hgt, region in hits:
+            c = loc + n * lift
+            vs = []
+            for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                vert = bm.verts.new(c + r * (sx * w / 2) + u * (sy * hgt / 2))
+                vert[self.rl] = float(region)
+                vs.append(vert)
+            try:
+                bm.faces.new(vs)[self.dl] = 1
+            except ValueError:
+                pass
+        return len(hits)
+
     # rings along a line: sections (centre, u, v, ru, rv, n) in local space; n = 2 a circle, larger squarer
     def loft(self, sections, seg, regions, caps=True):
+        seg = max(4, int(round(seg * SEGF)))
         rings = []
         for (c, u, w, ru, rv, n), g in zip(sections, regions):
             e = 2.0 / n
@@ -92,6 +182,7 @@ class Hull:
 
     def sphere(self, c, r, region=HULL, seg=12, rings=7, squash=(1, 1, 1)):
         st = []
+        rings = max(3, int(round(rings * SEGF)))
         for i in range(rings + 1):
             t = math.pi * i / rings
             st.append((c[0] - r * squash[0] * math.cos(t), c[1], c[2], r * squash[1] * math.sin(t), r * squash[2] * math.sin(t), 2))
@@ -161,6 +252,7 @@ class Hull:
     def torus(self, c, R, r, region=HULL, seg=24, seg2=6, a0=0.0, a1=2 * math.pi, squash=1.0):
         """a ring about the y axis through c, from angle a0 to a1 (an arc is closed at its ends); `squash` flattens its tube"""
         full = abs(a1 - a0 - 2 * math.pi) < 1e-6
+        seg = max(6, int(round(seg * SEGF)))
         n = seg if full else seg + 1
         rings = []
         for i in range(n):
@@ -186,14 +278,19 @@ class Hull:
         loose = [v for v in bm.verts if not v.link_faces]
         if loose:
             bmesh.ops.delete(bm, geom=loose, context="VERTS")
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bmesh.ops.recalc_face_normals(bm, faces=[f for f in bm.faces if not f[self.dl]])
+        # Smooth shading where neighbouring faces meet at less than SMOOTH (a round hull reads round), a hard edge elsewhere (and at every
+        # decal's rim); the exporter splits the vertices only along the hard edges, which also keeps the file smaller than all-flat faces
+        for f in bm.faces:
+            f.smooth = True
+        for e in bm.edges:
+            e.smooth = len(e.link_faces) == 2 and e.calc_face_angle(math.pi) < SMOOTH
         me = bpy.data.meshes.new(self.name)
         bm.to_mesh(me)
         bm.free()
+        me.attributes.remove(me.attributes["decal"])
         ob = bpy.data.objects.new(self.name, me)
         bpy.context.collection.objects.link(ob)
-        for poly in me.polygons:
-            poly.use_smooth = False
         ao = me.attributes.new("_AO", "FLOAT", "POINT")
         for i, val in enumerate(occlusion(ob, reach)):
             ao.data[i].value = val
@@ -253,17 +350,17 @@ def dish(h, c, r, tilt=0.6):
         h.loft_x([(0, 0, 0, r * 0.15, r * 0.15, 2, METAL), (r * 0.25, 0, 0, r, r, 2, PANEL), (r * 0.3, 0, 0, r * 0.95, r * 0.95, 2, PANEL)], 12, PANEL)
         h.rod((0.3 * r, 0, 0), (0.9 * r, 0, 0), r * 0.05, METAL, 4)
 
-def turret(h, c, r, barrels=2, aim=0.0):
-    h.sphere((c[0], c[1], c[2]), r, PANEL, 10, 5, (1, 0.6, 1))
+def turret(h, c, r, barrels=2, aim=0.0, seg=10):
+    h.sphere((c[0], c[1], c[2]), r, PANEL, seg, seg // 2, (1, 0.6, 1))
     with h.at(c, (0, aim, 0)):
         for k in range(barrels):
             dz = (k - (barrels - 1) / 2) * r * 0.5
-            cannon(h, r * 0.5, r * 0.2, dz, r * 2.2, r * 0.09)
+            cannon(h, r * 0.5, r * 0.2, dz, r * 2.2, r * 0.09, 6 if seg > 8 else 4)
 
 def greebles(h, x0, x1, z0, z1, y, n, seed, size, region=METAL):
     """small boxes scattered on a deck (pipes, hatches, vents)"""
     rnd = random.Random(seed)
-    for _ in range(n):
+    for _ in range(few(n)):
         w, d, t = rnd.uniform(0.3, 1) * size, rnd.uniform(0.3, 1) * size, rnd.uniform(0.15, 0.6) * size
         x, z = rnd.uniform(x0 + w / 2, x1 - w / 2), rnd.uniform(z0 + d / 2, z1 - d / 2)
         h.box((x, y + t / 2, z), (w, t, d), region if rnd.random() < 0.7 else PANEL)
@@ -276,6 +373,156 @@ def wedge(h, length, beam, y0, y1, nose=0.0, inset=0.0, region=HULL, x=0.0):
     L2 = length / 2
     out = [(x + L2, -nose / 2), (x - L2, -beam / 2), (x - L2, beam / 2), (x + L2, nose / 2)] if nose else [(x + L2, 0), (x - L2, -beam / 2), (x - L2, beam / 2)]
     h.prism(out, y0, y1, region, inset)
+
+# ---- The dressing of a big ship (2026-11-09, second pass: "the capital ships are simple, blocky shapes"): decals laid on what is built by rays
+# (Hull.sticks: a quad of two triangles each), and guns, masts and fins stood on the hull where a ray finds its top. They follow whatever shape
+# the hull has, so one set serves every kit. Both flanks always (they are not to be called inside h.pair).
+
+def ports(h, x0, x1, ys, n, w, hgt, region=GLOW, skip=0.0, seed=0, dark=GLASS):
+    """rows of ports along both flanks: at each height in ys, n of them from x0 to x1, where a ray from abeam meets the hull; `skip` the share
+    that are dark glass rather than lit"""
+    rnd = random.Random(seed)
+    far = h.far()
+    n2 = few(n)
+    w2 = w * n / n2
+    items = []
+    for y in ys:
+        for k in range(n2):
+            x = x0 + (x1 - x0) * (k + 0.5) / n2
+            g = dark if rnd.random() < skip else region
+            for s in (1, -1):
+                items.append(((x, y, s * far), (0, 0, -s), w2 * 0.7, hgt, g))
+    h.sticks(items)
+
+def facade(h, x, z, ys, n, span, w, hgt, axis="x", region=GLOW, skip=0.3, seed=0):
+    """windows on the faces of a tower or block standing at (x, z): rows at each height, n across `span`, looked at along `axis` from both ends"""
+    rnd = random.Random(seed)
+    far = h.far()
+    items = []
+    for y in ys:
+        for k in range(few(n)):
+            t = -span / 2 + span * (k + 0.5) / few(n)
+            g = GLASS if rnd.random() < skip else region
+            for s in (1, -1):
+                if axis == "x":
+                    items.append(((x + s * far, y, z + t), (-s, 0, 0), w, hgt, g, (0, 1, 0)))
+                else:
+                    items.append(((x + t, y, z + s * far), (0, 0, -s), w, hgt, g, (0, 1, 0)))
+    h.sticks(items)
+
+def plates(h, x0, x1, zmax, cell, seed, p=0.2, region=PANEL, below=False):
+    """panels of plating on the deck (or, `below`, the keel), the same on both sides of the centre line: a grid of cells `cell` long and 0.7 of
+    that wide, a share p of them plated (a few two cells long), where a plate lies flat"""
+    rnd = random.Random(seed)
+    far = h.far()
+    cw = cell * 0.7
+    items = []
+    nx, nz = int((x1 - x0) / cell), max(1, int(zmax / cw))
+    for i in range(nx):
+        for j in range(nz):
+            if rnd.random() > (p if HI else p * 0.5):
+                continue
+            span = 2 if rnd.random() < 0.3 and i < nx - 1 else 1
+            x, z = x0 + cell * (i + span / 2), cw * (j + 0.5)
+            for s in (1, -1):
+                items.append(((x, -far if below else far, s * z), (0, 1 if below else -1, 0), cw * 0.86, cell * (span - 0.12), region))
+    h.sticks(items)
+
+def lines(h, x0, x1, zmax, n, w, region=PANEL, dashes=8, below=False):
+    """panel lines across the deck: n of them from x0 to x1, each a row of dashes across the beam (they break where the deck steps)"""
+    far = h.far()
+    items = []
+    for k in range(few(n, 2)):
+        x = x0 + (x1 - x0) * (k + 0.5) / few(n, 2)
+        for j in range(dashes):
+            z = -zmax + 2 * zmax * (j + 0.5) / dashes
+            items.append(((x, -far if below else far, z), (0, 1 if below else -1, 0), 2 * zmax / dashes * 0.92, w, region))
+    h.sticks(items)
+
+def spine_lines(h, x0, x1, zs, n, w, region=PANEL):
+    """panel lines along the deck at each z in zs (both sides), in n dashes from x0 to x1"""
+    far = h.far()
+    items = []
+    for z in zs:
+        for j in range(few(n, 2)):
+            x = x0 + (x1 - x0) * (j + 0.5) / few(n, 2)
+            for s in ((1, -1) if z else (1,)):
+                items.append(((x, far, s * z), (0, -1, 0), w, (x1 - x0) / few(n, 2) * 0.9, region))
+    h.sticks(items)
+
+def bay(h, o, d, w, hgt, up=(0, 1, 0)):
+    """a hangar mouth: a dark opening in a lit rim, where the ray from o along d meets the hull"""
+    h.sticks([(o, d, w, hgt, GLOW, up)])
+    h.sticks([(o, d, w * 0.94, hgt * 0.86, GLASS, up)])
+
+def on_top(h, x, z, below=None):
+    return h.top(x, z, None, below)
+
+def guns(h, pts, r, barrels=2, aim=0.0):
+    """turrets stood on the hull's top at each (x, z), both sides of the centre line"""
+    for x, z in pts[::1 if HI else 2]:
+        for s in ((1, -1) if z else (1,)):
+            y = on_top(h, x, s * z)
+            if y is not None:
+                turret(h, (x, y, s * z), r, barrels, aim, 8)
+
+def mast(h, x, z, r, hgt, arms=2, lamp=True):
+    """an antenna mast stood on the hull at (x, z): a rod with cross-arms and a lamp at its tip"""
+    y = on_top(h, x, z)
+    if y is None:
+        return
+    h.rod((x, y, z), (x, y + hgt, z), r, METAL, 5, r * 0.5)
+    for k in range(arms):
+        yy = y + hgt * (0.45 + 0.2 * k)
+        h.rod((x, yy, z - hgt * 0.12), (x, yy, z + hgt * 0.12), r * 0.4, METAL, 4)
+    if lamp:
+        h.sphere((x, y + hgt, z), r * 1.4, GLOW, 6, 3)
+
+def domes(h, pts, r, region=PANEL):
+    """shield and sensor domes half sunk into the hull's top at each (x, z) (both sides)"""
+    for x, z in pts:
+        for s in ((1, -1) if z else (1,)):
+            y = on_top(h, x, s * z)
+            if y is not None:
+                h.sphere((x, y, s * z), r, region, 12, 6, (1, 0.55, 1))
+
+def blocks(h, x0, x1, zmax, n, seed, size, hgt, region=HULL):
+    """superstructure: small stepped blocks stood on the deck (both sides), each with its lit band"""
+    rnd = random.Random(seed)
+    for _ in range(few(n)):
+        x, z = rnd.uniform(x0, x1), rnd.uniform(0, zmax)
+        w, d, t = rnd.uniform(0.5, 1) * size, rnd.uniform(0.4, 1) * size, rnd.uniform(0.4, 1) * hgt
+        for s in ((1, -1) if z > d else (1,)):
+            y = on_top(h, x, s * z)
+            if y is None:
+                continue
+            h.box((x, y + t / 2 - t * 0.05, s * z), (w, t, d), region, top=(w * 0.8, d * 0.8))
+            h.box((x, y + t * 0.7, s * z), (w * 0.92, t * 0.08, d * 1.01), GLASS)
+
+def dagger_dress(h, length, beam, height, tiers=2, x=0.0, y=0.0, seed=1, rows=2, n=40, guns_n=0, gun_r=1.0, deck=1.0, plate=PANEL):
+    """the dressing of an imp_dagger of the same measures: rows of ports along the lower hull's flank and each tier's, plating and panel lines on
+    the decks and keel, and guns_n turrets a side along the top deck's shoulders"""
+    lower = height * 0.42
+    L2 = length / 2
+    unit = length * 0.006
+    ports(h, x - L2 * 0.93, x + L2 * 0.75, [y + lower * 0.55 * (k + 1) / (rows + 1) for k in range(rows)], n, unit * 1.2, lower * 0.035 + unit * 0.05, skip=0.2, seed=seed)
+    yy = y + lower
+    for k in range(tiers):
+        f = 0.82 - 0.22 * k
+        th = (height - lower) * 0.6 / tiers
+        xc = x - length * (1 - f) / 2
+        ports(h, xc - length * f / 2 * 0.92, xc + length * f / 2 * 0.55, [yy + th * 0.45], int(n * f * 0.8), unit * 1.2, th * 0.1, skip=0.3, seed=seed + k + 1)
+        yy += th
+    plates(h, x - L2 * 0.97, x + L2 * 0.85, beam * 0.48, length * 0.03 / deck, seed, 0.16, region=plate)
+    lines(h, x - L2 * 0.97, x + L2 * 0.7, beam * 0.5, int(22 * deck), unit * 0.25, dashes=10)
+    spine_lines(h, x - L2 * 0.9, x + L2 * 0.8, [0, beam * 0.12, beam * 0.26], 14, unit * 0.3)
+    if guns_n:
+        pts = []
+        for k in range(guns_n):
+            xx = x - L2 * 0.75 + length * 0.75 * (k + 0.5) / guns_n
+            half = beam / 2 * (x + L2 - xx) / length
+            pts.append((xx, half * 0.72))
+        guns(h, pts, gun_r)
 
 # ---- IMPERIAL (Sienar, Kuat): ball cockpits, hexagonal solar wings on pylons, layered daggers with a stepped tower, grey with dark panels, blue-white engines
 
@@ -333,11 +580,18 @@ def imp_dagger(h, length, beam, height, tiers=2, x=0.0, y=0.0):
 
 def imp_tower(h, x, y, w, hgt):
     """the command tower: a stepped neck, the T of the bridge and two shield domes on stalks"""
-    h.box((x, y + hgt * 0.3, 0), (w * 0.9, hgt * 0.6, w * 0.7), HULL, top=(w * 0.6, w * 0.5))
-    h.box((x, y + hgt * 0.68, 0), (w * 0.55, hgt * 0.2, w * 1.5), HULL)
+    # (a plinth of two steps, the neck, the bridge's T with its window band, the domes and a mast between them)
+    h.box((x - w * 0.1, y + hgt * 0.04, 0), (w * 1.5, hgt * 0.1, w * 1.2), HULL, top=(w * 1.35, w * 1.05))
+    h.box((x - w * 0.05, y + hgt * 0.12, 0), (w * 1.2, hgt * 0.08, w * 0.95), PANEL, top=(w * 1.1, w * 0.85))
+    h.box((x, y + hgt * 0.38, 0), (w * 0.9, hgt * 0.5, w * 0.7), HULL, top=(w * 0.6, w * 0.5))
+    h.box((x - w * 0.42, y + hgt * 0.3, 0), (w * 0.16, hgt * 0.5, w * 0.5), PANEL, top=(w * 0.1, w * 0.35))
+    h.box((x, y + hgt * 0.68, 0), (w * 0.55, hgt * 0.2, w * 1.5), HULL, top=(w * 0.5, w * 1.46))
     h.box((x + w * 0.05, y + hgt * 0.7, 0), (w * 0.5, hgt * 0.04, w * 1.52), GLASS)
+    h.box((x, y + hgt * 0.62, 0), (w * 0.5, hgt * 0.03, w * 1.4), PANEL)
+    h.box((x - w * 0.05, y + hgt * 0.8, 0), (w * 0.35, hgt * 0.04, w * 0.5), PANEL)
+    h.rod((x - w * 0.1, y + hgt * 0.8, 0), (x - w * 0.1, y + hgt * 1.08, 0), w * 0.025, METAL, 5, w * 0.01)
     h.pair(lambda s: (h.rod((x, y + hgt * 0.78, w * 0.4), (x, y + hgt * 0.9, w * 0.45), w * 0.05, METAL, 6),
-                      h.sphere((x, y + hgt * 0.96, w * 0.45), w * 0.14, PANEL, 10, 6)))
+                      h.sphere((x, y + hgt * 0.96, w * 0.45), w * 0.14, PANEL, 12, 7)))
 
 def imp_engines(h, x, y, rs, zs):
     for r, (yy, z) in zip(rs, zs):
@@ -398,8 +652,14 @@ def ship_imperial_large(h):
     imp_tower(h, -32, top, 10, 8)
     greebles(h, -20, 30, -6, 6, top - 1.0, 18, 3, 1.6)
     imp_engines(h, -50, 9, [3.4, 3.4, 2.4], [(0, 7), (0, -7), (2.5, 0)])
-    for x, z in ((20, 8), (0, -10), (-15, 9)):
-        turret(h, (x, 3.0 + 6.5, z), 1.2)
+    h.pair(lambda s: (h.box((-47, 6.0, 12), (6, 4, 6), HULL, top=(5, 4)), nozzle(h, -50, 6.0, 12, 1.5, 1.6)))
+    dagger_dress(h, 100, 36, 14, 2, y=3.0, seed=4, rows=2, n=34, guns_n=4, gun_r=1.1, plate=LIVERY)
+    blocks(h, -24, 18, 7, 8, 5, 3.5, 1.6)
+    domes(h, [(8, 0), (-6, 4)], 1.2)
+    mast(h, -38, 0, 0.12, 7)
+    mast(h, -26, 2.5, 0.08, 4, 1)
+    bay(h, (5, -50, 0), (0, 1, 0), 9, 5, (1, 0, 0))
+    h.pair(lambda s: bay(h, (-5, 5.0, s * 60), (0, 0, -s), 7, 1.8))
     gear(h, [(-30, 9), (-30, -9), (25, 0)], 3.0, 0.6)
 
 def ship_imperial_huge(h):
@@ -412,6 +672,16 @@ def ship_imperial_huge(h):
     greebles(h, -300, 300, -60, 60, top - 6, 40, 11, 18)
     imp_engines(h, -600, 40, [55, 55, 55, 22, 22, 22, 22], [(0, 110), (0, -110), (10, 0), (60, 200), (60, -200), (-20, 200), (-20, -200)])
     h.box((0, -150, 0), (40, 10, 30), PANEL)
+    # (the dressing: ports along the hull, the keel's and each deck's, plating, the trenches across the decks, batteries on the shoulders,
+    # a field of superstructure about the tower, the ventral bay)
+    dagger_dress(h, 1200, 640, 170, 3, seed=11, rows=3, n=70, guns_n=9, gun_r=11, deck=1.3, plate=LIVERY)
+    ports(h, -520, 470, [-30, -75], 50, 8, 4, skip=0.3, seed=12)
+    plates(h, -500, 450, 260, 40, 13, 0.15, region=LIVERY, below=True)
+    blocks(h, -420, 150, 110, 28, 14, 40, 18)
+    domes(h, [(-120, 0), (60, 40)], 16)
+    facade(h, -470, 0, [top + 50, top + 64, top + 86], 10, 60, 3, 2.4, axis="x", seed=15)
+    bay(h, (60, -400, 0), (0, 1, 0), 110, 40, (1, 0, 0))
+    h.pair(lambda s: (h.box((-560, 15, 270), (60, 30, 30), PANEL), mast(h, -360, 120, 1.2, 40)))
 
 def ship_imperial_gargantuan(h):
     # the dreadnought: a long narrow dagger, a city of decks along its spine, a tall tower and a wall of engines; 3300 x 900 x 300 m
@@ -423,6 +693,17 @@ def ship_imperial_gargantuan(h):
     greebles(h, -1200, 700, -120, 120, top, 60, 13, 40)
     imp_tower(h, -1380, top + 40, 120, 220)
     imp_engines(h, -1650, 50, [60] * 5 + [35] * 6, [(0, z) for z in (-260, -130, 0, 130, 260)] + [(70, z) for z in (-325, -195, -65, 65, 195, 325)])
+    # (the dressing: the city of decks lit, plating and trenches, batteries all along both shoulders, a trench of a bay under each flank)
+    dagger_dress(h, 3300, 900, 160, 2, seed=21, rows=3, n=110, guns_n=10, gun_r=18, deck=1.6, plate=LIVERY)
+    ports(h, -1500, 1300, [-25], 70, 14, 8, skip=0.3, seed=22)
+    for k, x in enumerate((-900, -450, 0, 450)):
+        facade(h, x, 0, [top + 14, top + 28], 12, 200 - k * 40, 7, 4, axis="z", seed=23 + k)
+    blocks(h, -1250, 900, 200, 36, 24, 70, 30)
+    domes(h, [(-700, 0), (200, 0), (900, 0)], 30)
+    h.pair(lambda s: bay(h, (300, 20, s * 2000), (0, 0, -s), 260, 18))
+    bay(h, (600, -900, 0), (0, 1, 0), 240, 60, (1, 0, 0))
+    for x in (-1100, -300, 600):
+        mast(h, x, 0, 3, 70)
 
 # ---- REBEL (Incom, Corellian military, Mon Calamari): needle fuselages, split S-foils with tip cannons, round nacelles with intake rings,
 # bubble canopies and astromech domes; hammerhead bows and banks of round engines; off-white with red-orange stripes, orange engine glow
@@ -460,7 +741,8 @@ def reb_hammer(h, x, y, w, hgt, d):
     h.loft_x([(x - d / 2, y, 0, hgt * 0.42, w * 0.38, 3), (x - d * 0.3, y, 0, hgt / 2, w / 2, 3.5), (x + d * 0.35, y, 0, hgt / 2, w / 2, 3.5),
               (x + d / 2, y - hgt * 0.05, 0, hgt * 0.38, w * 0.4, 3)], 14, HULL)
     h.box((x + d * 0.42, y + hgt * 0.12, 0), (d * 0.12, hgt * 0.09, w * 0.66), GLASS)
-    stripe(h, x - d * 0.2, x + d * 0.05, y + hgt * 0.49, 0, w * 0.9, hgt * 0.03)
+    # (the red band round the hammerhead: a ring of its own section a little proud of it)
+    h.loft_x([(x - d * 0.2, y, 0, hgt / 2 * 1.012, w / 2 * 1.012, 3.5, LIVERY), (x + d * 0.05, y, 0, hgt / 2 * 1.012, w / 2 * 1.012, 3.5, LIVERY)], 14, LIVERY)
     h.pair(lambda s: h.box((x - d * 0.08, y, w * 0.5), (d * 0.25, hgt * 0.5, w * 0.03), LIVERY))
 
 def reb_bank(h, x, y, rows, cols, r, gap):
@@ -486,9 +768,13 @@ def mon_cal(h, length, beam, height, pods=4, seed=1):
         x = -L * 0.35 + L * 0.6 * k / max(1, pods - 1)
         r = height * rnd.uniform(0.14, 0.22)
         h.pair(lambda s, x=x, r=r: h.sphere((x, height * 0.45, beam * 0.38), r, HULL, 10, 5, (2.2, 1, 1)))
-    for k in range(3):
-        y = height * (0.35 + 0.15 * k)
-        h.pair(lambda s, y=y: h.box((0, y, beam * (0.36 - 0.04 * k)), (L * 0.55, height * 0.012, beam * 0.02), GLOW))
+    # (lobes along the back and under the belly, the swellings that make it grown rather than built; the ports are laid on by mon_cal_dress)
+    for k in range(pods + 1):
+        x = -L * 0.38 + L * 0.7 * k / max(1, pods)
+        r = height * rnd.uniform(0.16, 0.26)
+        h.sphere((x, height * rnd.uniform(0.72, 0.8), 0), r, HULL, 12, 6, (2.6, 0.8, 1.3))
+        if k % 2:
+            h.sphere((x, height * 0.22, 0), r * 0.8, HULL, 10, 5, (2.4, 0.7, 1.2))
     nozzle(h, -L / 2 + L * 0.02, height / 2, 0, height * 0.18, height * 0.2, 12)
     h.pair(lambda s: nozzle(h, -L / 2 + L * 0.05, height * 0.45, beam * 0.2, height * 0.12, height * 0.15, 10))
 
@@ -541,11 +827,33 @@ def ship_rebel_large(h):
     with h.at((10, y - 6, 0), (math.pi, 0, 0)):
         turret(h, (0, 0, 0), 1.6)
     dish(h, (-30, y + 9.5, 7), 3.0, 1.1)
+    # (the dressing: the bridge's ports round the hammerhead, the escape pods' hatches along the neck, the engine block's plating, side guns)
+    ports(h, 25, 52, [y + 3.5, y - 1.5], 14, 0.9, 0.6, skip=0.25, seed=31)
+    ports(h, -50, -31, [y + 4, y - 4], 10, 0.8, 0.5, skip=0.3, seed=32)
+    ports(h, -29, 22, [y + 1.5], 10, 1.4, 1.4, region=PANEL)
+    plates(h, -50, -30, 13, 3.5, 33, 0.3)
+    spine_lines(h, 24, 52, [0, 6], 6, 0.25)
+    guns(h, [(30, 7), (-38, 9)], 1.0)
+    mast(h, -44, 0, 0.15, 6)
     gear(h, [(-38, 7), (-38, -7), (34, 0)], y - 6, 0.8)
+
+def mon_cal_dress(h, x0, x1, yc, height, n, seed):
+    """the ports of a Mon Calamari hull from x0 to x1 about the height yc: rows that come and go (dark glass among the lit), the bays on
+    its flanks and seams along its back"""
+    ports(h, x0, x1, [yc + height * f for f in (-0.28, -0.16, -0.05, 0.06, 0.17, 0.28)], n, (x1 - x0) / n * 0.5, height * 0.018, skip=0.5, seed=seed)
+    for k in range(3):
+        x = x0 + (x1 - x0) * (0.25 + 0.22 * k)
+        bay(h, (x, yc - height * 0.1, h.far()), (0, 0, -1), (x1 - x0) * 0.06, height * 0.08)
+        bay(h, (x, yc - height * 0.1, -h.far()), (0, 0, 1), (x1 - x0) * 0.06, height * 0.08)
+    spine_lines(h, x0, x1, [0, height * 0.12], 16, height * 0.01)
 
 def ship_rebel_huge(h):
     # a Mon Calamari star cruiser: a swollen, lobed hull with pods and ports, built by a people not a yard; 1200 x 320 x 260 m
     mon_cal(h, 1200, 320, 260, 5, 2)
+    # (the bridge: a low dome forward on the back, a fin behind it)
+    h.sphere((380, 230, 0), 40, GLASS, 12, 6, (1.6, 0.5, 1))
+    h.plate([(260, 200), (360, 200), (330, 262), (280, 262)], -6, 6, HULL)
+    mon_cal_dress(h, -520, 520, 130, 260, 70, 41)
 
 def ship_rebel_gargantuan(h):
     # a heavy cruiser of the fleet's line: two lobed hulls one over the other, a fin of a bridge; 3200 x 700 x 500 m
@@ -553,6 +861,10 @@ def ship_rebel_gargantuan(h):
     with h.at((-200, 300, 0)):
         mon_cal(h, 1800, 260, 200, 3, 9)
     h.plate([(-1000, 380), (400, 380), (-200, 640), (-800, 640)], -15, 15, HULL)
+    h.sphere((-450, 640, 0), 70, GLASS, 12, 6, (2.0, 0.5, 1))
+    mon_cal_dress(h, -1400, 1400, 190, 380, 90, 51)
+    ports(h, -1000, 600, [360, 420, 470], 40, 14, 4, skip=0.5, seed=52)
+    ports(h, -950, 350, [500, 560], 16, 18, 5, skip=0.3, seed=53)
 
 # ---- REPUBLIC (Kuat, Rendili, Clone Wars; the Old Republic's hammerheads): arrowheads with a flight deck, twin towers, delta wings, white with
 # Republic red bands, blue engines
@@ -649,6 +961,13 @@ def ship_republic_large(h):
         nozzle(h, -51, y + 4 - k * 4, 0, 3.0, 2.4)
     h.pair(lambda s: nozzle(h, -51, y, 9, 2.4, 2.0))
     h.pair(lambda s: h.plate([(-48, y + 8), (-36, y + 8), (-42, y + 12.5), (-48, y + 12.5)], 12, 13, HULL))
+    # (the dressing: the salon's ports, the body's, plating on the engine block, the guns and a mast)
+    ports(h, 28, 54, [y + 3, y - 2.5], 14, 1.0, 0.6, skip=0.2, seed=61)
+    ports(h, -40, 24, [y + 2, y - 2], 18, 1.0, 0.5, skip=0.35, seed=62)
+    plates(h, -50, -36, 9, 3.0, 63, 0.3)
+    spine_lines(h, -46, 24, [0, 4], 10, 0.25)
+    guns(h, [(10, 4), (-25, 0)], 1.0)
+    mast(h, -40, 4, 0.12, 5)
     gear(h, [(-30, 7), (-30, -7), (30, 0)], y - 6, 0.8)
 
 def ship_republic_huge(h):
@@ -659,6 +978,14 @@ def ship_republic_huge(h):
     rep_twin_towers(h, -400, top, 60, 110)
     greebles(h, -350, 100, -70, 70, top - 4, 30, 21, 16)
     imp_engines(h, -568, 40, [48, 48, 48, 20, 20, 20, 20], [(10, 90), (10, -90), (10, 0), (60, 170), (60, -170), (-30, 170), (-30, -170)])
+    # (the dressing: ports along the hull and keel, plating and trenches, the flight deck's runway lights, windows in the towers, batteries)
+    dagger_dress(h, 1137, 548, 160, 1, seed=64, rows=3, n=66, guns_n=6, gun_r=10)
+    ports(h, -500, 450, [-25, -55], 46, 8, 4, skip=0.3, seed=65)
+    spine_lines(h, -100, 420, [0, 22], 14, 3, region=GLOW)
+    for z in (33, -33):
+        facade(h, -400, z, [top + 45, top + 60, top + 84], 5, 30, 3, 2.4, axis="x", seed=66)
+    blocks(h, -360, 60, 120, 16, 67, 30, 14)
+    bay(h, (0, -400, 0), (0, 1, 0), 100, 36, (1, 0, 0))
 
 def ship_republic_gargantuan(h):
     # a siege dreadnought: a long, narrow arrowhead with a keel, a tower amidships and heavy guns along its spine; 3200 x 800 x 260 m
@@ -669,6 +996,13 @@ def ship_republic_gargantuan(h):
         turret(h, (x, top, 0), 40)
     rep_twin_towers(h, -1200, top, 140, 220)
     imp_engines(h, -1600, 40, [60] * 5, [(0, z) for z in (-240, -120, 0, 120, 240)])
+    dagger_dress(h, 3200, 800, 150, 1, seed=71, rows=3, n=100, guns_n=9, gun_r=16, deck=1.5)
+    ports(h, -1400, 1300, [-30, -60], 70, 14, 7, skip=0.3, seed=72)
+    for z in (77, -77):
+        facade(h, -1200, z, [top + 90, top + 120, top + 168], 6, 70, 6, 5, axis="x", seed=73)
+    blocks(h, -1100, 1000, 180, 30, 74, 70, 30)
+    for x in (-800, 0, 900):
+        mast(h, x, 0, 3, 60)
 
 # ---- SEPARATIST (Hoersch-Kessel, Haor Chall, Colla, Feethan Ottraw): insect and fish shapes, crescents and rings, ribbed spines, droid eyes;
 # tan and bronze with blue-grey, the engines blue, the eyes red
@@ -742,6 +1076,11 @@ def ship_separatist_large(h):
     for z in (-6, 0, 6):
         nozzle(h, -50, y, z, 2.6, 2.4)
     h.pair(lambda s: sep_crescent(h, (-20, y, 0), 13, 1.0, 0.15 * math.pi, 0.4 * math.pi))
+    # (the dressing: ports along the hull under the spine, windows up the bow's tower, guns on the spine, a mast of arrays at the bow)
+    ports(h, -36, 26, [y - 6, y - 2.5], 20, 1.0, 0.6, skip=0.3, seed=81)
+    facade(h, 44, 0, [y + 6, y + 10], 3, 5, 0.9, 0.6, axis="z", seed=82)
+    guns(h, [(-34, 0), (-8, 0), (18, 0)], 1.1)
+    mast(h, 43, 0, 0.15, 4.5, 3)
     gear(h, [(-30, 6), (-30, -6), (30, 0)], y - 7, 0.8)
 
 def ship_separatist_huge(h):
@@ -755,6 +1094,16 @@ def ship_separatist_huge(h):
         turret(h, (-300 + k * 120, y + 50, 0), 14)
     for z in (-50, 0, 50):
         nozzle(h, -560, y, z, 32, 30)
+    # (the dressing: ports along the hull, the windows of the dorsal fin's batteries, bays under the flanks, guns on the shoulders, arrays at the bow)
+    ports(h, -470, 230, [y - 70, y - 50, y - 30], 50, 8, 5, skip=0.35, seed=83)
+    ports(h, -380, 170, [y + 70, y + 105, y + 140], 30, 9, 5, skip=0.3, seed=84)
+    for x in (-300, -120, 60):
+        bay(h, (x, y - 60, h.far()), (0, 0, -1), 60, 22)
+        bay(h, (x, y - 60, -h.far()), (0, 0, 1), 60, 22)
+    guns(h, [(-420, 60), (-200, 80), (40, 60)], 9)
+    for z in (35, -35):
+        mast(h, 520, z, 2, 50, 3)
+    spine_lines(h, -480, 240, [0, 50], 14, 4)
 
 def ship_separatist_gargantuan(h):
     # the core ship: a great ring open at the bow, a sphere at its heart and the docking arms between; 3170 m across, 900 m high
@@ -768,6 +1117,24 @@ def ship_separatist_gargantuan(h):
     h.pair(lambda s: h.box((1150, y, 1050), (280, 260, 200), PANEL))
     for k in range(5):
         nozzle(h, -1550, y + (k - 2) * 110, 0, 50, 40)
+    # (the dressing: rows of ports round the ring's rim, plating on its back, batteries along it and the bays inside the ring, facing the core)
+    far = h.far()
+    items, tops, bays = [], [], []
+    for k in range(few(64)):
+        t = 0.16 * math.pi + 1.68 * math.pi * (k + 0.5) / few(64)
+        c, sn = math.cos(t), math.sin(t)
+        for dy in (-220, -120, -20, 80, 180):
+            items.append(((c * far, y + dy, sn * far), (-c, 0, -sn), 26 * 64 / few(64), 10, GLOW if (k + dy // 100) % 3 else GLASS, (0, 1, 0)))
+        for rr in (1180, 1300, 1420):
+            tops.append(((c * rr, far, sn * rr), (0, -1, 0), 60, 90, PANEL if (k + rr // 120) % 2 else METAL, (-sn, 0, c)))
+        if k % 8 == 4:
+            bays.append((t, c, sn))
+    h.sticks(items)
+    h.sticks(tops)
+    for t, c, sn in bays:
+        bay(h, (c * 900, y, sn * 900), (c, 0, sn), 160, 70)
+    pts = [(math.cos(t) * 1300, math.sin(t) * 1300) for t in [math.pi * (0.25 + 0.12 * k) for k in range(6)]]
+    guns(h, pts, 34)
 
 # ---- MANDALORIAN (MandalMotors, Kuat Systems for Mandalore): angular slabs, the T of a visor at every cockpit, blade wings that turn to land,
 # dark steel with blue and the clan's orange, white engine glow
@@ -840,6 +1207,13 @@ def ship_mandalorian_large(h):
         nozzle(h, -48, 9, z, 2.6, 2.4)
     for x in (25, 0, -20):
         turret(h, (x, 21 if x < 22 else 15, 0), 1.6)
+    # (the dressing: ports along the hull's flanks and the upper slab's, plating and panel lines on the decks, a mast)
+    ports(h, -45, 34, [6, 9.5, 12.5], 26, 1.0, 0.55, skip=0.3, seed=91)
+    ports(h, -40, 18, [18], 16, 1.0, 0.5, skip=0.3, seed=92)
+    plates(h, -46, 36, 13, 3.5, 93, 0.2)
+    lines(h, -46, 36, 14, 12, 0.2, dashes=8)
+    blocks(h, -36, 14, 8, 6, 94, 3.5, 1.4)
+    mast(h, -16, 3, 0.12, 6)
     gear(h, [(-30, 9), (-30, -9), (25, 7), (25, -7)], 3, 0.8)
 
 def ship_mandalorian_huge(h):
@@ -852,6 +1226,21 @@ def ship_mandalorian_huge(h):
         h.pair(lambda s, x=x: man_blade(h, (x, 60, 105), 60, 90, -0.4))
     for z in (-70, 0, 70):
         nozzle(h, -450, 55, z, 40, 35)
+    # (the dressing: a step of superstructure, smaller engines round the great ones, ports in rows, plating, trenches, batteries, bays, masts)
+    man_slab(h, -220, 60, 170, 196, 80, 0.6)
+    for y0, z in ((20, 0), (95, 0), (20, 92), (20, -92), (95, 92), (95, -92)):
+        nozzle(h, -450, y0, z, 16, 16)
+    ports(h, -430, 380, [18, 40, 62, 84], 60, 7, 4, skip=0.3, seed=95)
+    ports(h, -380, 180, [128, 150], 36, 7, 4, skip=0.3, seed=96)
+    plates(h, -440, 420, 110, 40, 97, 0.2)
+    lines(h, -440, 420, 110, 16, 3, dashes=10)
+    guns(h, [(x, 85) for x in (-250, -100, 50, 200, 330)], 10)
+    blocks(h, -360, 160, 60, 10, 98, 30, 14)
+    for x in (-300, 0, 250):
+        bay(h, (x, 40, h.far()), (0, 0, -1), 70, 28)
+        bay(h, (x, 40, -h.far()), (0, 0, 1), 70, 28)
+    for x in (-330, -250):
+        mast(h, x, 0, 1.6, 45)
 
 def ship_mandalorian_gargantuan(h):
     # a war city: three dreadnought slabs side by side under one deck, a tower of a bridge; 3100 x 900 x 400 m
@@ -863,6 +1252,19 @@ def ship_mandalorian_gargantuan(h):
     man_visor(h, -290, 430, 160, 120)
     for z in (-300, 0, 300):
         nozzle(h, -1400 if z == 0 else -1600, 110, z, 80, 60)
+    # (the dressing: the three hulls' ports, the deck's and the tower's, plating, trenches, blocks of the city on deck, batteries, bays)
+    ports(h, -1700, 1150, [30, 80, 130, 180], 80, 20, 9, skip=0.3, seed=101)
+    ports(h, -1250, 640, [240, 280], 60, 18, 8, skip=0.3, seed=102)
+    ports(h, -880, -320, [340, 380, 420, 470], 20, 14, 8, skip=0.25, seed=103)
+    plates(h, -1250, 650, 420, 70, 104, 0.18)
+    lines(h, -1250, 650, 420, 20, 6, dashes=12)
+    blocks(h, -250, 600, 380, 18, 105, 90, 40)
+    guns(h, [(x, 330) for x in (-1000, -400, 200)], 22)
+    for x in (-1200, 0, 900):
+        bay(h, (x, 60, h.far()), (0, 0, -1), 160, 60)
+        bay(h, (x, 60, -h.far()), (0, 0, 1), 160, 60)
+    for x in (-760, -440):
+        mast(h, x, 0, 4, 120)
 
 # ---- CRIMINAL (Hutt, Black Sun, pirates; Ubrikkian and the yards that ask no questions): swollen yachts with gold bands and swept ornamental fins,
 # vipers with blade wings, patched hulls of salvaged plates; ochre and gold on maroon, the engines a hot pink-orange
@@ -929,6 +1331,11 @@ def ship_criminal_large(h):
     for z in (-5, 5):
         nozzle(h, -45, y, z, 3.6, 3)
     h.pair(lambda s: crim_plates(h, -30, 30, y - 6, y + 4, 12.4, 6, 8))
+    # (the dressing: the saloons' ports, lit bands along the flanks, a mast with its lamps)
+    ports(h, -38, 42, [y + 4, y + 0.5], 26, 1.2, 0.7, skip=0.2, seed=111)
+    ports(h, -35, 40, [y - 4], 12, 2.0, 0.3, region=LIVERY)
+    guns(h, [(-8, 6), (30, 0)], 1.1)
+    mast(h, 25, 0, 0.12, 5)
     gear(h, [(-30, 8), (-30, -8), (30, 0)], y - 8, 0.9)
 
 def ship_criminal_huge(h):
@@ -940,6 +1347,16 @@ def ship_criminal_huge(h):
     h.sphere((80, y + 110, 0), 45, GLASS, 12, 6, (1.6, 0.6, 1))
     for z in (-40, 40):
         nozzle(h, -395, y, z, 40, 30)
+    # (the dressing: rows of saloon ports on the hull and the pods, gold bands, guns, bays, masts with lamps)
+    ports(h, -340, 380, [y + 40, y + 65, y + 90], 50, 9, 5, skip=0.25, seed=112)
+    ports(h, -260, 170, [y - 40, y - 15], 30, 8, 4, skip=0.3, seed=113)
+    for x in (-250, -100, 100, 300):
+        h.cyl((x, y, 0), "x", 112 * (1 - abs(x - 25) / 520) + 4, 6, LIVERY, 14)
+    guns(h, [(-200, 50), (150, 50)], 10)
+    for x in (-100, 200):
+        bay(h, (x, y - 70, h.far()), (0, 0, -1), 60, 24)
+        bay(h, (x, y - 70, -h.far()), (0, 0, 1), 60, 24)
+    mast(h, -250, 0, 1.6, 50)
 
 def ship_criminal_gargantuan(h):
     # a pirate city-ship: hulls of every make welded together round a long spine of containers, scaffolds and lights; 3000 x 1000 x 600 m
@@ -961,6 +1378,13 @@ def ship_criminal_gargantuan(h):
     h.pair(lambda s: crim_plates(h, -1300, 1300, y - 80, y + 80, 101, 14, 4))
     for z in (-60, 60):
         nozzle(h, -1400, y, z, 70, 50)
+    # (the dressing: lights all over the welded hulls, plating on the spine, guns, masts)
+    ports(h, -1350, 1350, [y - 60, y - 20, y + 20, y + 60], 80, 18, 8, skip=0.45, seed=114)
+    ports(h, -1350, 1700, [y - 140, y + 140], 50, 20, 9, skip=0.5, seed=115)
+    plates(h, -1350, 1350, 100, 70, 116, 0.25)
+    guns(h, [(-900, 60), (-200, 60), (500, 60)], 24)
+    for x in (-1100, -300, 700):
+        mast(h, x, 0, 4, 140)
 
 # ---- CIVILIAN (Corellian Engineering, Ghtroc, Kuat's freight yards): saucers with mandibles and a cockpit tube out to one side, quad jets,
 # container spines, wedge couriers; faded cream and grey with a stripe of the owner's, rust; blue-white engines
@@ -1045,6 +1469,13 @@ def ship_civilian_large(h):
         for z, yy in ((-5.4, y + 4), (5.4, y + 4), (-5.4, y - 4), (5.4, y - 4)):
             civ_container(h, -30 + k * 11, yy, z, 10, 5, 6, k * 7 + int(z) + int(yy))
     stripe(h, 38, 51, y + 9.05, 0, 9.5, 0.2)
+    # (the dressing: the bridge's windows, the engine block's ports and plating, radiators and masts)
+    ports(h, 38, 50, [y + 6, y + 3.5], 8, 1.0, 0.6, skip=0.15, seed=121)
+    ports(h, -50, -38, [y + 6, y - 2], 6, 1.0, 0.5, skip=0.3, seed=122)
+    plates(h, -50, -38, 8, 2.5, 123, 0.3)
+    h.pair(lambda s: h.box((-40, y + 4, 9.6), (8, 7, 0.4), METAL))
+    mast(h, 42, 0, 0.12, 5)
+    mast(h, -46, 4, 0.1, 4, 1)
     gear(h, [(-40, 6), (-40, -6), (40, 4), (40, -4)], y - 4, 0.7)
 
 def ship_civilian_huge(h):
@@ -1061,6 +1492,16 @@ def ship_civilian_huge(h):
     for a in range(6):
         t = a * math.pi / 3
         nozzle(h, -440, y + math.sin(t) * 90, math.cos(t) * 90, 26, 24)
+    # (the dressing: frames between the drums, the habitat drums' rows of windows, the bridge's, solar vanes on masts)
+    for k in range(8):
+        with h.at((-390 + k * 100, y, 0), (0, 0, math.pi / 2)):
+            h.torus((0, 0, 0), 128, 5, METAL, 20, 4)
+    ports(h, -380, 360, [y + 80, y + 60, y + 40, y - 40, y - 60, y - 80], 56, 6, 4, skip=0.4, seed=124)
+    ports(h, 400, 480, [y + 40, y + 60], 10, 6, 4, skip=0.1, seed=125)
+    for x in (-200, 100):
+        mast(h, x, 0, 1.6, 60, 0)
+        for s in (1, -1):
+            h.box((x, h.top(x, 0) - 25, s * 60), (40, 2, 90), PANEL)
 
 def ship_civilian_gargantuan(h):
     # a mobile metropolis: a broad plate of a city with towers, a dome and docks, carried on a hull of engines; 3400 x 1600 x 900 m
@@ -1075,6 +1516,12 @@ def ship_civilian_gargantuan(h):
     for z in (-500, -250, 0, 250, 500):
         nozzle(h, -1700, y, z, 90, 70)
     h.pair(lambda s: h.box((0, y + 60, 790), (2200, 30, 40), GLOW))
+    # (the dressing: the towers' windows, seen from abeam and from fore and aft, plating and streets on the city's deck, the hull's ports)
+    ports(h, -1250, 1250, [y + 280, y + 330, y + 400, y + 480, y + 560], 90, 16, 10, skip=0.4, seed=131)
+    facade(h, 0, 0, [y + 280, y + 330, y + 400, y + 480], 50, 1100, 16, 10, axis="x", skip=0.4, seed=132)
+    plates(h, -1300, 1300, 600, 80, 133, 0.15)
+    spine_lines(h, -1300, 1300, [0, 200, 400], 24, 10, region=GLOW)
+    ports(h, -1500, 1500, [y - 60, y + 40, y + 140], 70, 18, 8, skip=0.4, seed=134)
 
 # ---- The ships, by faction and size (and a role where a faction has two of one size) --------------------------------------------------------
 
@@ -1149,8 +1596,9 @@ def main():
                       "height": round(box[4] - box[1], 2), "tris": sum(len(p.vertices) - 2 for p in ob.data.polygons)}
         print("SHIP", name, data[name]["length"], data[name]["beam"], data[name]["height"], data[name]["tris"])
     os.makedirs(OUT, exist_ok=True)
-    export(made, os.path.join(OUT, "ships.glb"))
-    if not only:
+    export(made, os.path.join(OUT, "ships.glb" if HI else "ships.lo.glb"))
+    # (the measures are the full build's: the phone's, of fewer sides, come out no larger, at most about 6 per cent smaller)
+    if not only and HI:
         with open(os.path.join(ROOT, "shared", "art", "shipKit.json"), "w") as fh:
             json.dump({"units": "metres; x the bow, y up, z starboard; box [x0, y0, z0, x1, y1, z1]", "ships": data}, fh, indent=1)
     kit_dir = arg("--kit")
