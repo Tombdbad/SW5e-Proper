@@ -10526,7 +10526,9 @@ export function rollEncounter(world: World, district: District, day: number, hou
   const key = `${district.id}|${day}|${hour}`;
   if (unitOf(`${key}|spawn`) >= ENCOUNTER_CHANCE) return null;
   const settlementId = district.settlementId;
-  const master = renown >= MASTER_RENOWN && !!pathToTeach(learner) && !!teachingFor(learner, key) && !(world.mastersTaught ?? []).includes(settlementId);
+  // (the user, 2026-11-09) no master comes in the street any more: a path of powers is taken up from a power Master's trail ("Power
+  // Masters"); an encounter of this kind in an older save still plays out
+  const master = false && renown >= MASTER_RENOWN && !!pathToTeach(learner) && !!teachingFor(learner, key) && !(world.mastersTaught ?? []).includes(settlementId);
   const pick = unitOf(`${key}|kind`);
   const others = district.buildingIds.filter((id) => id !== avoid);
   // weights: help 60, fixer 40 (if there is a place to send them); a gang is another matter (see ambushIn)
@@ -15783,6 +15785,12 @@ export function convoyResult(race: Race): { outcome: "through" | "lost" | "wreck
 // tells of a star system, an informant there names the Master's place, and the Master sets five trials, each waiting for a level
 // (TRIAL_LEVELS). After the second the character is proficient with the type (simple and martial weapons), after the fifth a master of it
 // (house rule: +1 to attack rolls with it, and its exotic weapons are learned too). The log lives in the character's play state.
+// Power Masters (stage 2, the user 2026-11-09): the same trail for a school of powers (light, dark or universal Force powers, tech
+// powers). A power needs a Master of its school when it is of 6th level or higher, from Expanded Content, of the other kind of casting
+// than the character's, or of the alignment opposite theirs (`powerGate`): the first trial opens the school's powers to 5th level, the
+// second to 6th, ... the fifth to 9th. One who cannot cast is started on the path by the first trial (an at-will and a 1st-level power of
+// the school and points) and taught one power more by each later trial. A weapon trail and a power trail can be followed at once; each
+// opens after its own 3 systems and 3 levels. The paid master of the street is gone.
 // ---------------------------------------------------------------------------------------------
 
 export type WeaponKind = "blaster" | "vibroweapon" | "lightweapon";
@@ -15794,6 +15802,14 @@ export const TRIAL_LEVELS = [3, 5, 9, 13, 17];
 export const PROFICIENT_STAGE = 2;
 export const MASTERY_STAGE = 5;
 export const MASTERY_ATTACK = 1;
+
+export type PowerSchool = "light" | "dark" | "universal" | "tech";
+export const POWER_SCHOOLS: PowerSchool[] = ["light", "dark", "universal", "tech"];
+export const POWER_SCHOOL_NAMES: Record<PowerSchool, string> = { light: "light side Force powers", dark: "dark side Force powers", universal: "universal Force powers", tech: "tech powers" };
+export type TrailSlot = "weapon" | "power";
+export type TrailSubject = WeaponKind | PowerSchool;
+export const slotOf = (kind: TrailSubject): TrailSlot => ((WEAPON_KINDS as string[]).includes(kind) ? "weapon" : "power");
+export const subjectName = (kind: TrailSubject) => (slotOf(kind) === "weapon" ? WEAPON_KIND_NAMES[kind as WeaponKind] : POWER_SCHOOL_NAMES[kind as PowerSchool]);
 
 // Someone of the trail: placed in `areaId` once the place they are to be found in (`within`: a settlement, or a star system not yet
 // mapped) has rooms to put them in
@@ -15813,7 +15829,7 @@ export interface TrailSpawn {
 }
 
 export interface WeaponTrail {
-  kind: WeaponKind;
+  kind: TrailSubject;
   tradition: string;
   seed: string;
   contact: TrailPerson;
@@ -15831,7 +15847,11 @@ export interface TrainingLog {
   systems: string[]; // star systems been to, in order
   places: string[]; // settlements been to, in order
   weapon?: WeaponTrail;
-  mastered?: { kind: WeaponKind; tradition: string; insight?: string }[];
+  power?: WeaponTrail;
+  // Weapon types and schools of powers mastered (all five trials passed)
+  mastered?: { kind: TrailSubject; tradition: string; insight?: string }[];
+  // Where each kind of trail's count of systems and levels starts (the log's start, or where the last of that kind ended)
+  marks?: Partial<Record<TrailSlot, { systems: number; level: number }>>;
 }
 
 // What a character is, for which Master fits them
@@ -15846,7 +15866,7 @@ export interface TrainerTraits {
 export interface Tradition {
   id: string;
   title: string; // what the Master is, as the contact speaks of them
-  kinds: WeaponKind[];
+  kinds: TrailSubject[];
   fit: (t: TrainerTraits) => number;
   haunt: RegExp; // the places such a Master keeps to
   pupil: RegExp; // stat blocks the pupil is drawn from first
@@ -15858,21 +15878,21 @@ const fitsText = (text: string | undefined, re: RegExp) => re.test(text ?? "");
 // Retold kinds of teacher (AUDIT/TRAINER_QUESTS_DESIGN.md 7.3); no names or words from the films and books
 export const TRADITIONS: Tradition[] = [
   {
-    id: "temple-scholar", title: "a scholar of the old temples who still carries a blade", kinds: ["lightweapon"],
+    id: "temple-scholar", title: "a scholar of the old temples who still carries a blade", kinds: ["lightweapon", "light", "universal"],
     fit: (t) => (fitsText(t.forceAlign, /light|universal/i) ? 3 : 0) + (fitsText(t.className, /consular|guardian|sentinel/i) ? 2 : 0),
     haunt: /ruin|temple|shrine|tomb|archive|library|cave/i, pupil: /monk|officer|knight/i,
     trials: ["Spar with the Master's pupil until one of you yields", "Go into the most feared place of this world and come back", "Hunt the beast that troubles the wilds, alone", "Bring back the blade that was stolen from the Master", "Answer the Master's last question"],
     insight: { question: "Your beaten rival kneels and asks for mercy. What do you do?", choices: ["Spare them", "Strike them down"] },
   },
   {
-    id: "dark-exile", title: "an exile who learned the blade on the dark side", kinds: ["lightweapon"],
+    id: "dark-exile", title: "an exile who learned the blade on the dark side", kinds: ["lightweapon", "dark"],
     fit: (t) => (fitsText(t.forceAlign, /dark/i) ? 4 : 0) + (fitsText(t.species, /sith/i) ? 2 : 0),
     haunt: /ruin|tomb|cave|wreck|vault|crypt/i, pupil: /inquisitor|guard/i,
     trials: ["Defeat the exile's other pupil: there is room for only one", "Spend a night in the most feared place of this world", "Kill the beast that hunts in the wilds, alone", "Take back the blade a rival stole from the exile", "Show the exile what you will do with power"],
     insight: { question: "The exile hands you the beaten pupil's fate. What do you do?", choices: ["Spare them", "Strike them down"] },
   },
   {
-    id: "temple-guardian", title: "a guardian of a pilgrims' temple, staff and bow in hand", kinds: ["vibroweapon", "blaster"],
+    id: "temple-guardian", title: "a guardian of a pilgrims' temple, staff and bow in hand", kinds: ["vibroweapon", "blaster", "universal"],
     fit: (t) => (fitsText(t.forceAlign, /universal/i) ? 2 : 0) + (fitsText(t.className, /monk|consular/i) ? 2 : 0) + (fitsText(t.background, /acolyte|pilgrim|hermit/i) ? 2 : 0),
     haunt: /temple|shrine|monastery|chapel|garden/i, pupil: /monk|guard/i,
     trials: ["Hold the temple door against the guardian's pupil", "Walk the most feared road of this world without turning back", "Drive off the beast that preys on pilgrims", "Recover the relic weapon stolen from the temple", "Answer the guardian's question of faith"],
@@ -15920,10 +15940,24 @@ export const TRADITIONS: Tradition[] = [
     trials: ["Beat the cell's best shot in a live drill", "Scout the most dangerous place of this world and report back", "Clear the beast from the cell's supply route", "Recover the rifles taken in a raid", "Obey the cell leader's hardest order, or refuse it"],
     insight: { question: "The leader orders you to leave a wounded prisoner behind. What do you do?", choices: ["Refuse the order", "Obey it"] },
   },
+  {
+    id: "coven", title: "a witch of a far-off coven who works the Force as old magic", kinds: ["dark", "universal"],
+    fit: (t) => (fitsText(t.species, /zabrak|dathomiri/i) ? 3 : 0) + (fitsText(t.homeworld, /dathomir/i) ? 3 : 0) + (fitsText(t.forceAlign, /dark/i) ? 1 : 0),
+    haunt: /cave|grove|ruin|shrine|crypt|hut|garden/i, pupil: /shaman|monk|warrior/i,
+    trials: ["Best the coven's youngest sister in a duel", "Walk into the haunted place of this world and come back", "Bring the coven the beast's heart", "Recover the talisman a thief took from the coven", "Answer what you would give for power"],
+    insight: { question: "The witch offers you power for a promise you cannot unmake. What do you say?", choices: ["I refuse", "I accept"] },
+  },
+  {
+    id: "tech-savant", title: "a reclusive tech savant who rebuilds what others throw away", kinds: ["tech"],
+    fit: (t) => (fitsText(t.className, /engineer|scout/i) ? 3 : 0) + (fitsText(t.background, /scientist|engineer|slicer|tinker|scholar/i) ? 2 : 0) + (fitsText(t.species, /droid|ugnaught|jawa|verpine/i) ? 2 : 0),
+    haunt: /workshop|junkyard|lab|hangar|garage|droid|archive|warehouse/i, pupil: /tinkerer|engineer|scrapper|officer/i,
+    trials: ["Beat the savant's apprentice in a live-fire test", "Recover data from the most dangerous place of this world", "Bring down the beast that wrecks the savant's traps", "Take back the prototype stolen from the workshop", "Decide what the savant's last invention is for"],
+    insight: { question: "The savant's last invention could save lives or end them. Which way do you build it?", choices: ["To save lives", "To end them"] },
+  },
 ];
 
 // The teachers of a weapon type, best fitted first
-export function masterTraditions(kind: WeaponKind, traits: TrainerTraits): Tradition[] {
+export function masterTraditions(kind: TrailSubject, traits: TrainerTraits): Tradition[] {
   // (a tie goes to the one listed first: a character with no Force alignment is not sent to the dark side)
   return TRADITIONS.filter((t) => t.kinds.includes(kind)).sort((a, b) => b.fit(traits) - a.fit(traits) || TRADITIONS.indexOf(a) - TRADITIONS.indexOf(b));
 }
@@ -15940,10 +15974,12 @@ export function noteTravel(log: TrainingLog | undefined, world: World, hereId: s
 }
 
 // How far the character is from being able to seek a Master
-export function trailReadiness(log: TrainingLog | undefined, level: number): { systems: number; levels: number; open: boolean } {
-  const systems = log?.systems.length ?? 0;
-  const levels = Math.max(0, level - (log?.startLevel ?? level));
-  return { systems, levels, open: !!log && !log.weapon && systems >= TRAIL_SYSTEMS && levels >= TRAIL_LEVELS };
+// (each kind of trail, weapons or powers, counts from its own mark: the log's start, or where the last trail of that kind ended)
+export function trailReadiness(log: TrainingLog | undefined, level: number, slot: TrailSlot = "weapon"): { systems: number; levels: number; open: boolean } {
+  const mark = log?.marks?.[slot] ?? { systems: 0, level: log?.startLevel ?? level };
+  const systems = Math.max(0, (log?.systems.length ?? 0) - mark.systems);
+  const levels = Math.max(0, level - mark.level);
+  return { systems, levels, open: !!log && !log[slot] && systems >= TRAIL_SYSTEMS && levels >= TRAIL_LEVELS };
 }
 
 const TRAIL_SYLLABLES = ["ka", "ren", "tho", "vel", "mar", "isa", "dun", "or", "zee", "lan", "qua", "bel", "tor", "ny", "sha", "rik", "om", "ves"];
@@ -15961,7 +15997,8 @@ function spotUnder(world: World, areaId: string, haunt: RegExp, seed: string): s
   const walk = (id: string) => childrenOf(world, id).forEach((c) => { under.push(c); walk(c.id); });
   walk(areaId);
   const fits = (a: Area) => haunt.test(`${a.name} ${a.type}`);
-  const rooms = under.filter((a) => a.kind === "room" && !a.occupants.some((o) => o.disposition === "hostile"));
+  // (not a room behind a secret way in: the player may never find it)
+  const rooms = under.filter((a) => a.kind === "room" && !a.secretEntry && !a.occupants.some((o) => o.disposition === "hostile"));
   const building = (a: Area) => (a.parentId ? world.areas[a.parentId] : undefined);
   const ranked = [
     rooms.filter(fits),
@@ -16031,10 +16068,11 @@ const nearestSystems = (world: World, fromId: string, skip: string[]) =>
 // Begin the search for a Master of a weapon type. `monsters` and `equipment` are the rules data (the pupil and the beast are stat blocks),
 // so this runs on the server. The contact is someone in a settlement visited before (one of another star system first), the informant
 // is in the nearest star system not yet been to, and the Master is in the informant's system.
-export function startWeaponTrail(world: World, data: { monsters: Sw5eMonster[]; equipment: Sw5eEquipment[] }, log: TrainingLog, kind: WeaponKind, traits: TrainerTraits, hereId: string, seed: string): { world: World; log: TrainingLog } | { error: string } {
-  if (log.weapon) return { error: "You are already following the trail of a Master." };
+export function startTrail(world: World, data: { monsters: Sw5eMonster[]; equipment: Sw5eEquipment[] }, log: TrainingLog, kind: TrailSubject, traits: TrainerTraits, hereId: string, seed: string): { world: World; log: TrainingLog } | { error: string } {
+  const slot = slotOf(kind);
+  if (log[slot]) return { error: `You are already following the trail of a Master of ${slot === "weapon" ? "weapons" : "powers"}.` };
   const tradition = masterTraditions(kind, traits)[0];
-  if (!tradition) return { error: "No Master teaches that kind of weapon." };
+  if (!tradition) return { error: "No Master teaches that." };
   const hereSystem = ancestor(world, hereId, "system")?.id ?? "";
   const hereSettlement = ancestor(world, hereId, "settlement")?.id;
   const earlier = log.places.filter((id) => world.areas[id] && id !== hereSettlement);
@@ -16048,8 +16086,8 @@ export function startWeaponTrail(world: World, data: { monsters: Sw5eMonster[]; 
   const master: TrailPerson = { id: `trail-${seed}-master`, name: trailName(`${key}|master`), within: informantSystem.id, haunt: tradition.haunt.source };
   const find: Quest = {
     id: "trail-find",
-    title: `Find a Master of ${WEAPON_KIND_NAMES[kind]}`,
-    description: `Somewhere is ${tradition.title}. Others have heard of them: start where you have been before. (House rule: weapons are learned from a Master.)`,
+    title: `Find a Master of ${subjectName(kind)}`,
+    description: `Somewhere is ${tradition.title}. Others have heard of them: start where you have been before. (House rule: ${slot === "weapon" ? "weapons are learned from a Master" : "great, rare and foreign powers are learned from a Master"}.)`,
     status: "active",
     ordered: true,
     objectives: [
@@ -16070,11 +16108,12 @@ export function startWeaponTrail(world: World, data: { monsters: Sw5eMonster[]; 
   const spawns: TrailSpawn[] = [];
   if (pupilBlock) spawns.push({ trial: 1, occupant: { ...statBlockOccupant(pupilBlock, data.equipment, `trail-${seed}-pupil`, 1, "pupil"), name: `${trailName(`${key}|pupil`)} (the Master's pupil)` } });
   if (beastBlock) spawns.push({ trial: 3, occupant: { ...statBlockOccupant(beastBlock, data.equipment, `trail-${seed}-beast`, 1, "creature"), name: `${beastBlock.name} (the Master's quarry)` } });
-  const weapon = data.equipment.find((e) => new RegExp(`^Martial${kind}$`, "i").test(String((e as { weaponClassification?: string }).weaponClassification ?? "")));
-  spawns.push({ trial: 4, cache: { id: `trail-${seed}-relic`, name: "Stolen weapon case", kind: "case", credits: 0, items: weapon ? [{ name: weapon.name, quantity: 1, source: "equipment" }] : [], locked: 12 } });
+  // (a power Master's relic is a holocron, which is no item of the rules data: the case is what is taken back)
+  const weapon = slot === "weapon" ? data.equipment.find((e) => new RegExp(`^Martial${kind}$`, "i").test(String((e as { weaponClassification?: string }).weaponClassification ?? ""))) : undefined;
+  spawns.push({ trial: 4, cache: { id: `trail-${seed}-relic`, name: slot === "weapon" ? "Stolen weapon case" : "Stolen holocron case", kind: "case", credits: 0, items: weapon ? [{ name: weapon.name, quantity: 1, source: "equipment" }] : [], locked: 12 } });
   const trail: WeaponTrail = { kind, tradition: tradition.id, seed, contact, informant, master, found: false, stage: 0, quests: [find], spawns };
   const placed = placeTrailPeople(world, trail);
-  return { world: placed.world, log: { ...log, weapon: placed.trail } };
+  return { world: placed.world, log: { ...log, [slot]: placed.trail } };
 }
 
 // "the Hoth System", "the Kessel system"
@@ -16083,11 +16122,14 @@ const traditionOf = (trail: WeaponTrail) => TRADITIONS.find((t) => t.id === trai
 const isTrial = (q: Quest) => /^trail-\d$/.test(q.id);
 
 // The five trials, set when the Master is found. Each waits for its level; its objectives are picked when it begins (advanceTraining)
+const ordinalLevel = (n: number) => `${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}`;
 function trialQuests(trail: WeaponTrail): Quest[] {
   return traditionOf(trail).trials.map((title, i) => ({
     id: `trail-${i + 1}`,
     title: `Trial ${i + 1} of ${trail.master.name}: ${title}`,
-    description: i + 1 === PROFICIENT_STAGE ? `Passing it makes you proficient with ${WEAPON_KIND_NAMES[trail.kind]}.` : i + 1 === MASTERY_STAGE ? `Passing it makes you a master of ${WEAPON_KIND_NAMES[trail.kind]} (house rule: +${MASTERY_ATTACK} to attack with them, exotic ones learned too).` : `Opens at level ${TRIAL_LEVELS[i]}.`,
+    description: slotOf(trail.kind) === "power"
+      ? `Opens at level ${TRIAL_LEVELS[i]}. Passing it opens ${subjectName(trail.kind)} to ${ordinalLevel(i + 5)} level${i === 0 ? " (and starts one who cannot cast on the path)" : ""}.`
+      : i + 1 === PROFICIENT_STAGE ? `Passing it makes you proficient with ${subjectName(trail.kind)}.` : i + 1 === MASTERY_STAGE ? `Passing it makes you a master of ${subjectName(trail.kind)} (house rule: +${MASTERY_ATTACK} to attack with them, exotic ones learned too).` : `Opens at level ${TRIAL_LEVELS[i]}.`,
     status: "inactive" as const,
     gate: TRIAL_LEVELS[i],
     ordered: true,
@@ -16114,7 +16156,7 @@ function trialObjectives(world: World, trail: WeaponTrail, i: number): Quest["ob
   }
   if (i === 4) {
     const den = held[0] ?? worst;
-    return den ? [{ description: `Take the stolen weapon back from ${spotName(world, den.id)}`, completed: false, target: { kind: "loot", areaId: den.id, cacheId: `trail-${trail.seed}-relic` } }, back] : [back];
+    return den ? [{ description: `Take the ${slotOf(trail.kind) === "weapon" ? "stolen weapon" : "stolen holocron"} back from ${spotName(world, den.id)}`, completed: false, target: { kind: "loot", areaId: den.id, cacheId: `trail-${trail.seed}-relic` } }, back] : [back];
   }
   const ask = traditionOf(trail).insight;
   return [{ description: ask.question, completed: false, target: { kind: "serve", areaId: masterAt, person: trail.master.id, choices: [...ask.choices] } }];
@@ -16134,14 +16176,42 @@ function spawnTrial(world: World, trail: WeaponTrail, i: number, objectives: Que
 
 // What the trail comes to as the world changes: its people placed as their places are mapped, the search's and the trials' objectives
 // ticked (see advanceQuests), the next trial begun once the one before is passed and the character has its level, and the stage raised
-// as each is passed. `gained` is what the character gained this time, if anything. A master made ends the trail; the log starts again
-// for the next one.
-export function advanceTraining(world: World, log: TrainingLog, hereId: string, level: number): { world: World; log: TrainingLog; finished: Quest[]; changed: boolean; gained?: "proficient" | "master" } {
-  if (!log.weapon) return { world, log, finished: [], changed: false };
-  const placed = placeTrailPeople(world, log.weapon);
+// as each is passed. `gained` lists each trial passed this time (its trail's kind and the stage reached). A master made ends the trail
+// and marks where the count for the next of its kind starts. Both trails (weapons, powers) are advanced.
+export interface TrainingGain {
+  slot: TrailSlot;
+  kind: TrailSubject;
+  stage: number;
+  tradition: string;
+  seed: string;
+}
+export function advanceTraining(world: World, log: TrainingLog, hereId: string, level: number): { world: World; log: TrainingLog; finished: Quest[]; changed: boolean; gained: TrainingGain[] } {
+  let w = world;
+  let next = log;
+  let changed = false;
+  const finished: Quest[] = [];
+  const gained: TrainingGain[] = [];
+  for (const slot of ["weapon", "power"] as TrailSlot[]) {
+    const trail = next[slot];
+    if (!trail) continue;
+    const r = advanceTrail(w, trail, hereId, level);
+    if (!r.changed) continue;
+    changed = true;
+    w = r.world;
+    finished.push(...r.finished);
+    for (let stage = trail.stage + 1; stage <= r.trail.stage; stage++) gained.push({ slot, kind: trail.kind, stage, tradition: trail.tradition, seed: trail.seed });
+    next = r.trail.stage >= MASTERY_STAGE
+      ? { ...next, [slot]: undefined, mastered: [...(next.mastered ?? []), { kind: r.trail.kind, tradition: r.trail.tradition, insight: r.trail.insight }], marks: { ...(next.marks ?? {}), [slot]: { systems: next.systems.length, level } } }
+      : { ...next, [slot]: r.trail };
+  }
+  return { world: w, log: next, finished, changed, gained };
+}
+
+function advanceTrail(world: World, start: WeaponTrail, hereId: string, level: number): { world: World; trail: WeaponTrail; finished: Quest[]; changed: boolean } {
+  const placed = placeTrailPeople(world, start);
   let w = placed.world;
   let trail = placed.trail;
-  let changed = w !== world || trail !== log.weapon;
+  let changed = w !== world || trail !== start;
   const ticked = advanceQuests(w, trail.quests, hereId);
   if (ticked.changed) {
     trail = { ...trail, quests: ticked.quests };
@@ -16156,22 +16226,17 @@ export function advanceTraining(world: World, log: TrainingLog, hereId: string, 
     changed = true;
   }
   const passed = trail.quests.filter((q) => isTrial(q) && q.status === "completed").length;
-  let gained: "proficient" | "master" | undefined;
   if (passed !== trail.stage) {
-    gained = passed >= MASTERY_STAGE ? "master" : passed >= PROFICIENT_STAGE && trail.stage < PROFICIENT_STAGE ? "proficient" : undefined;
     trail = { ...trail, stage: passed };
     changed = true;
   }
-  const next: TrainingLog = trail.stage >= MASTERY_STAGE
-    ? { startLevel: level, systems: [], places: [], mastered: [...(log.mastered ?? []), { kind: trail.kind, tradition: trail.tradition, insight: trail.insight }] }
-    : { ...log, weapon: trail };
-  return { world: w, log: changed ? next : log, finished: ticked.finished, changed, gained };
+  return { world: w, trail: changed ? trail : start, finished: ticked.finished, changed };
 }
 
 // Do what an objective asks of a person (ask, return, answer): only the next objective of its quest, and only where that person is.
 // Finding the Master sets the trials. `choice` is the answer to a question.
-export function serveTraining(world: World, log: TrainingLog, questId: string, index: number, hereId: string, choice?: string): { log: TrainingLog; message: string; finished?: Quest } | { error: string } {
-  const trail = log.weapon;
+export function serveTraining(world: World, log: TrainingLog, slot: TrailSlot, questId: string, index: number, hereId: string, choice?: string): { log: TrainingLog; message: string; finished?: Quest } | { error: string } {
+  const trail = log[slot];
   const quest = trail?.quests.find((q) => q.id === questId);
   const objective = quest?.objectives[index];
   if (!trail || !quest || quest.status !== "active" || !objective || objective.completed || objective.target?.kind !== "serve") return { error: "There is nothing to do here." };
@@ -16192,15 +16257,65 @@ export function serveTraining(world: World, log: TrainingLog, questId: string, i
     quests = [...quests, ...trialQuests(trail)];
   } else if (target.choices) message = `${trail.master.name} hears your answer, "${choice}", nods, and says no more about it.`;
   else message = `${trail.master.name}: "Good. Rest, and come back when you are ready for more."`;
-  const weapon: WeaponTrail = { ...trail, quests, found: trail.found || (questId === "trail-find" && done), insight: target.choices ? choice : trail.insight };
-  return { log: { ...log, weapon }, message, ...(done ? { finished: quests.find((q) => q.id === questId) } : {}) };
+  const updated: WeaponTrail = { ...trail, quests, found: trail.found || (questId === "trail-find" && done), insight: target.choices ? choice : trail.insight };
+  return { log: { ...log, [slot]: updated }, message, ...(done ? { finished: quests.find((q) => q.id === questId) } : {}) };
 }
 
 // The weapon types a character has learned from Masters: proficient (stage 2) or master (stage 5)
 export function weaponTraining(log: TrainingLog | undefined): Partial<Record<WeaponKind, "proficient" | "master">> {
   const out: Partial<Record<WeaponKind, "proficient" | "master">> = {};
-  for (const m of log?.mastered ?? []) out[m.kind] = "master";
+  for (const m of log?.mastered ?? []) if (slotOf(m.kind) === "weapon") out[m.kind as WeaponKind] = "master";
   const t = log?.weapon;
-  if (t && !out[t.kind] && t.stage >= PROFICIENT_STAGE) out[t.kind] = t.stage >= MASTERY_STAGE ? "master" : "proficient";
+  if (t && !out[t.kind as WeaponKind] && t.stage >= PROFICIENT_STAGE) out[t.kind as WeaponKind] = t.stage >= MASTERY_STAGE ? "master" : "proficient";
   return out;
+}
+
+// The schools of powers a character has trials passed in, 1 to 5 (a school mastered is 5)
+export function powerTraining(log: TrainingLog | undefined): Partial<Record<PowerSchool, number>> {
+  const out: Partial<Record<PowerSchool, number>> = {};
+  for (const m of log?.mastered ?? []) if (slotOf(m.kind) === "power") out[m.kind as PowerSchool] = MASTERY_STAGE;
+  const t = log?.power;
+  if (t && t.stage > 0) out[t.kind as PowerSchool] = Math.max(out[t.kind as PowerSchool] ?? 0, t.stage);
+  return out;
+}
+
+// The school a power belongs to: tech, or the Force by its alignment
+export interface PowerFacts {
+  level: number;
+  powerType?: string;
+  forceAlignment?: string;
+  contentSource?: string;
+  source?: string;
+}
+const isForcePower = (p: PowerFacts) => p.powerType ? p.powerType === "Force" : !!p.forceAlignment && p.forceAlignment !== "None";
+export const powerSchool = (p: PowerFacts): PowerSchool => (!isForcePower(p) ? "tech" : /light/i.test(p.forceAlignment ?? "") ? "light" : /dark/i.test(p.forceAlignment ?? "") ? "dark" : "universal");
+
+// How many trials of its school's Master a character needs before learning a power (0: none; house rule, see "Power Masters"): one for a
+// power of Expanded Content, of the other kind of casting than theirs, or of the alignment opposite theirs; for a power of 6th level or
+// more, its level less four (6th: two ... 9th: five). `caster` is the character's kind of casting; `align` their Force alignment.
+export function powerGate(p: PowerFacts, caster: "Force" | "Tech" | "None", align: string): number {
+  const force = isForcePower(p);
+  const school = powerSchool(p);
+  const foreign = caster === "None" || (force ? caster !== "Force" : caster !== "Tech");
+  const opposite = (school === "light" && /dark/i.test(align)) || (school === "dark" && /light/i.test(align));
+  const rare = (p.contentSource ?? p.source) === "EC";
+  return Math.max(p.level >= 6 ? p.level - 4 : 0, foreign || opposite || rare ? 1 : 0);
+}
+
+// What a power Master teaches one who cannot cast powers of the school: at the first trial an at-will and a 1st-level power and a pool of
+// points (the street master's measure: level plus the casting modifier, at least two); at each later trial one power more, of a level up
+// to the trial's number less one, and two points. Powers of Expanded Content are taught too; none already known.
+export function schoolTeaching(school: PowerSchool, stage: number, learner: { level: number; known: string[] }, seed: string, castMod = 0): { powers: any[]; points: number } {
+  const fits = (p: any, level: number) => powerSchool(p) === school && p.level === level && !learner.known.includes(p.name);
+  const pick = (levels: number[], salt: string) => {
+    for (const level of levels) {
+      const pool = (powerData as any[]).filter((p) => fits(p, level)).sort((a, b) => a.name.localeCompare(b.name));
+      if (pool.length) return pool[Math.floor(unitOf(`${seed}|${salt}`) * pool.length)];
+    }
+    return undefined;
+  };
+  if (stage <= 1) return { powers: [pick([0], "at-will"), pick([1], "first")].filter(Boolean), points: Math.max(2, Math.min(14, learner.level + castMod)) };
+  const top = Math.min(4, stage - 1);
+  const power = pick(Array.from({ length: top + 1 }, (_, i) => top - i), `stage${stage}`);
+  return { powers: power ? [power] : [], points: 2 };
 }

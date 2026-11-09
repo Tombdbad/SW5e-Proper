@@ -9,6 +9,7 @@ import SW5E from '@/lib/sw5e/dataProvider';
 import { useCharacterFormWatch } from '@/hooks/useCharacterForm';
 import { Character } from '@shared/unifiedSchema';
 import { getPowerProgression } from '@/lib/sw5e/classes';
+import { powerGate, type PowerFacts } from '@shared/logic';
 
 interface PowersSelectionProps {
   onContinue: () => void;
@@ -78,24 +79,13 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
     calculateMaxPowers();
   }, [characterClass, characterLevel]);
   
-  // Filter powers by level and class
-  const getFilteredForcePowers = (level: number) => {
-    return availableForcePowers.filter(power => {
-      // Filter by level
-      if (power.level !== level) return false;
-      
-      return true;
-    });
-  };
-  
-  const getFilteredTechPowers = (level: number) => {
-    return availableTechPowers.filter(power => {
-      // Filter by level
-      if (power.level !== level) return false;
-      
-      return true;
-    });
-  };
+  // Filter powers by level, and leave out those only a Master teaches (house rule, shared/logic "Power Masters": Expanded Content, the
+  // alignment opposite the character's, 6th level or more; a new character has passed no Master's trials)
+  const casterType = getPowerProgression(characterClass, Number(characterLevel) || 1).type as "Force" | "Tech" | "None";
+  const forceAlignment = String(useCharacterFormWatch(form, 'forceAlignment') ?? '');
+  const free = (power: ForcePower | TechPower) => powerGate(power as PowerFacts, casterType, forceAlignment) === 0;
+  const getFilteredForcePowers = (level: number) => availableForcePowers.filter((power) => power.level === level && free(power));
+  const getFilteredTechPowers = (level: number) => availableTechPowers.filter((power) => power.level === level && free(power));
   
   // A power that builds on another needs that one chosen first
   const missingPrerequisite = (selected: { name: string }[], power: { name: string; prerequisite?: string }) => {

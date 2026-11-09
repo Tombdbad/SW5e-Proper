@@ -24,7 +24,7 @@ import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
 import { conditions as conditionRows } from "./conditions";
 import lookups from "@shared/data/sw5e/lookups.json";
-import { scoresWith, sumEffects, weaponTraining, MASTERY_ATTACK, type ItemFacts, type ItemEffects, type PowerBonus, type WeaponKind } from "@shared/logic";
+import { scoresWith, sumEffects, weaponTraining, powerTraining, powerGate, powerSchool, MASTERY_ATTACK, type ItemFacts, type ItemEffects, type PowerBonus, type WeaponKind } from "@shared/logic";
 import { opticOf } from "@shared/logic/shooter";
 
 export const ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
@@ -1098,8 +1098,14 @@ export function powerOptions(character: any, level: number, archetype = findArch
   const cast = castingAt(character, level, archetype);
   if (cast.type === "None") return [];
   const known = new Set(knownPowers(character).map((p) => String(p.name).toLowerCase()));
-  const pool: any[] = cast.type === "Force" ? forcePowers : techPowers;
-  return pool
+  // (house rule, shared/logic "Power Masters") a power of 6th level or more, of Expanded Content, of the other kind of casting or of the
+  // opposite alignment is learned only after its school's Master's trials; the other kind's powers are offered once a school of it is open
+  const schools = powerTraining(character?.playState?.training);
+  const align = String(character?.forceAlignment ?? "");
+  const own: any[] = cast.type === "Force" ? forcePowers : techPowers;
+  const other: any[] = cast.type === "Force" ? (schools.tech ? techPowers : []) : schools.light || schools.dark || schools.universal ? forcePowers : [];
+  return [...own, ...other]
+    .filter((p) => powerGate(p, cast.type, align) <= (schools[powerSchool(p)] ?? 0))
     .filter((p) => p.level <= cast.maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
     .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 }

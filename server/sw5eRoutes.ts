@@ -9,7 +9,7 @@
 //   POST /api/world/trainer            { world, log, kind, traits, hereId, seed } -> the world and the training log with a Master's trail begun
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, breathesWater, itemFactsOf, startWeaponTrail, WEAPON_KINDS, type ItemFacts, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, breathesWater, itemFactsOf, startTrail, WEAPON_KINDS, POWER_SCHOOLS, type ItemFacts, type World } from "../shared/logic";
 import { showcaseOn, showcaseWorld } from "./showcase";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
@@ -121,11 +121,11 @@ export function registerSw5eRoutes(app: Express) {
     res.json(gang);
   });
 
-  // Begin the search for a Master of a weapon type (startWeaponTrail: the pupil and the beast are stat blocks)
+  // Begin the search for a Master of a weapon type or a school of powers (startTrail: the pupil and the beast are stat blocks)
   app.post("/api/world/trainer", async (req: Request, res: Response) => {
     const { world, log, kind, traits, hereId, seed } = req.body ?? {};
-    if (!isWorld(world) || !world.areas[hereId] || !log || !WEAPON_KINDS.includes(kind)) return res.status(400).json({ message: "A world, where you are, the training log and a weapon type are required" });
-    const out = startWeaponTrail(world, await getWorldCatalog(), log, kind, traits ?? {}, hereId, String(seed ?? Date.now().toString(36)).replace(/[^\w-]/g, ""));
+    if (!isWorld(world) || !world.areas[hereId] || !log || ![...WEAPON_KINDS, ...POWER_SCHOOLS].includes(kind)) return res.status(400).json({ message: "A world, where you are, the training log and a weapon type or school of powers are required" });
+    const out = startTrail(world, await getWorldCatalog(), log, kind, traits ?? {}, hereId, String(seed ?? Date.now().toString(36)).replace(/[^\w-]/g, ""));
     if ("error" in out) return res.status(409).json({ message: out.error });
     res.json(out);
   });

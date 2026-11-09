@@ -19,6 +19,7 @@ T-014 fixed (section 13): archetype caster tables. T-019 decided: the Downtime t
 T-015 fixed (species and feat weapon proficiency, `grantedWeapon`; choices not applied) and T-007 exit label wraps (`Label` maxWidth; not seen on a phone): TRIAGE section 14. T-016/T-012 wait for the user to pick families; T-028 needs the phone.
 
 Trainer quests (the user, 2026-11-09): STAGE 1 (weapons) built and committed (full npm test 766: 763 pass, 0 fail, 3 skipped; tsc clean; vite build 0 warnings), see TRIAGE section 15 and REVIVAL_NOTES Play rules "Weapon Masters". Test copy: character 160 / campaign 184 in sw5e_test carry a trail (Master found, trial 1). Stage 2 (powers, T-016) waits for the user: families, and open points 1-7 of AUDIT/TRAINER_QUESTS_DESIGN.md section 8 (defaults used: +1 mastery, gates 3/5/9/13/17, old downtime weapons kept, travel per character, Insight changes nothing).
+STAGE 2 (power Masters) built (TRIAGE section 16, REVIVAL_NOTES "Power Masters"): powers of 6th+ level, Expanded Content, other casting kind or opposite alignment need a Master; non-casters are taught at each trial; street master retired. Full npm test 770: 767 pass, 0 fail, 3 skipped; tsc clean; vite build 0 warnings; committed. T-016 original finding (powers that do nothing in a fight) still open.
 
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
