@@ -78,7 +78,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -9624,7 +9624,8 @@ export default function GameBoard() {
                         <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || exploring} onClick={() => callTanker(aboardShip)} data-testid="call-tanker">Call a tanker</Button>
                       </div>
                     )}
-                    {helmExits(world, aboardShip.areaId).map((exit, i) => {
+                    {!shipLands(aboardShip.size) && <p className="text-gray-400" data-testid="helm-orbit-only">A {aboardShip.size} ship is too big to put down on a world: it stays in orbit (house rule).</p>}
+                    {helmExits(world, aboardShip.areaId, aboardShip.size).map((exit, i) => {
                       const short = (!isLowFuel(aboardShip) && (exit.fuel ?? 0) > aboardShip.fuel) || (exit.jump && !aboardShip.hyperdriveClass) || !!shipBusy(aboardShip);
                       const minutes = tripMinutes(exit, Number(aboardShip.hyperdriveClass) || 1) * (isLowFuel(aboardShip) ? LIMP_FACTOR : 1);
                       return (
@@ -9639,7 +9640,7 @@ export default function GameBoard() {
                         </div>
                       );
                     })}
-                    {helmExits(world, aboardShip.areaId).length === 0 && <p className="text-gray-400">No course leads from here.</p>}
+                    {helmExits(world, aboardShip.areaId, aboardShip.size).length === 0 && <p className="text-gray-400">No course leads from here.</p>}
                   </div>
                 )}
               </div>

@@ -5538,9 +5538,14 @@ export function passageOffers(world: World, settlementId: string, rate: number, 
 
 // ---------------------------------------------------------------------------------------------
 // Ships in the round (house rule: the books give ships no deck plans, only the sizes of their
-// stat blocks). A ship's size sets how many 5-foot squares it covers on a hangar floor (a Medium
-// ship is 80 by 50 feet) and a hangar is built to hold the largest ship that berths in it with a
-// margin round it. Inside, the party's ship has one deck, drawn on the 3D map: the bow to the east
+// stat blocks). A ship's size sets how many squares it covers on a hangar floor and a hangar is
+// built to hold the largest ship that berths in it with a margin round it. Since 2026-11-09 the
+// ships are drawn at their real size (the starship kit, tools/blender/build-ships.py, the lengths
+// within the book's size bands: Tiny up to 25 ft., Small 25 to 50, Medium 50 to 250, Large 250 to
+// 2,500), so a berth is the plan of the kit's largest ship of its size at the map's scale (a
+// Medium berth fits a 38 m freighter) and a hangar stands as many storeys high as its tallest
+// ship needs. Huge and Gargantuan ships never put down (the user): they stay in orbit, and the helm
+// offers them no landing. Inside, the party's ship has one deck, drawn on the 3D map: the bow to the east
 // with the pilot's seat, navigation, and gunnery, bunks and a table amidships, cargo and the
 // reactor aft, and the boarding ramp at the stern. The party boards by tapping the ship, flies
 // by tapping the pilot's seat (the helm lists every take-off, landing and jump from where the
@@ -5548,8 +5553,19 @@ export function passageOffers(world: World, settlementId: string, rate: number, 
 // "starship" that stands wherever its ship does.
 // ---------------------------------------------------------------------------------------------
 
-export const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [6, 4], Small: [10, 6], Medium: [16, 10], Large: [26, 14], Huge: [40, 22], Gargantuan: [56, 30] };
+// (squares at the map's scale of 0.711 to the metre, the people's: the kit's longest and broadest of each size, rounded up; tests/ships/kit.test.ts
+// checks every kit ship fits. Huge and Gargantuan keep a berth only for the code that asks; none puts down.)
+export const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [5, 4], Small: [11, 9], Medium: [28, 20], Large: [78, 32], Huge: [78, 32], Gargantuan: [78, 32] };
 export const footprintOf = (size: string): [number, number] => SHIP_FOOTPRINT[size] ?? SHIP_FOOTPRINT.Small;
+// How many storeys (3.4 squares each) a hangar stands for a ship of a size to clear its roof (the kit's tallest of the size)
+export const SHIP_STOREYS: Record<string, number> = { Tiny: 1, Small: 2, Medium: 3, Large: 7, Huge: 7, Gargantuan: 7 };
+// Whether a ship of a size can put down on a world (the user, 2026-11-09: Huge and Gargantuan ships stay in orbit)
+export const shipLands = (size: string) => size !== "Huge" && size !== "Gargantuan";
+// The storeys a hangar stands for the ships that berth in it (a berth kept free for visitors counts as a Medium ship's)
+export function hangarStoreys(room: Pick<Area, "ships"> & Partial<Pick<Area, "tags">>): number {
+  const sizes = [...room.ships.map((s) => s.size), ...(visitorBerths(room) ? ["Medium"] : [])];
+  return Math.max(1, ...sizes.map((size) => SHIP_STOREYS[size] ?? 2));
+}
 
 // Berths a hangar keeps free for ships that put down in it (code berths:<n>)
 export const visitorBerths = (room: Partial<Pick<Area, "tags">>): number => Number(room.tags?.find((t) => t.startsWith("code:berths:"))?.slice(12) ?? 0);
@@ -5712,11 +5728,12 @@ export function rampLeadsTo(world: World, shipId: string, hangar?: string): stri
 }
 
 // Every take-off, landing and jump the ship can make from where it stands. A port that is not its
-// planet's gateway still lifts off to the orbit.
-export function helmExits(world: World, berthId: string): Exit[] {
+// planet's gateway still lifts off to the orbit. A Huge or Gargantuan ship (`size`) is offered no
+// landing: it stays in orbit (shipLands).
+export function helmExits(world: World, berthId: string, size?: string): Exit[] {
   const area = world.areas[berthId];
   if (!area) return [];
-  const out = exitsOf(world, berthId).filter((e) => e.needsShip);
+  const out = exitsOf(world, berthId).filter((e) => e.needsShip && (!size || shipLands(size) || world.areas[e.to]?.kind !== "settlement"));
   if (area.kind === "settlement" && !out.some((e) => e.via === "leave")) {
     const planet = ancestor(world, berthId, "planet");
     if (planet) out.unshift({ to: planet.id, via: "leave", label: LEAVE.settlement!, travel: "", needsShip: true, fuel: tripFuel("surface") });

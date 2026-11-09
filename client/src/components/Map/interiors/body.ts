@@ -67,6 +67,9 @@ export const WEAPON_FILE = TOUCH ? "/figures/weapons.lo.glb" : "/figures/weapons
 // `horns_crown` (a Zabrak's), `horns_curl` (a Devaronian's, the left one), `horns_sweep` (an Iktotchi's, the left one), `head_tentacles` (a Nautolan's).
 // Where each head's eyes are, and what the code no longer adds to it, is in shared/art/speciesHeads.json
 export const SPECIES_FILE = "/figures/species.glb";
+// The starship kit (2026-11-09, tools/blender/build-ships.py): `ship_<faction>_<size>[_<role>]`, built in metres, each with its regions; the sizes
+// are in shared/art/shipKit.json
+export const SHIP_FILE = "/figures/ships.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);
@@ -151,6 +154,7 @@ const hairs = shelf(HAIR_FILE, piecesOf);
 const guns = shelf(WEAPON_FILE, piecesOf);
 const arch = shelf(ARCH_FILE, piecesOf);
 const kinds = shelf(SPECIES_FILE, piecesOf);
+const hulls = shelf(SHIP_FILE, piecesOf);
 export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
 export const bodyParts = people.get;
@@ -180,6 +184,10 @@ export const setArchParts = arch.set;
 export const speciesParts = kinds.get;
 export const useSpeciesParts = kinds.use;
 export const setSpeciesParts = kinds.set;
+// The starships of the kit, once they are in
+export const shipParts = hulls.get;
+export const useShipParts = hulls.use;
+export const setShipParts = hulls.set;
 
 // ---- Fitting ---------------------------------------------------------------------------------------------------------------------
 

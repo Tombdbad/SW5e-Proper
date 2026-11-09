@@ -12,7 +12,7 @@ import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, 
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
 import { canopyOf, deckSquares, waterOf, isWaterCraft, isSubmersible, HELM_PACE, type WaterLife } from "@shared/logic";
-import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS, hangarStoreys } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, SPIRAL, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type Standing, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import type { VerticalMove } from "@shared/logic";
 import { transitMs, transitAt, geomOf, type TransitKind, type TransitGeom, type Edge as TransitEdge } from "./interiors/transit";
@@ -46,7 +46,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -549,7 +549,7 @@ function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Ar
       <group ref={group}>
         {/* the ship turns about its middle */}
         <group ref={pivot} position={[asset.w / 2, 0, asset.h / 2]}>
-          <group position={[-asset.w / 2, 0, -asset.h / 2]}>{shown.ship && <ShipModel ship={shown.ship} w={asset.w} h={asset.h} ceiling={ceiling} />}</group>
+          <group position={[-asset.w / 2, 0, -asset.h / 2]}>{shown.ship && <ShipModel ship={shown.ship} w={asset.w} h={asset.h} ceiling={ceiling} perMetre={UNITS_PER_M} />}</group>
         </group>
       </group>
       {!shown.ship && <Berth w={asset.w} h={asset.h} name={asset.name} note={shown.away ? "away on a voyage" : "free for visiting ships"} />}
@@ -1556,7 +1556,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={keyOf.get(a) ?? a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
-          {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
+          {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} perMetre={UNITS_PER_M} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             // (a round tower's spiral: drawn from its way up, over both halves of its 2 by 2 squares; on the top floor, the well it comes up through)
             : a.kind === "stairs" && a.name === `${SPIRAL} up` ? <group position={[1, 0, 1]}><SpiralStair up={LEVEL_H} /></group>
             : a.kind === "stairs" && a.name === `${SPIRAL} down` ? (assets.some((o) => o.name === `${SPIRAL} up`) ? null : <group position={[1, 0, a.h === 2 ? 1 : 0]}><SpiralWell /></group>)
@@ -5184,7 +5184,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             );
           }
           // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
-          const storeys = l.tall ? 2 : 1;
+          // (a hangar stands as high as its tallest ship needs: hangarStoreys)
+          const storeys = l.roof ? Math.max(l.tall ? 2 : 1, hangarStoreys(room)) : l.tall ? 2 : 1;
           const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H * storeys - 0.01;
           // (a room with a mezzanine is two floors high, so that those on the gallery have the roof well over their heads;
           // while another room is opened it is lowered a little, but still clears a figure on the gallery)
@@ -5345,7 +5346,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {hollow(tall, wallColor)}
                   {l.assets.filter((a) => a.kind === "ship").map((a) => (
                     <group key={a.id} position={[a.x, 0, a.y]}>
-                      <BayBerth room={room} asset={a} based={based[room.id]} ceiling={l.roof === "hangar" ? tall - 0.3 : undefined} rise={tall + 5} />
+                      <BayBerth room={room} asset={a} based={based[room.id]} ceiling={l.roof === "hangar" ? LEVEL_H * storeys - 0.3 : undefined} rise={tall + 5} />
                     </group>
                   ))}
                   {l.roof === "hangar" && !opened && <HangarRoof width={l.width} height={l.height} y={tall + 0.05} door={() => bayDoor(room, based[room.id], minuteNow())} />}
@@ -6041,7 +6042,10 @@ export function FightScene({ wall = STEEL, areaId, origin, crowd }: { wall?: str
 // on an enemy picks it out.
 // ---------------------------------------------------------------------------------------------
 
-const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [0.9, 0.6], Small: [1.3, 0.9], Medium: [2.1, 1.4], Large: [3.2, 1.9], Huge: [4.4, 2.6], Gargantuan: [6, 3.4] };
+// The squares a ship takes on the grid: the book's variant "Sizes on a Grid" (a Tiny or Small ship 1, a Medium 2, a Large 4, a Huge 8, a Gargantuan
+// 16); a ship is drawn there at its real size where that is smaller (a square is 50 feet), else shrunk to fit it, never stretched
+const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [1, 1], Small: [1, 1], Medium: [2, 2], Large: [4, 4], Huge: [8, 8], Gargantuan: [16, 16] };
+const SPACE_PER_METRE = 1 / 15.24;
 
 export function SpaceScene() {
   const { fight, partyShipId, targetId, move, setTarget } = useShipFight();
@@ -6111,7 +6115,7 @@ export function SpaceScene() {
             {!s.destroyed && (
               <group rotation={[0, -Math.atan2(dz, dx), 0]}>
                 <group position={[-w / 2, 0.1, -h / 2]}>
-                  <ShipModel ship={{ size: s.sheet.size, role: s.sheet.role, status: s.disabled ? "wrecked" : "orbiting" }} w={w} h={h} />
+                  <ShipModel ship={{ size: s.sheet.size, role: s.sheet.role, status: s.disabled ? "wrecked" : "orbiting", name: s.name }} w={w} h={h} perMetre={SPACE_PER_METRE} />
                 </group>
               </group>
             )}

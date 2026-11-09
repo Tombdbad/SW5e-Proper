@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { crownOf, portalOf, type Family } from "../components/Map/interiors/architecture";
-import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, ArchPiece, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
+import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, ArchPiece, Opening, DomeRoof, styleOf, bakedCount, hue, UNITS_PER_M, SHIP_KIT, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -21,7 +21,7 @@ import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
-import { GIVEN_NAMES, furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
+import { GIVEN_NAMES, furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, SHIP_FOOTPRINT, type Area, type RoomAsset } from "@shared/logic";
 import { seatState, motion, nowSeconds, beginSwing, personaOf, SABER_STYLES, SABER_KITS, type Motion, type SaberKit, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
 import { styleFor, comboOf, moveOf, moveSeconds, planDuel, DUEL_MODES, FLAVOUR, type DuelMode, type Fighter } from "@/components/Map/interiors/saberplay";
 import { MotionContext } from "@/components/Map/models";
@@ -707,6 +707,9 @@ function Hairdos({ row }: { row?: number }) {
   );
 }
 
+// An owner whose ships each faction's yards build (models.tsx shipFaction)
+const SHIP_OWNERS: [string, string][] = [["Galactic Empire", "imperial"], ["Rebel Alliance", "rebel"], ["Galactic Republic", "republic"], ["Separatist Alliance", "separatist"], ["Mandalorian clans", "mandalorian"], ["Hutt Cartel", "criminal"], ["a freighter captain", "civilian"]];
+
 function Rows<T>({ items, per, gap, name, draw, z = 0 }: { items: T[]; per: number; gap: number; name: (t: T) => string; draw: (t: T) => JSX.Element; z?: number }) {
   return (
     <group position={[-(Math.min(per, items.length) - 1) * gap * 0.5, 0, z]}>
@@ -781,12 +784,23 @@ export default function ModelGallery() {
         {section === "furniture" && <Rows items={FURNITURE} per={9} gap={3.4} name={([n]) => n} draw={([n, w, h]) => <group position={[-w / 2, 0, -h / 2]}><Furniture name={n} w={w} h={h} seed={n.length} /></group>} />}
         {section === "ships" && (
           <>
-            <Rows items={["fighter", "shuttle", "light freighter", "corvette"].flatMap((role) => [{ role, owner: "Rebel Alliance" }, { role, owner: "Galactic Empire" }])} per={4} gap={7} name={(s) => `${s.role} (${s.owner.split(" ")[1]})`} draw={(s) => <group position={[-3, 0, -2]}><ShipModel ship={{ size: s.role === "fighter" ? "Tiny" : s.role === "shuttle" ? "Small" : s.role === "corvette" ? "Large" : "Medium", role: s.role, status: "landed", owner: s.owner, name: s.role }} w={6} h={4} /></group>} />
+            {/* the starship kit (2026-11-09): each faction's Tiny, Small and Medium ship in its berth at its real size, a pilot beside it for scale */}
+            <Rows z={-110} items={SHIP_OWNERS.flatMap(([owner]) => ["Tiny", "Small", "Medium"].map((size) => ({ owner, size })))} per={3} gap={32} name={(s) => `${s.size} (${s.owner})`} draw={(s) => {
+              const [w, h] = SHIP_FOOTPRINT[s.size];
+              return (
+                <>
+                  <group position={[-w / 2, 0, -h / 2]}><ShipModel ship={{ size: s.size, role: s.size === "Medium" ? "Freighter" : "Superiority Fighter", status: "landed", owner: s.owner, name: s.owner }} w={w} h={h} perMetre={UNITS_PER_M} /></group>
+                  <group position={[w / 2 + 1, 0, 0]}>{person("Dax Vos", "pilot")}</group>
+                </>
+              );
+            }} />
             <Rows z={14} items={["Speederbike", "Landspeeder", "Airspeeder", "Landspeeder wreck"]} per={4} gap={3} name={(s) => s} draw={(s) => <SpeederModel model={s} wrecked={/wreck/.test(s)} />} />
             {/* the makes of speeder (shared/logic VEHICLE_MAKES) */}
             <Rows z={20} items={VEHICLE_MAKES.filter((m) => m.name !== m.model)} per={5} gap={4} name={(m) => m.name} draw={(m) => <SpeederModel model={m.model} look={m.look} name={m.name} />} />
           </>
         )}
+        {/* ?section=fleet: every hull of the starship kit fitted into a 6 by 4 place, a row for each faction (shared/art/shipKit.json) */}
+        {section === "fleet" && <Rows items={Object.keys(SHIP_KIT)} per={8} gap={7.5} name={(n) => n.replace(/^ship_/, "")} draw={(n) => <group position={[-3, 0, -2]}><ShipModel ship={{ size: SHIP_KIT[n].size, role: SHIP_KIT[n].role || "Freighter", status: "landed", owner: SHIP_OWNERS.find(([, f]) => f === SHIP_KIT[n].faction)?.[0], name: n }} w={6} h={4} /></group>} />}
         {section === "crews" && <Rows items={VEHICLE_MAKES.filter((m) => m.name !== m.model || m.name === "Landspeeder")} per={5} gap={4.5} name={(m) => `${m.name} (${m.seats})`} draw={(m) => <CrewedMake m={m} />} />}
         {/* ?section=architecture (2026-11-05): the seven families of building, each a block with the crown that stands on its roof and the frame round its way in (interiors/architecture.ts) */}
         {section === "architecture" && (

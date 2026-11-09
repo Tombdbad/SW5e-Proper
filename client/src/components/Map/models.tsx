@@ -14,13 +14,14 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
-import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, speciesParts, useSpeciesParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, speciesParts, useSpeciesParts, shipParts, useShipParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
 import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
+import shipKitJson from "@shared/art/shipKit.json";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
@@ -2131,13 +2132,90 @@ function buildDecor(k: Kit, kind: string, v: number) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Ships and speeders. A ship is built on 6 by 4 squares with its bow to +x and stretched to its
-// footprint by whoever draws it; the Empire's (and the First Order's and the Sith's) are drawn
-// in their own manner. A speeder's front is +z.
+// Ships and speeders. A ship is the starship kit's (2026-11-09, tools/blender/build-ships.py, figures/ships.glb): a hull for each faction
+// and starship size, built in metres with its bow to +x, and drawn at one scale every way, never stretched: at its real size where it
+// stands among people (a berth, `perMetre` UNITS_PER_M), else fitted to the room it is given. Until the kit is in, the old hull built on
+// 6 by 4 squares and stretched to its footprint. A speeder's front is +z.
 // ---------------------------------------------------------------------------------------------
 
 export type ShipLook = { size: string; role: string; status: string; owner?: string; name?: string; hull?: number; disabled?: boolean };
 const IMPERIAL = /empire|imperial|first order|sith/i;
+
+// The kit's ships and their sizes in metres (box: x0, y0, z0, x1, y1, z1; the bow is +x)
+export type KitShip = { faction: string; size: string; role: string; box: number[]; length: number; beam: number; height: number; tris: number };
+export const SHIP_KIT = (shipKitJson as { ships: Record<string, KitShip> }).ships;
+// Whose make a ship is, by its owner: a faction's own yards (the Empire's Sienar and Kuat, the Rebels' Incom and Corellian warships, the Republic's,
+// the Separatists' droid foundries, the Mandalorians', the Hutts' and the underworld's), else the freighter yards everyone else buys from
+export type ShipFaction = "imperial" | "rebel" | "republic" | "separatist" | "mandalorian" | "criminal" | "civilian";
+const FACTION_OF: [RegExp, ShipFaction][] = [
+  [/separatist|trade federation|techno union|banking clan|confedera|droid army/i, "separatist"],
+  [/mandalor|death watch/i, "mandalorian"],
+  [/empire|imperial|first order|sith/i, "imperial"],
+  [/rebel|resistance|new republic/i, "rebel"],
+  [/republic|jedi/i, "republic"],
+  [/hutt|black sun|pirate|crimson dawn|pyke|cartel|syndicate|smuggl|crime|zann/i, "criminal"],
+];
+export const shipFaction = (owner = ""): ShipFaction => FACTION_OF.find(([re]) => re.test(owner))?.[1] ?? "civilian";
+const KIT_SIZES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
+// The kit's hull for a ship: its faction's of its size (a shuttle's own where the faction has one), else the freighter yards'
+export function shipKitName(ship: Pick<ShipLook, "size" | "role" | "owner">): string {
+  const size = KIT_SIZES.find((s) => s === ship.size.toLowerCase()) ?? { fighter: "small", shuttle: "small", freighter: "medium", capital: "large" }[shipClass(ship)];
+  const faction = shipFaction(ship.owner);
+  const own = `ship_${faction}_${size}`;
+  const shuttle = /shuttle|transport/i.test(ship.role) ? `${own}_shuttle` : "";
+  return shuttle && SHIP_KIT[shuttle] ? shuttle : SHIP_KIT[own] ? own : `ship_civilian_${size}`;
+}
+// A faction's paint, by region (tools/blender/build-ships.py): hull, panels, engine glow, glass, livery, gunmetal. A freighter's hull and stripe
+// and a crime lord's colours vary by the ship's name.
+type Paint = [string, string, string, string, string, string];
+const SHIP_PAINT: Record<ShipFaction, Paint> = {
+  imperial: ["#a3aab1", "#2b3036", "#bfe3ff", "#1a2633", "#5d6670", "#4a4f56"],
+  rebel: ["#d9d4c7", "#8b8d8c", "#ff9a4d", "#1b2a38", "#b8473e", "#55595e"],
+  republic: ["#dcdcd6", "#7c8188", "#9fd4ff", "#1b2a38", "#a3322b", "#50555b"],
+  separatist: ["#a08a63", "#5c6672", "#8fc8ff", "#2a2a30", "#c0392b", "#4d4a45"],
+  mandalorian: ["#5c6873", "#2e353c", "#e8f4ff", "#101418", "#36679e", "#3f444a"],
+  criminal: ["#8a3d4f", "#4a2c37", "#ff7a5c", "#2a1f2a", "#c9a24a", "#5a5048"],
+  civilian: ["#c7bfae", "#8f8a80", "#c8e6ff", "#1b2a38", "#b0623a", "#5d5a55"],
+};
+const SHIP_FINISH: Finish[] = ["sheen", "sheen", "glow", "glass", "sheen", "sheen"];
+function shipPaint(faction: ShipFaction, name: string): Paint {
+  const paint = [...SHIP_PAINT[faction]] as Paint;
+  if (faction === "civilian") {
+    paint[0] = pickOf(["#c7bfae", "#b9b1a0", "#a9b0b5", "#c2b8a3"], name);
+    paint[4] = pickOf(["#b0623a", "#3f6d8f", "#7a8a3a", "#8f3f3f", "#c9a24a"], name, 1);
+  }
+  if (faction === "criminal") paint[0] = pickOf(["#8a3d4f", "#6b4a2b", "#4a3d5c"], name);
+  return paint;
+}
+// (the hull texture is laid per metre of the kit's model, so its density is the scale it is drawn at, in a few steps: each is a baked copy)
+const SHIP_GRAINS = [0.002, 0.006, 0.02, 0.06, 0.2, 0.7, 1.5];
+const shipGrain = (s: number) => SHIP_GRAINS.reduce((best, g) => (Math.abs(Math.log(g / s)) < Math.abs(Math.log(best / s)) ? g : best), 0.7);
+// A kit hull drawn `s` units to the metre, the middle of its plan at the origin and its foot on the floor
+function KitHull({ ship, name, s }: { ship: ShipLook; name: string; s: number }) {
+  useShipParts();
+  const piece = shipParts()?.[name];
+  const kit = SHIP_KIT[name];
+  if (!piece || !kit) return null;
+  const faction = kit.faction as ShipFaction;
+  const wrecked = ship.status === "wrecked";
+  const paint = shipPaint(faction, ship.name ?? ship.role);
+  const [x0, y0, z0, x1, , z1] = kit.box;
+  return (
+    <Model
+      id={`shipkit:${name}:${paint.join("")}:${wrecked ? 1 : 0}`}
+      position={[(-(x0 + x1) / 2) * s, -y0 * s, (-(z0 + z1) / 2) * s]}
+      scale={s}
+      build={(k) => {
+        for (const [region, g] of Object.entries(piece.part)) {
+          const r = Number(region);
+          const colour = wrecked ? (r === 2 ? "#2b2926" : shade(paint[r] ?? paint[0], 0.45)) : paint[r] ?? paint[0];
+          k.add(g.clone(), colour, { finish: wrecked && (r === 2 || r === 3) ? "matte" : SHIP_FINISH[r] ?? "sheen" });
+        }
+      }}
+      wear={{ ...hullWear(ship, faction !== "civilian" && faction !== "criminal"), grain: shipGrain(s) }}
+    />
+  );
+}
 
 export function shipClass(ship: Pick<ShipLook, "size" | "role">): "fighter" | "shuttle" | "freighter" | "capital" {
   const role = `${ship.role} ${ship.size}`.toLowerCase();
@@ -2147,7 +2225,15 @@ export function shipClass(ship: Pick<ShipLook, "size" | "role">): "fighter" | "s
   return "capital";
 }
 
+// A ship in the frame of 6 by 4 squares about the origin (the kit's hull fitted into it whole, at one scale)
 export function ShipBody({ ship, grain }: { ship: ShipLook; grain?: number }) {
+  useShipParts();
+  const name = shipKitName(ship);
+  const kit = SHIP_KIT[name];
+  if (kit && shipParts()?.[name]) return <KitHull ship={ship} name={name} s={Math.min(6 / kit.length, 4 / kit.beam)} />;
+  return <OldShipBody ship={ship} grain={grain} />;
+}
+function OldShipBody({ ship, grain }: { ship: ShipLook; grain?: number }) {
   const kind = shipClass(ship);
   const imperial = IMPERIAL.test(ship.owner ?? "");
   const wrecked = ship.status === "wrecked";
@@ -2324,18 +2410,35 @@ function buildShip(k: Kit, kind: string, imperial: boolean, wrecked: boolean, to
   k.box([0.06, 0.24, 1.2], "#1b2a38", { at: [2.82, 1.12, 0], finish: glass });
 }
 
-// A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint;
-// `ceiling` (squares) is the roof it stands under, which the hull is kept below
+// A ship on the floor of a w by h place (squares) with the bow to +x, in the middle of it; `ceiling` (squares) is the roof it stands under.
+// The kit's hull is drawn at `perMetre` units to the metre (a berth: UNITS_PER_M, its real size among the people) unless that would not fit the
+// place or the roof, and then at the largest scale that does; without `perMetre`, it fills the place. The old hull (until the kit is in) is
+// built on 6 by 4 squares and stretched to the place.
 const HULL_HEIGHT = 2.4;
-// (the wear's texture is laid in model units and the hull is stretched to its footprint, so the density is raised by the stretch, in a few
+// (the old hull's wear is laid in model units and the hull is stretched to its footprint, so the density is raised by the stretch, in a few
 // steps: each step is another baked copy of the hull)
 const GRAINS = [1, 1.5, 2.5, 4, 6, 9];
 const grainFor = (stretch: number) => GRAINS.reduce((best, g) => (Math.abs(Math.log(g / stretch)) < Math.abs(Math.log(best / stretch)) ? g : best), 1);
-export function ShipModel({ ship, w, h, ceiling }: { ship: ShipLook; w: number; h: number; ceiling?: number }) {
+// The scale (units to the metre) a kit hull is drawn at in a w by h place under a ceiling
+export function shipScale(kit: Pick<KitShip, "length" | "beam" | "height">, w: number, h: number, ceiling?: number, perMetre?: number): number {
+  const fit = Math.min(w / kit.length, h / kit.beam, ceiling ? ceiling / kit.height : Infinity);
+  return perMetre ? Math.min(perMetre, fit) : fit;
+}
+export function ShipModel({ ship, w, h, ceiling, perMetre }: { ship: ShipLook; w: number; h: number; ceiling?: number; perMetre?: number }) {
+  useShipParts();
   const wrecked = ship.status === "wrecked";
+  const name = shipKitName(ship);
+  const kit = SHIP_KIT[name];
+  if (kit && shipParts()?.[name]) {
+    return (
+      <group position={[w / 2, 0, h / 2]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
+        <KitHull ship={ship} name={name} s={shipScale(kit, w, h, ceiling, perMetre)} />
+      </group>
+    );
+  }
   return (
     <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4, ceiling ? ceiling / HULL_HEIGHT : Infinity), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
-      <ShipBody ship={ship} grain={grainFor(Math.sqrt((w / 6) * (h / 4)))} />
+      <OldShipBody ship={ship} grain={grainFor(Math.sqrt((w / 6) * (h / 4)))} />
     </group>
   );
 }
