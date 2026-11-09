@@ -15,7 +15,9 @@ test("a room takes its pack by its name, then by its building, one pack at most"
   assert.equal(packOf("Ward", "medcenter"), "medical");
   assert.equal(packOf("Bridge", "starship"), "hull");
   assert.equal(packOf("Den", "hideout"), "criminal");
-  assert.equal(packOf("Main bar", "cantina"), undefined);
+  assert.equal(packOf("Main bar", "cantina"), "cantina", "a bar's room takes the cantina pack (2026-11-09: the project's own bar, tables, booth, jukebox and stage)");
+  assert.equal(pieceOf("cantina", "Bar counter"), "/assets/mixar-modular/cantina_bar_straight.glb");
+  assert.equal(pieceOf("medical", "Medical bed"), "/assets/mixar-modular/med_med_bed.glb");
 });
 
 test("every piece a pack draws is in its folder, converted, with its licence, and every pack has a palette", () => {
@@ -30,7 +32,9 @@ test("every piece a pack draws is in its folder, converted, with its licence, an
   for (const url of Object.values(WALL_FILES)) assert.ok(fs.existsSync(`client/public${url}`), url);
   assert.equal(pieceOf("station", "Couch"), "/assets/kenney-furniture/loungeSofa.glb");
   assert.equal(pieceOf("station", "Chaise"), undefined, "a piece the pack lacks is drawn by the code");
-  assert.equal(pieceOf(undefined, "Bed"), undefined);
+  assert.equal(pieceOf(undefined, "Chaise"), undefined);
+  assert.equal(pieceOf(undefined, "Bed"), "/assets/mixar-modular/living_bed.glb", "a room with no pack draws the project's own bed");
+  assert.equal(pieceOf(undefined, "Bed", false), undefined, "but not a piece that carries stock");
 });
 
 test("the packs with walls are the ones of built places, and the frontier's rooms keep their own", () => {
@@ -143,4 +147,20 @@ test("a building's walls come from one pack whatever its rooms are furnished lik
   assert.equal(wallPackOf("palace"), "station");
   assert.equal(wallPackOf("hideout"), "criminal");
   assert.equal(wallPackOf("cantina"), undefined);
+});
+
+test("every name of the project's own pieces has its file, and a plan's new furniture is drawn by one", async () => {
+  const { OWN } = await import("../../client/src/components/Map/interiors/packs");
+  for (const [name, file] of Object.entries(OWN)) assert.ok(fs.existsSync(`client/public/assets/mixar-modular/${file}.glb`), `${name}: ${file}.glb missing`);
+  for (const name of ["Banner", "Brazier", "Statue", "Fountain", "Rug", "Forge", "Server rack", "Privacy screen", "IV stand", "Kitchen counter", "Stove", "Floor lamp", "Fuel drum", "Engine block", "Tire stack", "Generator"]) {
+    assert.ok(OWN[name], `${name} has a piece`);
+  }
+});
+
+test("a round room's wall pieces have their curved versions, and a curved piece is only for a round room", async () => {
+  const { CURVED, pieceOf } = await import("../../client/src/components/Map/interiors/packs");
+  for (const [name, file] of Object.entries(CURVED)) assert.ok(fs.existsSync(`client/public/assets/mixar-modular/${file}.glb`) || name === "Planter", `${name}: ${file}.glb missing`);
+  assert.equal(pieceOf("cantina", "Bar counter", true, true), "/assets/mixar-modular/curve_bar.glb");
+  assert.equal(pieceOf("cantina", "Bar counter", true, false), "/assets/mixar-modular/cantina_bar_straight.glb");
+  assert.equal(pieceOf("cantina", "Bar counter", false, true), "/assets/mixar-modular/cantina_bar_straight.glb", "a piece carrying stock stays as it is");
 });

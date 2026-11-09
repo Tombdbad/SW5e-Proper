@@ -14,11 +14,12 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
-import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, speciesParts, useSpeciesParts, shipParts, useShipParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, modParts, useModParts, modIntParts, useModIntParts, speciesParts, useSpeciesParts, shipParts, useShipParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
+import { MOD_REGIONS, MOD_TEXTURED, INTERIOR_LOOK, runOf, type ExtPack, type Skin, type BayPlace, type InteriorStyle } from "./interiors/modular";
 import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import shipKitJson from "@shared/art/shipKit.json";
@@ -48,8 +49,8 @@ export type V3 = [number, number, number];
 // a figure's builder names as those (Kit.dress)
 // (2026-10-30: a droid's panelled plating, a prosthesis's or implant's circuitry, the coarse weave of a robe, cloak or rags, and the ribbed,
 // quilted stuff of an armour's undersuit or a flight suit)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell" | "gunmetal" | "gunpoly" | "species";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell", "gunmetal", "gunpoly", "species"];
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell" | "gunmetal" | "gunpoly" | "species" | "plaster" | "adobe" | "sandstone" | "concrete" | "corrugated" | "rustmetal" | "planks" | "copper";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell", "gunmetal", "gunpoly", "species", "plaster", "adobe", "sandstone", "concrete", "corrugated", "rustmetal", "planks", "copper"];
 // The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
 export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "shell", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 
@@ -99,7 +100,33 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   species: surfaceMaterial("figure", "species", { vertexColors: true, lift: 1.12, parallax: 0, shininess: 18, specular: "#26211e", normalScale: 1 }),
   eye: surfaceMaterial("figure", "eye", { vertexColors: true, lift: 1.25, parallax: 0, shininess: 120, specular: "#ffffff", normalScale: 0.5 }),
   strand: surfaceMaterial("figure", "", { vertexColors: true, lift: 1.5, parallax: 0, shininess: 30, specular: "#34302b", cutout: 0.42, picture: "hair/strands.webp" }),
+  // The modular building kit's surfaces (2026-11-09, interiors/modular.ts): the piece's own texture coordinates (a repeat every two squares), the region's colour on the photograph,
+  // the normal map lighting it and the height map shifting it (offset parallax, more on stone and planks than on sheet metal)
+  plaster: surfaceMaterial("wall", "painted_plaster_wall", { vertexColors: true, lift: 1.5, parallax: 0.02 }),
+  adobe: surfaceMaterial("wall", "adobe_plaster", { vertexColors: true, lift: 1.3, parallax: 0.03, shininess: 3 }),
+  sandstone: surfaceMaterial("wall", "sandstone_blocks_05", { vertexColors: true, lift: 1.5, parallax: 0.04 }),
+  concrete: surfaceMaterial("wall", "concrete_wall_003", { vertexColors: true, lift: 1.5, parallax: 0.03 }),
+  corrugated: surfaceMaterial("wall", "corrugated_iron_02", { vertexColors: true, lift: 2.3, parallax: 0.02, shininess: 24, specular: "#4a4a4a" }),
+  rustmetal: surfaceMaterial("wall", "rusty_metal_02", { vertexColors: true, lift: 1.6, parallax: 0.015, shininess: 20, specular: "#3a3a3a" }),
+  planks: surfaceMaterial("wood", "brown_planks_03", { vertexColors: true, lift: 1.7, parallax: 0.03 }),
+  copper: surfaceMaterial("wall", "copper_patina", { vertexColors: true, lift: 1.15, parallax: 0.02, shininess: 40, specular: "#6a8a80" }),
 };
+
+// Texture coordinates by each vertex's own normal, in repeats of `grain` per unit: for a kit finish whose part came with none (the old architecture kit's pieces drawn in the
+// modular kit's textures)
+function planarUV(geo: THREE.BufferGeometry, grain: number) {
+  const p = geo.attributes.position as THREE.BufferAttribute;
+  const n = geo.attributes.normal as THREE.BufferAttribute;
+  const uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    const [ax, ay, az] = [Math.abs(n.getX(i)), Math.abs(n.getY(i)), Math.abs(n.getZ(i))];
+    const [x, y, z] = [p.getX(i), p.getY(i), p.getZ(i)];
+    const [u, v] = ax >= ay && ax >= az ? [z, y] : ay >= az ? [x, z] : [x, y];
+    uv[i * 2] = u * grain;
+    uv[i * 2 + 1] = v * grain;
+  }
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+}
 
 interface PartOptions {
   at?: V3;
@@ -301,7 +328,8 @@ export class Kit {
     // (and, for a beast, a mark -1 .. 1 painted on it: paler for a muzzle, a chin, a belly; darker for a nostril, a lip line, an eyelid)
     const mark = geo.attributes.mark ? Float32Array.from(geo.attributes.mark.array) : undefined;
     // (a spray card keeps the coordinates it was made with; the other textured finishes are projected when baked)
-    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && (finish === "needle" || finish === "head" || finish === "strand" || finish === "eye" || finish === "species"))) geo.deleteAttribute(name);
+    // (and a modular-kit part keeps the coordinates it was unwrapped with in Mixar: flat faces in squares, round ones about their axis)
+    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && (finish === "needle" || finish === "head" || finish === "strand" || finish === "eye" || finish === "species" || MOD_TEXTURED.has(finish)))) geo.deleteAttribute(name);
     if (!geo.index) {
       const count = geo.attributes.position.count;
       geo.setIndex(Array.from({ length: count }, (_, i) => i));
@@ -309,6 +337,15 @@ export class Kit {
     if (!geo.attributes.normal) geo.computeVertexNormals();
     const m = this.frames[this.frames.length - 1].clone().multiply(matrixOf(at, rot, scale));
     geo.applyMatrix4(m);
+    // A kit part drawn in a texture: its coordinates are in squares for the piece as built, so a piece scaled up or down carries them with it; one with none is mapped by its normals
+    if (MOD_TEXTURED.has(finish)) {
+      const uvs = geo.attributes.uv as THREE.BufferAttribute | undefined;
+      if (uvs) {
+        const e = m.elements;
+        const k = (Math.hypot(e[0], e[1], e[2]) + Math.hypot(e[4], e[5], e[6]) + Math.hypot(e[8], e[9], e[10])) / 3;
+        if (Math.abs(k - 1) > 1e-6) for (let i = 0; i < uvs.count; i++) uvs.setXY(i, uvs.getX(i) * k, uvs.getY(i) * k);
+      } else planarUV(geo, 0.5);
+    }
     // A mirrored part is turned inside out: turn its faces back
     if (m.determinant() < 0) {
       const idx = geo.index!.array as Uint16Array | Uint32Array;
@@ -807,8 +844,9 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 // A piece of a room's furniture: from the room's pack where the pack has it (turned to face away from its wall, fitted to its
 // footprint and the height the piece may reach, repeated along a long side, and in the room's palette: `tone`), else drawn by
 // the code (CodeFurniture). Until the pack's file is in, the code's piece stands.
-export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean }) {
-  const file = pieceOf(pack, name);
+export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare, round }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean; round?: boolean }) {
+  // (in a round or oval room a piece against the wall is the curved one where there is one)
+  const file = pieceOf(pack, name, !bare, !!round && Math.min(w, h) <= 2);
   if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} tone={tone} face={face} />;
   return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} bare={bare} face={face} />;
 }
@@ -1843,20 +1881,151 @@ function BentModel({ id, build, bend, scale }: { id: string; build: (k: Kit) => 
 // and windows take the shape of the building's style. `scale` sizes a window (it used to be a group round this, which a bend could not
 // see), `bend` lays it on a curved wall.
 // A piece of the architecture kit (interiors/architecture.ts, made by tools/blender/build-architecture.py), in the wall's colours: a crown on a roof, a frame round a way in
-export function ArchPiece({ name, wall, thatch = false, position, rotation, scale }: { name: string; wall: string; thatch?: boolean; position?: V3; rotation?: V3; scale?: number | V3 }) {
+export function ArchPiece({ name, wall, thatch = false, pack, position, rotation, scale }: { name: string; wall: string; thatch?: boolean; pack?: ExtPack | null; position?: V3; rotation?: V3; scale?: number | V3 }) {
   useArchParts();
   const piece = archParts()?.[name];
   if (!piece) return null;
   return (
     <Model
-      id={`arch:${name}:${wall}:${thatch ? 1 : 0}`}
+      id={`arch:${name}:${wall}:${thatch ? 1 : 0}:${pack ?? ""}`}
       position={position}
       rotation={rotation}
       scale={scale as number}
       build={(k) => {
-        for (const [region, g] of Object.entries(piece.part)) k.add(g, archColour(Number(region), wall, shade, thatch), { finish: ARCH_FINISH[Number(region)] ?? "matte" });
+        // (a pack's textures for the regions it has a look for: the old kit's crowns and frames then stand in the same plaster, stone and metal as the modular pieces beside them;
+        // the parts are copied, a part drawn is moved and stripped)
+        for (const [region, g] of Object.entries(piece.part)) {
+          const look = pack ? MOD_REGIONS[pack][Number(region)] : undefined;
+          k.add(g.clone(), modColour(look, archColour(Number(region), wall, shade, thatch)), { finish: look?.finish ?? ARCH_FINISH[Number(region)] ?? "matte" });
+        }
       }}
     />
+  );
+}
+
+// A piece of the modular building kit (interiors/modular.ts, figures/modular_ext.glb), drawn in its pack's textures: each region its texture set and colour, the wall's colour on
+// the body, the piece's own coordinates and occlusion. `ext_<pack>_<piece>`; nothing until the file is in.
+// (a region drawn in a texture takes the wall's colour lightened halfway to white, as a room's wall sets are (surfaces.tsx wallMaterial): the photographs are dark, and the colour tints them;
+// a colour the pack names is taken as it is)
+const modColour = (look: { finish: string; colour?: string } | undefined, base: string) => (look?.colour ?? (look && MOD_TEXTURED.has(look.finish) ? mix(base, "#ffffff", 0.5) : base));
+const MOD_BASE: Record<number, Finish> = { 0: "matte", 1: "matte", 2: "glow", 3: "sheen", 4: "matte", 5: "matte", 6: "matte" };
+export function ModPiece({ name, pack, wall, position, rotation, scale }: { name: string; pack: ExtPack; wall: string; position?: V3; rotation?: V3; scale?: number | V3 }) {
+  useModParts();
+  const piece = modParts()?.[name];
+  if (!piece) return null;
+  return (
+    <Model
+      id={`mod:${pack}:${name}:${wall}`}
+      position={position}
+      rotation={rotation}
+      scale={scale as number}
+      build={(k) => {
+        for (const [region, g] of Object.entries(piece.part)) {
+          const r = Number(region);
+          const look = MOD_REGIONS[pack][r];
+          k.add(g.clone(), modColour(look, archColour(r, wall, shade, false)), { finish: look?.finish ?? MOD_BASE[r] ?? "matte" });
+        }
+      }}
+    />
+  );
+}
+
+// The wall runs of a rectangular building (interiors/modular.ts facadePlan): the pack's wall modules laid on the outside of the block, one baked model for the whole building so that a
+// room costs a few draws, not one for each panel. `height` is the block's, the modules being 3.4 high; they stand a hair outside the block's wall.
+export function ModFacade({ plan, pack, wall, w, d, height }: { plan: Skin[]; pack: ExtPack; wall: string; w: number; d: number; height: number }) {
+  useModParts();
+  const parts = modParts();
+  if (!parts || !plan.length) return null;
+  const OUT = 0.02;
+  const turn = { n: Math.PI, s: 0, e: Math.PI / 2, w: -Math.PI / 2 };
+  const key = plan.map((s) => `${s.piece}${s.side}${s.at.toFixed(2)}${s.stretch.toFixed(2)}`).join(",");
+  return (
+    <Model
+      id={`facade:${pack}:${wall}:${w}x${d}x${height.toFixed(2)}:${key}`}
+      build={(k) => {
+        for (const s of plan) {
+          const piece = parts[s.piece];
+          if (!piece) continue;
+          const at: V3 = s.side === "n" ? [s.at, 0, -OUT] : s.side === "s" ? [s.at, 0, d + OUT] : s.side === "e" ? [w + OUT, 0, s.at] : [-OUT, 0, s.at];
+          k.group(at, [0, turn[s.side], 0], [s.stretch, height / 3.4, 1], () => {
+            for (const [region, g] of Object.entries(piece.part)) {
+              const r = Number(region);
+              const look = MOD_REGIONS[pack][r];
+              k.add(g.clone(), modColour(look, archColour(r, wall, shade, false)), { finish: look?.finish ?? MOD_BASE[r] ?? "matte" });
+            }
+          });
+        }
+      }}
+    />
+  );
+}
+
+// The walls inside a round room's curve (interiors/modular.ts bayRing): the interior kit's bays in the building's style, one baked model for a quarter ring; `fallback` (the plain
+// ring) stands until the kit is in. `wallH` is the room's wall height, the kit's bays being 3 high. About the ring's centre, as CornerWall.
+export function ModBays({ bays, style, wall, wallH, fallback }: { bays: BayPlace[]; style: InteriorStyle; wall: string; wallH: number; fallback: ReactNode }) {
+  useModIntParts();
+  const piece = modIntParts()?.[`int_${style}_bay_blank`];
+  if (!piece || !bays.length) return <>{fallback}</>;
+  return (
+    <Model
+      id={`bays:${style}:${wall}:${wallH.toFixed(2)}:${bays.map((b) => `${b.angle.toFixed(3)}/${b.across.toFixed(3)}/${b.out.toFixed(2)}`).join(",")}`}
+      build={(k) => {
+        for (const b of bays) {
+          k.group(undefined, [0, turnFor(b.angle), 0], undefined, () => {
+            k.group([0, 0, b.out], undefined, [b.across, wallH / 3, 1], () => {
+              for (const [region, g] of Object.entries(piece.part)) {
+                const r = Number(region);
+                const look = INTERIOR_LOOK[style][r];
+                k.add(g.clone(), modColour(look, archColour(r, wall, shade, false)), { finish: look?.finish ?? MOD_BASE[r] ?? "matte" });
+              }
+            });
+          });
+        }
+      }}
+    />
+  );
+}
+
+// A piece of the interior kit by name (`int_corr_imperial_arc45`: a corridor arc of the ring corridors the radial plans will make), in a style's textures
+export function ModIntPiece({ name, style, wall, position, rotation, scale }: { name: string; style: InteriorStyle; wall: string; position?: V3; rotation?: V3; scale?: number | V3 }) {
+  useModIntParts();
+  const piece = modIntParts()?.[name];
+  if (!piece) return null;
+  return (
+    <Model
+      id={`modint:${style}:${name}:${wall}`}
+      position={position}
+      rotation={rotation}
+      scale={scale as number}
+      build={(k) => {
+        for (const [region, g] of Object.entries(piece.part)) {
+          const r = Number(region);
+          const look = INTERIOR_LOOK[style][r];
+          k.add(g.clone(), modColour(look, archColour(r, wall, shade, false)), { finish: look?.finish ?? MOD_BASE[r] ?? "matte" });
+        }
+      }}
+    />
+  );
+}
+
+// A run of one piece of the modular kit along the four edges of a roof (a cornice, a parapet), at height `y`: as many two-square pieces as make each side, each stretched a
+// little to fill it, turned to face out (the piece is built with its front along +z). The sides east and west stop short of the corners, where the north and south runs' ends stand.
+export function RoofEdge({ w, d, y, piece, pack, wall, out = 0.3 }: { w: number; d: number; y: number; piece: string; pack: ExtPack; wall: string; out?: number }) {
+  const sides = [
+    { length: w, at: (t: number): V3 => [t, y, 0], turn: Math.PI },
+    { length: w, at: (t: number): V3 => [t, y, d], turn: 0 },
+    { length: d - 2 * out, at: (t: number): V3 => [w, y, out + t], turn: Math.PI / 2 },
+    { length: d - 2 * out, at: (t: number): V3 => [0, y, out + t], turn: -Math.PI / 2 },
+  ];
+  return (
+    <>
+      {sides.flatMap((side, s) => {
+        const { count, stretch } = runOf(side.length);
+        return Array.from({ length: count }, (_, i) => (
+          <ModPiece key={`${s}:${i}`} name={piece} pack={pack} wall={wall} position={side.at((i + 0.5) * (side.length / count))} rotation={[0, side.turn, 0]} scale={[stretch, 1, 1]} />
+        ));
+      })}
+    </>
   );
 }
 
@@ -1867,6 +2036,8 @@ export function ArchPiece({ name, wall, thatch = false, position, rotation, scal
 // in as many bays as fit (interiors/architecture.ts baysFor, bayFit: the wall's thickness and the doors stay the kit's). Until the kit is in, and for
 // an oval or a smaller circle, the room's block as before.
 export const DRUM_MIN_R = 2.5;
+// (the modular kit's bays were built a hair narrower than the old kit's: 3.85 of an arc to its 4: stretched to meet)
+const MOD_BAY_FIT = 4 / 3.85;
 export interface Drum { doors: number[]; windows: number[]; adobe: boolean; storeys: number }
 export function drumPlan(drum: Drum, bays = 16): Placed[] {
   const out: Placed[] = [];
@@ -1878,9 +2049,10 @@ export function drumPlan(drum: Drum, bays = 16): Placed[] {
   }
   return out;
 }
-export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: Drum; tint: string }) {
+export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: Drum; tint: string; pack?: ExtPack | null }) {
   useArchParts();
-  const { drum, tint, ...block } = props;
+  useModParts();
+  const { drum, tint, pack, ...block } = props;
   const r = block.w / 2;
   if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R) return <RoomBlock {...block} />;
   const bays = baysFor(r);
@@ -1891,7 +2063,12 @@ export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: D
       <group position={[block.w / 2, 0, block.d / 2]} scale={[1, block.height / (ARCH_STOREY * drum.storeys), 1]}>
         {drumPlan(drum, bays).map((p, i) => (
           <group key={i} rotation={[0, turnFor(p.angle), 0]}>
-            <ArchPiece name={p.piece} wall={tint} position={[0, p.y, fit.out]} scale={[fit.across, 1, 1]} />
+            {/* (a round building of a pack: its wall bays of the pack's own, in its textures, bent to the circle; the gantries, ramps and frames stay the old kit's) */}
+            {pack && modParts()?.[`ext_${pack}_bay_blank`] && /_bay(_blank|_door|_window)?_r4$/.test(p.piece) ? (
+              <ModPiece name={`ext_${pack}_bay_${/door/.test(p.piece) ? "door" : /blank/.test(p.piece) ? "blank" : "window"}`} pack={pack} wall={tint} position={[0, p.y, fit.out]} scale={[fit.across * MOD_BAY_FIT, 1, 1]} />
+            ) : (
+              <ArchPiece name={p.piece} wall={tint} pack={pack} position={[0, p.y, fit.out]} scale={[fit.across, 1, 1]} />
+            )}
           </group>
         ))}
       </group>
@@ -2046,8 +2223,13 @@ function buildNode(k: Kit, node: NodeLook, empty: boolean) {
 // The street and the wild: trees, rocks, lamps, vaporators
 // ---------------------------------------------------------------------------------------------
 
-export function Decor({ kind, seed = 0 }: { kind: string; seed?: number }) {
+export function Decor({ kind, seed = 0, wall = "#c9a56e" }: { kind: string; seed?: number; wall?: string }) {
   const v = seed % 3;
+  // A piece of the modular kit ("mod:ext_<pack>_<piece>": interiors/modular.ts), turned a quarter by its square so that a row of them does not all face one way
+  if (kind.startsWith("mod:")) {
+    const name = kind.slice(4);
+    return <ModPiece name={name} pack={name.split("_")[1] as ExtPack} wall={wall} position={[0.5, 0, 0.5]} rotation={[0, (seed % 4) * (Math.PI / 2), 0]} />;
+  }
   return (
     <>
       <Model id={`decor:${kind}:${v}`} position={[0.5, 0, 0.5]} build={(k) => buildDecor(k, kind, v)} />

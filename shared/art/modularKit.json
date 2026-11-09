@@ -1,0 +1,4438 @@
+{
+ "int_cantina_back_bar": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.4,
+   1,
+   1.7,
+   0.09
+  ],
+  "tris": 532,
+  "regions": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6
+  ]
+ },
+ "int_cantina_banner": {
+  "file": "int",
+  "box": [
+   -0.5,
+   0.6,
+   -0.05,
+   0.5,
+   2.26,
+   0.01
+  ],
+  "tris": 36,
+  "regions": [
+   2,
+   4,
+   5
+  ]
+ },
+ "int_cantina_bar_corner": {
+  "file": "int",
+  "box": [
+   -0.04,
+   0,
+   -2.04,
+   2.04,
+   0.7,
+   0.06
+  ],
+  "tris": 72,
+  "regions": [
+   1,
+   2,
+   4
+  ]
+ },
+ "int_cantina_bar_end": {
+  "file": "int",
+  "box": [
+   -1.04,
+   0,
+   -0.36,
+   0.66,
+   0.7,
+   0.36
+  ],
+  "tris": 136,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "int_cantina_bar_straight": {
+  "file": "int",
+  "box": [
+   -1.04,
+   0,
+   -0.34,
+   2,
+   0.7,
+   0.36
+  ],
+  "tris": 96,
+  "regions": [
+   1,
+   2,
+   4,
+   6
+  ]
+ },
+ "int_cantina_booth_seat": {
+  "file": "int",
+  "box": [
+   -1.55,
+   0,
+   -1.55,
+   1.55,
+   1,
+   0.13
+  ],
+  "tris": 384,
+  "regions": [
+   4,
+   5
+  ]
+ },
+ "int_cantina_chair": {
+  "file": "int",
+  "box": [
+   -0.17,
+   0,
+   -0.18,
+   0.17,
+   0.72,
+   0.17
+  ],
+  "tris": 132,
+  "regions": [
+   4,
+   5
+  ]
+ },
+ "int_cantina_drink_props": {
+  "file": "int",
+  "box": [
+   -0.25,
+   0,
+   -0.15,
+   0.25,
+   0.12,
+   0.15
+  ],
+  "tris": 140,
+  "regions": [
+   2,
+   3,
+   5,
+   6
+  ]
+ },
+ "int_cantina_hanging_lamp": {
+  "file": "int",
+  "box": [
+   -0.28,
+   1.74,
+   -0.28,
+   0.28,
+   3,
+   0.28
+  ],
+  "tris": 124,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_cantina_jukebox": {
+  "file": "int",
+  "box": [
+   -0.28,
+   0,
+   -0.28,
+   0.28,
+   1.25,
+   0.28
+  ],
+  "tris": 132,
+  "regions": [
+   1,
+   2,
+   4
+  ]
+ },
+ "int_cantina_stage": {
+  "file": "int",
+  "box": [
+   -1.03,
+   0,
+   -1.03,
+   1.03,
+   0.34,
+   1.3
+  ],
+  "tris": 60,
+  "regions": [
+   1,
+   2,
+   4
+  ]
+ },
+ "int_cantina_stool": {
+  "file": "int",
+  "box": [
+   -0.17,
+   0,
+   -0.17,
+   0.17,
+   0.47,
+   0.17
+  ],
+  "tris": 152,
+  "regions": [
+   1,
+   5,
+   6
+  ]
+ },
+ "int_cantina_table_round": {
+  "file": "int",
+  "box": [
+   -0.46,
+   0,
+   -0.46,
+   0.46,
+   0.54,
+   0.46
+  ],
+  "tris": 208,
+  "regions": [
+   1,
+   4,
+   6
+  ]
+ },
+ "int_desert_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_desert_column": {
+  "file": "int",
+  "box": [
+   -0.34,
+   0,
+   -0.33,
+   0.34,
+   3,
+   0.33
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_desert_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_desert_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.53,
+   0.01,
+   -0.04,
+   0.53,
+   1.41,
+   0.04
+  ],
+  "tris": 112,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_desert_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_desert_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_desert_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_desert_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 312,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 512,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   3,
+   0.22
+  ],
+  "tris": 376,
+  "regions": [
+   0,
+   1,
+   3,
+   4
+  ]
+ },
+ "int_imperial_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_column": {
+  "file": "int",
+  "box": [
+   -0.33,
+   0,
+   -0.33,
+   0.33,
+   3,
+   0.33
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_imperial_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.49,
+   0.01,
+   -0.04,
+   0.49,
+   1.41,
+   0.04
+  ],
+  "tris": 44,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_imperial_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_imperial_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_imperial_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_imperial_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.14,
+   1,
+   3,
+   0.14
+  ],
+  "tris": 156,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 268,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 268,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   3,
+   0.22
+  ],
+  "tris": 256,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_living_bed": {
+  "file": "int",
+  "box": [
+   -0.5,
+   0,
+   -1.56,
+   0.5,
+   0.75,
+   0
+  ],
+  "tris": 144,
+  "regions": [
+   4,
+   5,
+   6
+  ]
+ },
+ "int_living_bench": {
+  "file": "int",
+  "box": [
+   -0.6,
+   0,
+   -0.15,
+   0.6,
+   0.29,
+   0.15
+  ],
+  "tris": 36,
+  "regions": [
+   4
+  ]
+ },
+ "int_living_bunk": {
+  "file": "int",
+  "box": [
+   -0.53,
+   0,
+   -1.53,
+   0.53,
+   1.5,
+   0.03
+  ],
+  "tris": 108,
+  "regions": [
+   4,
+   5
+  ]
+ },
+ "int_living_cushions": {
+  "file": "int",
+  "box": [
+   -0.35,
+   0,
+   -0.35,
+   0.37,
+   0.3,
+   0.35
+  ],
+  "tris": 36,
+  "regions": [
+   5,
+   6
+  ]
+ },
+ "int_living_floor_lamp": {
+  "file": "int",
+  "box": [
+   -0.16,
+   0,
+   -0.15,
+   0.16,
+   1.5,
+   0.15
+  ],
+  "tris": 84,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_living_kitchen_counter": {
+  "file": "int",
+  "box": [
+   -1.03,
+   0,
+   -0.58,
+   1.03,
+   1.04,
+   0.03
+  ],
+  "tris": 128,
+  "regions": [
+   1,
+   2,
+   3,
+   4
+  ]
+ },
+ "int_living_rug_round": {
+  "file": "int",
+  "box": [
+   -0.9,
+   0,
+   -0.9,
+   0.9,
+   0.03,
+   0.9
+  ],
+  "tris": 288,
+  "regions": [
+   5,
+   6
+  ]
+ },
+ "int_living_shelf_unit": {
+  "file": "int",
+  "box": [
+   -0.5,
+   0,
+   -0.32,
+   0.5,
+   1.4,
+   0.02
+  ],
+  "tris": 156,
+  "regions": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6
+  ]
+ },
+ "int_living_stove": {
+  "file": "int",
+  "box": [
+   -0.3,
+   0,
+   -0.25,
+   0.3,
+   1,
+   0.25
+  ],
+  "tris": 108,
+  "regions": [
+   1,
+   2,
+   6
+  ]
+ },
+ "int_living_table_long": {
+  "file": "int",
+  "box": [
+   -0.9,
+   0,
+   -0.3,
+   0.9,
+   0.52,
+   0.3
+  ],
+  "tris": 72,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "int_living_wardrobe": {
+  "file": "int",
+  "box": [
+   -0.47,
+   0,
+   -0.42,
+   0.47,
+   1.4,
+   0.02
+  ],
+  "tris": 60,
+  "regions": [
+   1,
+   3,
+   4
+  ]
+ },
+ "int_living_water_jar": {
+  "file": "int",
+  "box": [
+   -0.28,
+   0,
+   -0.28,
+   0.28,
+   0.72,
+   0.28
+  ],
+  "tris": 160,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_med_bacta_tank": {
+  "file": "int",
+  "box": [
+   -0.6,
+   0,
+   -0.59,
+   0.6,
+   2.06,
+   0.63
+  ],
+  "tris": 408,
+  "regions": [
+   1,
+   2,
+   3,
+   6
+  ]
+ },
+ "int_med_iv_stand": {
+  "file": "int",
+  "box": [
+   -0.2,
+   0,
+   -0.2,
+   0.2,
+   1.44,
+   0.2
+  ],
+  "tris": 132,
+  "regions": [
+   1,
+   2,
+   5,
+   6
+  ]
+ },
+ "int_med_med_bed": {
+  "file": "int",
+  "box": [
+   -0.43,
+   0,
+   -1.5,
+   0.43,
+   0.8,
+   0.01
+  ],
+  "tris": 132,
+  "regions": [
+   0,
+   1,
+   2,
+   6
+  ]
+ },
+ "int_med_med_chair": {
+  "file": "int",
+  "box": [
+   -0.22,
+   0,
+   -0.22,
+   0.22,
+   0.8,
+   0.22
+  ],
+  "tris": 80,
+  "regions": [
+   1,
+   5,
+   6
+  ]
+ },
+ "int_med_privacy_screen": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   -0.14,
+   0.81,
+   1.45,
+   0.04
+  ],
+  "tris": 84,
+  "regions": [
+   1,
+   6
+  ]
+ },
+ "int_med_scanner_arch": {
+  "file": "int",
+  "box": [
+   -0.72,
+   0,
+   -0.1,
+   0.72,
+   1.95,
+   0.1
+  ],
+  "tris": 132,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_med_sink": {
+  "file": "int",
+  "box": [
+   -0.4,
+   0,
+   -0.42,
+   0.4,
+   1.2,
+   0
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1,
+   3,
+   6
+  ]
+ },
+ "int_med_supply_cabinet": {
+  "file": "int",
+  "box": [
+   -0.4,
+   0,
+   -0.3,
+   0.4,
+   1.5,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   0,
+   1,
+   2,
+   3,
+   5
+  ]
+ },
+ "int_medical_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_column": {
+  "file": "int",
+  "box": [
+   -0.34,
+   0,
+   -0.33,
+   0.34,
+   3,
+   0.33
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_medical_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_medical_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.49,
+   0.01,
+   -0.04,
+   0.49,
+   1.41,
+   0.04
+  ],
+  "tris": 44,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_medical_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_medical_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_medical_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_medical_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.13,
+   1,
+   3,
+   0.13
+  ],
+  "tris": 84,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 196,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 196,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   3,
+   0.22
+  ],
+  "tris": 184,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_palace_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_palace_column": {
+  "file": "int",
+  "box": [
+   -0.38,
+   0,
+   -0.38,
+   0.38,
+   3,
+   0.38
+  ],
+  "tris": 240,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.49,
+   0.01,
+   -0.04,
+   0.49,
+   1.41,
+   0.04
+  ],
+  "tris": 72,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_palace_f_banner_long": {
+  "file": "int",
+  "box": [
+   -0.45,
+   0.3,
+   -0.05,
+   0.45,
+   2.76,
+   0.01
+  ],
+  "tris": 120,
+  "regions": [
+   1,
+   5
+  ]
+ },
+ "int_palace_f_banquet_table": {
+  "file": "int",
+  "box": [
+   -1.52,
+   0,
+   -0.47,
+   1.52,
+   0.68,
+   0.47
+  ],
+  "tris": 192,
+  "regions": [
+   1,
+   2,
+   4,
+   5
+  ]
+ },
+ "int_palace_f_bench_long": {
+  "file": "int",
+  "box": [
+   -0.9,
+   0,
+   -0.2,
+   0.9,
+   0.4,
+   0.2
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   5
+  ]
+ },
+ "int_palace_f_brazier": {
+  "file": "int",
+  "box": [
+   -0.34,
+   0,
+   -0.34,
+   0.34,
+   1.14,
+   0.34
+  ],
+  "tris": 216,
+  "regions": [
+   1,
+   2,
+   3
+  ]
+ },
+ "int_palace_f_chandelier": {
+  "file": "int",
+  "box": [
+   -0.52,
+   2,
+   -0.52,
+   0.52,
+   3,
+   0.52
+  ],
+  "tris": 376,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_palace_f_dais": {
+  "file": "int",
+  "box": [
+   -1.52,
+   0,
+   -1.52,
+   1.52,
+   0.48,
+   1.52
+  ],
+  "tris": 72,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_f_fountain": {
+  "file": "int",
+  "box": [
+   -1.05,
+   0,
+   -1.05,
+   1.05,
+   1,
+   1.05
+  ],
+  "tris": 468,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_palace_f_pedestal_column": {
+  "file": "int",
+  "box": [
+   -0.25,
+   0,
+   -0.24,
+   0.25,
+   1.2,
+   0.24
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_palace_f_rug_runner": {
+  "file": "int",
+  "box": [
+   -0.5,
+   0,
+   -1.5,
+   0.5,
+   0.03,
+   1.5
+  ],
+  "tris": 60,
+  "regions": [
+   1,
+   5
+  ]
+ },
+ "int_palace_f_statue": {
+  "file": "int",
+  "box": [
+   -0.4,
+   0,
+   -0.4,
+   0.4,
+   1.87,
+   0.4
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1,
+   6
+  ]
+ },
+ "int_palace_f_throne": {
+  "file": "int",
+  "box": [
+   -0.36,
+   0,
+   -0.55,
+   0.36,
+   1.71,
+   0.3
+  ],
+  "tris": 192,
+  "regions": [
+   1,
+   2,
+   4,
+   5
+  ]
+ },
+ "int_palace_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_palace_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 156,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 608,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.18,
+   1,
+   3,
+   0.18
+  ],
+  "tris": 408,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   3,
+   0.22
+  ],
+  "tris": 472,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "int_republic_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_republic_column": {
+  "file": "int",
+  "box": [
+   -0.33,
+   0,
+   -0.33,
+   0.33,
+   3,
+   0.33
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_republic_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.49,
+   0.01,
+   -0.04,
+   0.49,
+   1.41,
+   0.04
+  ],
+  "tris": 36,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_republic_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_republic_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.13,
+   1,
+   3,
+   0.13
+  ],
+  "tris": 132,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 204,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.15,
+   1,
+   3,
+   0.15
+  ],
+  "tris": 204,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   3,
+   0.22
+  ],
+  "tris": 232,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "int_tech_cable_reel": {
+  "file": "int",
+  "box": [
+   -0.4,
+   -0.4,
+   -0.48,
+   0.4,
+   0.4,
+   0
+  ],
+  "tris": 224,
+  "regions": [
+   1,
+   4,
+   6
+  ]
+ },
+ "int_tech_console_bank": {
+  "file": "int",
+  "box": [
+   -0.9,
+   0,
+   -0.45,
+   0.9,
+   1.26,
+   0.04
+  ],
+  "tris": 96,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_tech_console_desk": {
+  "file": "int",
+  "box": [
+   -0.82,
+   0,
+   -0.6,
+   0.82,
+   1.3,
+   0.05
+  ],
+  "tris": 108,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_tech_control_chair": {
+  "file": "int",
+  "box": [
+   -0.28,
+   0,
+   -0.22,
+   0.28,
+   0.85,
+   0.22
+  ],
+  "tris": 112,
+  "regions": [
+   1,
+   5,
+   6
+  ]
+ },
+ "int_tech_crate_large": {
+  "file": "int",
+  "box": [
+   -0.46,
+   0,
+   -0.36,
+   0.46,
+   0.8,
+   0.36
+  ],
+  "tris": 60,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "int_tech_crate_small": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   0.5,
+   0.26
+  ],
+  "tris": 48,
+  "regions": [
+   1,
+   2,
+   4
+  ]
+ },
+ "int_tech_floor_conduit": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.2,
+   2,
+   0.18,
+   0.2
+  ],
+  "tris": 56,
+  "regions": [
+   1,
+   2,
+   6
+  ]
+ },
+ "int_tech_generator": {
+  "file": "int",
+  "box": [
+   -0.5,
+   0,
+   -0.35,
+   0.5,
+   1.1,
+   0.37
+  ],
+  "tris": 180,
+  "regions": [
+   0,
+   1,
+   2,
+   3,
+   6
+  ]
+ },
+ "int_tech_holotable": {
+  "file": "int",
+  "box": [
+   -0.6,
+   0,
+   -0.6,
+   0.6,
+   0.76,
+   0.6
+  ],
+  "tris": 384,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_tech_locker_bank": {
+  "file": "int",
+  "box": [
+   -0.62,
+   0,
+   -0.42,
+   0.62,
+   1.44,
+   0.03
+  ],
+  "tris": 132,
+  "regions": [
+   0,
+   1,
+   3,
+   5
+  ]
+ },
+ "int_tech_scanner_arch": {
+  "file": "int",
+  "box": [
+   -0.7,
+   0,
+   -0.3,
+   0.7,
+   1.9,
+   0.31
+  ],
+  "tris": 72,
+  "regions": [
+   1,
+   2,
+   3
+  ]
+ },
+ "int_tech_server_rack": {
+  "file": "int",
+  "box": [
+   -0.25,
+   0,
+   -0.25,
+   0.25,
+   1.6,
+   0.26
+  ],
+  "tris": 264,
+  "regions": [
+   1,
+   2,
+   3
+  ]
+ },
+ "int_tech_terminal": {
+  "file": "int",
+  "box": [
+   -0.3,
+   0,
+   -0.2,
+   0.3,
+   1.3,
+   0.2
+  ],
+  "tris": 88,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_tech_workbench": {
+  "file": "int",
+  "box": [
+   -0.8,
+   0,
+   -0.3,
+   0.8,
+   1.3,
+   0.3
+  ],
+  "tris": 144,
+  "regions": [
+   1,
+   4,
+   6
+  ]
+ },
+ "int_work_droid_charger": {
+  "file": "int",
+  "box": [
+   -0.35,
+   0,
+   -0.3,
+   0.35,
+   1.7,
+   0.3
+  ],
+  "tris": 84,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_work_engine_block": {
+  "file": "int",
+  "box": [
+   -0.55,
+   0,
+   -0.35,
+   1,
+   0.85,
+   0.44
+  ],
+  "tris": 224,
+  "regions": [
+   1,
+   5,
+   6
+  ]
+ },
+ "int_work_forge": {
+  "file": "int",
+  "box": [
+   -0.7,
+   0,
+   -0.5,
+   1.35,
+   2.2,
+   0.51
+  ],
+  "tris": 96,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_work_fuel_drum": {
+  "file": "int",
+  "box": [
+   -0.32,
+   0,
+   -0.32,
+   0.32,
+   0.94,
+   0.32
+  ],
+  "tris": 248,
+  "regions": [
+   1,
+   5
+  ]
+ },
+ "int_work_hoist": {
+  "file": "int",
+  "box": [
+   -1.2,
+   1.25,
+   -0.18,
+   1.2,
+   2.85,
+   0.18
+  ],
+  "tris": 52,
+  "regions": [
+   0,
+   1,
+   2,
+   6
+  ]
+ },
+ "int_work_lift_arm": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.8,
+   1,
+   2.25,
+   0.8
+  ],
+  "tris": 84,
+  "regions": [
+   1,
+   2,
+   6
+  ]
+ },
+ "int_work_parts_rack": {
+  "file": "int",
+  "box": [
+   -0.94,
+   0,
+   -0.5,
+   0.94,
+   1.82,
+   0
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1,
+   4,
+   6
+  ]
+ },
+ "int_work_tire_stack": {
+  "file": "int",
+  "box": [
+   -0.34,
+   0,
+   -0.34,
+   0.34,
+   0.48,
+   0.34
+  ],
+  "tris": 216,
+  "regions": [
+   3
+  ]
+ },
+ "int_work_tool_cart": {
+  "file": "int",
+  "box": [
+   -0.42,
+   0,
+   -0.27,
+   0.42,
+   0.79,
+   0.27
+  ],
+  "tris": 224,
+  "regions": [
+   0,
+   1,
+   3,
+   6
+  ]
+ },
+ "int_workshop_ceiling_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   2.92,
+   -1,
+   1,
+   3.12,
+   1
+  ],
+  "tris": 48,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_workshop_column": {
+  "file": "int",
+  "box": [
+   -0.3,
+   0,
+   -0.3,
+   0.3,
+   3,
+   0.3
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_corner": {
+  "file": "int",
+  "box": [
+   -0.26,
+   0,
+   -0.26,
+   0.26,
+   3,
+   0.26
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_door_leaf": {
+  "file": "int",
+  "box": [
+   -0.49,
+   0.01,
+   -0.04,
+   0.49,
+   1.41,
+   0.04
+  ],
+  "tris": 36,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "int_workshop_floor_tile": {
+  "file": "int",
+  "box": [
+   -1,
+   -0.12,
+   -1,
+   1,
+   0.02,
+   1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_railing": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.03,
+   1,
+   0.96,
+   0.03
+  ],
+  "tris": 144,
+  "regions": [
+   1
+  ]
+ },
+ "int_workshop_stair": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -3.2,
+   1,
+   3.9,
+   0.02
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_wall": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.27,
+   2,
+   3,
+   0.27
+  ],
+  "tris": 260,
+  "regions": [
+   0,
+   1,
+   6
+  ]
+ },
+ "int_workshop_wall_arch": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.27,
+   2,
+   3,
+   0.27
+  ],
+  "tris": 332,
+  "regions": [
+   0,
+   1,
+   6
+  ]
+ },
+ "int_workshop_wall_door": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.27,
+   2,
+   3,
+   0.27
+  ],
+  "tris": 332,
+  "regions": [
+   0,
+   1,
+   6
+  ]
+ },
+ "int_workshop_wall_window": {
+  "file": "int",
+  "box": [
+   -1,
+   0,
+   -0.27,
+   2,
+   3,
+   0.27
+  ],
+  "tris": 360,
+  "regions": [
+   0,
+   1,
+   3,
+   6
+  ]
+ },
+ "ext_classical_arcade": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.38,
+   1,
+   3.52,
+   0.16
+  ],
+  "tris": 200,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_balustrade": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.22,
+   1,
+   1.02,
+   0
+  ],
+  "tris": 584,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 256,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 908,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_classical_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 856,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_classical_column": {
+  "file": "ext",
+  "box": [
+   -0.34,
+   0,
+   -0.34,
+   0.34,
+   3.4,
+   0.34
+  ],
+  "tris": 236,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_corner": {
+  "file": "ext",
+  "box": [
+   -0.46,
+   0,
+   -0.46,
+   0.46,
+   3.5,
+   0.46
+  ],
+  "tris": 96,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_cornice": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.4,
+   1.04,
+   0.28,
+   0.32
+  ],
+  "tris": 132,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_dome_copper": {
+  "file": "ext",
+  "box": [
+   -1.58,
+   0,
+   -1.58,
+   1.58,
+   3.24,
+   1.58
+  ],
+  "tris": 892,
+  "regions": [
+   0,
+   1,
+   3,
+   5
+  ]
+ },
+ "ext_classical_pediment": {
+  "file": "ext",
+  "box": [
+   -1.1,
+   0,
+   -0.35,
+   1.1,
+   0.7,
+   0.05
+  ],
+  "tris": 28,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_classical_planter": {
+  "file": "ext",
+  "box": [
+   -0.32,
+   0,
+   -0.32,
+   0.32,
+   0.91,
+   0.32
+  ],
+  "tris": 180,
+  "regions": [
+   0,
+   5
+  ]
+ },
+ "ext_classical_roof_tile": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.22,
+   0.02
+  ],
+  "tris": 24,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_spire": {
+  "file": "ext",
+  "box": [
+   -0.45,
+   0,
+   -0.43,
+   0.45,
+   3.6,
+   0.43
+  ],
+  "tris": 220,
+  "regions": [
+   0,
+   1,
+   5
+  ]
+ },
+ "ext_classical_stair_wide": {
+  "file": "ext",
+  "box": [
+   -1.08,
+   0,
+   0,
+   1.08,
+   1.7,
+   2.8
+  ],
+  "tris": 120,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_wall": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.38,
+   1,
+   3.52,
+   0.16
+  ],
+  "tris": 72,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_classical_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.38,
+   1,
+   3.52,
+   0.25
+  ],
+  "tris": 364,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_classical_wall_window": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.38,
+   1,
+   3.52,
+   0.16
+  ],
+  "tris": 264,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_deco_antenna": {
+  "file": "ext",
+  "box": [
+   -0.35,
+   0,
+   -0.1,
+   0.35,
+   2.86,
+   0.1
+  ],
+  "tris": 104,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "ext_deco_balcony": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   0,
+   1,
+   1,
+   1.04
+  ],
+  "tris": 72,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.15
+  ],
+  "tris": 276,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_deco_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.15
+  ],
+  "tris": 644,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_deco_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.15
+  ],
+  "tris": 588,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_deco_corner_tower": {
+  "file": "ext",
+  "box": [
+   -0.56,
+   0,
+   -0.56,
+   0.56,
+   3.54,
+   0.56
+  ],
+  "tris": 496,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_landing_pad": {
+  "file": "ext",
+  "box": [
+   -2.3,
+   0,
+   -2.3,
+   2.3,
+   0.32,
+   2.3
+  ],
+  "tris": 548,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_roof_tile": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.68,
+   0.03
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_deco_setback": {
+  "file": "ext",
+  "box": [
+   -1.02,
+   0,
+   -2.02,
+   1.02,
+   1.79,
+   0.02
+  ],
+  "tris": 84,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_skybridge": {
+  "file": "ext",
+  "box": [
+   -1.1,
+   0,
+   -4,
+   1.1,
+   1.7,
+   0
+  ],
+  "tris": 96,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_spire": {
+  "file": "ext",
+  "box": [
+   -0.55,
+   0,
+   -0.55,
+   0.55,
+   8.48,
+   0.55
+  ],
+  "tris": 360,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_wall": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.35,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_deco_wall_atrium": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.35,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 104,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_wall_band": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.35,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 168,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_deco_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.35,
+   1,
+   3.4,
+   0.85
+  ],
+  "tris": 172,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_deco_wall_fins": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.35,
+   1,
+   3.4,
+   0.2
+  ],
+  "tris": 96,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_desert_awning": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   0,
+   1,
+   2.5,
+   1.43
+  ],
+  "tris": 60,
+  "regions": [
+   4,
+   6
+  ]
+ },
+ "ext_desert_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 232,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_desert_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 1408,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 832,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_beam_ends": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.19,
+   0.36
+  ],
+  "tris": 172,
+  "regions": [
+   0,
+   4
+  ]
+ },
+ "ext_desert_buttress": {
+  "file": "ext",
+  "box": [
+   -0.28,
+   0,
+   -0.3,
+   0.28,
+   3.4,
+   0.7
+  ],
+  "tris": 12,
+  "regions": [
+   0
+  ]
+ },
+ "ext_desert_corner": {
+  "file": "ext",
+  "box": [
+   -0.46,
+   0,
+   -0.46,
+   0.46,
+   3.56,
+   0.46
+  ],
+  "tris": 144,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_desert_dome_large": {
+  "file": "ext",
+  "box": [
+   -1.68,
+   0,
+   -1.68,
+   1.68,
+   2.5,
+   1.68
+  ],
+  "tris": 752,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_dome_small": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -1,
+   1,
+   1.56,
+   1
+  ],
+  "tris": 432,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_desert_parapet": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.3,
+   1,
+   0.5,
+   0.02
+  ],
+  "tris": 24,
+  "regions": [
+   0,
+   3
+  ]
+ },
+ "ext_desert_roof_tile": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.7,
+   0
+  ],
+  "tris": 24,
+  "regions": [
+   0
+  ]
+ },
+ "ext_desert_stair_ext": {
+  "file": "ext",
+  "box": [
+   -0.55,
+   0,
+   0,
+   0.55,
+   3.4,
+   3.6
+  ],
+  "tris": 144,
+  "regions": [
+   0
+  ]
+ },
+ "ext_desert_vaporator": {
+  "file": "ext",
+  "box": [
+   -0.4,
+   0,
+   -0.38,
+   0.4,
+   2.75,
+   0.38
+  ],
+  "tris": 424,
+  "regions": [
+   1,
+   6
+  ]
+ },
+ "ext_desert_vent_stack": {
+  "file": "ext",
+  "box": [
+   -0.4,
+   0,
+   -0.4,
+   0.4,
+   1.32,
+   0.4
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_wall": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.37,
+   1,
+   3.54,
+   0.07
+  ],
+  "tris": 36,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_desert_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.37,
+   1,
+   3.54,
+   0.07
+  ],
+  "tris": 396,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_wall_gate": {
+  "file": "ext",
+  "box": [
+   -2,
+   0,
+   -0.37,
+   2,
+   3.54,
+   0.08
+  ],
+  "tris": 236,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_desert_wall_window": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.37,
+   1,
+   3.54,
+   0.12
+  ],
+  "tris": 252,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_frontier_awning_canvas": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   0,
+   1,
+   2.5,
+   1.53
+  ],
+  "tris": 120,
+  "regions": [
+   4,
+   5,
+   6
+  ]
+ },
+ "ext_frontier_barrel": {
+  "file": "ext",
+  "box": [
+   -0.32,
+   0,
+   -0.32,
+   0.32,
+   0.9,
+   0.32
+  ],
+  "tris": 192,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_frontier_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 332,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_frontier_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 556,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_frontier_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 596,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_frontier_boardwalk": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.4,
+   0
+  ],
+  "tris": 216,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "ext_frontier_chimney": {
+  "file": "ext",
+  "box": [
+   -0.3,
+   0,
+   -0.29,
+   0.3,
+   2.2,
+   0.29
+  ],
+  "tris": 100,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_frontier_corner_post": {
+  "file": "ext",
+  "box": [
+   -0.22,
+   0,
+   -0.22,
+   0.22,
+   3.4,
+   0.22
+  ],
+  "tris": 72,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "ext_frontier_crate_stack": {
+  "file": "ext",
+  "box": [
+   -0.52,
+   0,
+   -0.32,
+   0.6,
+   1.05,
+   0.32
+  ],
+  "tris": 48,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "ext_frontier_lamp_post": {
+  "file": "ext",
+  "box": [
+   -0.16,
+   0,
+   -0.16,
+   0.16,
+   2.76,
+   0.16
+  ],
+  "tris": 48,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "ext_frontier_pipe_corner": {
+  "file": "ext",
+  "box": [
+   -0.55,
+   0,
+   0,
+   0.55,
+   2.36,
+   0.49
+  ],
+  "tris": 232,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_frontier_roof_shed": {
+  "file": "ext",
+  "box": [
+   -1.2,
+   0.5,
+   -2,
+   1.2,
+   1.4,
+   0.6
+  ],
+  "tris": 120,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_frontier_sign_post": {
+  "file": "ext",
+  "box": [
+   -0.62,
+   0,
+   -0.05,
+   0.62,
+   2.4,
+   0.07
+  ],
+  "tris": 72,
+  "regions": [
+   2,
+   4
+  ]
+ },
+ "ext_frontier_wall_corrugated": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 180,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "ext_frontier_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.12
+  ],
+  "tris": 172,
+  "regions": [
+   1,
+   3,
+   4
+  ]
+ },
+ "ext_frontier_wall_plank": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 156,
+  "regions": [
+   1,
+   4
+  ]
+ },
+ "ext_frontier_wall_shopfront": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.45
+  ],
+  "tris": 152,
+  "regions": [
+   0,
+   1,
+   3,
+   4
+  ]
+ },
+ "ext_frontier_water_tank": {
+  "file": "ext",
+  "box": [
+   -0.8,
+   0,
+   -0.8,
+   0.8,
+   3.5,
+   0.8
+  ],
+  "tris": 268,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "ext_hull_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 368,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_hull_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 1020,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_hull_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.79,
+   0,
+   3.56,
+   0.79,
+   3.54,
+   4.07
+  ],
+  "tris": 968,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_hull_deck_tile": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.2,
+   0
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_hull_dome_glass": {
+  "file": "ext",
+  "box": [
+   -1.5,
+   0,
+   -1.5,
+   1.5,
+   1.64,
+   1.5
+  ],
+  "tris": 464,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_hull_pod": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.78,
+   1,
+   1.98,
+   0.82
+  ],
+  "tris": 196,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_hull_railing": {
+  "file": "ext",
+  "box": [
+   -1.03,
+   0,
+   -0.06,
+   1.03,
+   0.96,
+   0
+  ],
+  "tris": 108,
+  "regions": [
+   1,
+   2
+  ]
+ },
+ "ext_hull_ring_platform": {
+  "file": "ext",
+  "box": [
+   -3.2,
+   0,
+   -3.2,
+   3.2,
+   1.06,
+   3.2
+  ],
+  "tris": 560,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_hull_spire": {
+  "file": "ext",
+  "box": [
+   -0.7,
+   0,
+   -0.68,
+   0.7,
+   7.5,
+   0.68
+  ],
+  "tris": 364,
+  "regions": [
+   0,
+   2
+  ]
+ },
+ "ext_hull_stilt": {
+  "file": "ext",
+  "box": [
+   -0.95,
+   0,
+   -0.93,
+   0.95,
+   4.4,
+   0.93
+  ],
+  "tris": 224,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_hull_wall": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.33,
+   1,
+   3.4,
+   0.04
+  ],
+  "tris": 60,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_hull_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.33,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 272,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_hull_wall_porthole": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.33,
+   1,
+   3.4,
+   0.06
+  ],
+  "tris": 344,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_hull_wall_window_band": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.33,
+   1,
+   3.4,
+   0.04
+  ],
+  "tris": 116,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_industrial_bay_blank": {
+  "file": "ext",
+  "box": [
+   -0.8,
+   0,
+   3.59,
+   0.8,
+   3.4,
+   4.1
+  ],
+  "tris": 436,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_bay_door": {
+  "file": "ext",
+  "box": [
+   -0.8,
+   0,
+   3.59,
+   0.8,
+   3.4,
+   4.1
+  ],
+  "tris": 804,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_industrial_bay_window": {
+  "file": "ext",
+  "box": [
+   -0.8,
+   0,
+   3.59,
+   0.8,
+   3.4,
+   4.1
+  ],
+  "tris": 736,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "ext_industrial_bunker_slope": {
+  "file": "ext",
+  "box": [
+   -1.02,
+   0,
+   -0.3,
+   1.02,
+   3.5,
+   0.9
+  ],
+  "tris": 24,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_buttress": {
+  "file": "ext",
+  "box": [
+   -0.3,
+   0,
+   -0.3,
+   0.3,
+   3.4,
+   0.9
+  ],
+  "tris": 12,
+  "regions": [
+   0
+  ]
+ },
+ "ext_industrial_catwalk": {
+  "file": "ext",
+  "box": [
+   -0.81,
+   0,
+   -2,
+   0.81,
+   1.05,
+   0
+  ],
+  "tris": 300,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_crane": {
+  "file": "ext",
+  "box": [
+   -0.45,
+   0,
+   -0.45,
+   0.45,
+   3.5,
+   2.9
+  ],
+  "tris": 104,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_industrial_guard_tower": {
+  "file": "ext",
+  "box": [
+   -1.25,
+   0,
+   -1.25,
+   1.25,
+   6,
+   1.25
+  ],
+  "tris": 108,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_industrial_hangar_door": {
+  "file": "ext",
+  "box": [
+   -2.2,
+   0,
+   -0.34,
+   2.2,
+   3.4,
+   0.2
+  ],
+  "tris": 136,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_industrial_ladder": {
+  "file": "ext",
+  "box": [
+   -0.22,
+   0,
+   0.08,
+   0.4,
+   3.4,
+   0.13
+  ],
+  "tris": 288,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_pipe_run": {
+  "file": "ext",
+  "box": [
+   -0.99,
+   1.8,
+   0,
+   2,
+   2.6,
+   0.51
+  ],
+  "tris": 228,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_pipe_vertical": {
+  "file": "ext",
+  "box": [
+   -0.22,
+   0,
+   0,
+   0.22,
+   3.4,
+   0.51
+  ],
+  "tris": 196,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_roof_tile": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -2,
+   1,
+   0.6,
+   0
+  ],
+  "tris": 84,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_stack": {
+  "file": "ext",
+  "box": [
+   -0.7,
+   0,
+   -0.68,
+   0.7,
+   5.64,
+   0.68
+  ],
+  "tris": 364,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_tank": {
+  "file": "ext",
+  "box": [
+   -1.04,
+   0,
+   -1.02,
+   1.04,
+   3,
+   1.02
+  ],
+  "tris": 468,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "ext_industrial_wall": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 144,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "ext_industrial_wall_door": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.12
+  ],
+  "tris": 172,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "ext_industrial_wall_vent": {
+  "file": "ext",
+  "box": [
+   -1,
+   0,
+   -0.34,
+   1,
+   3.4,
+   0.1
+  ],
+  "tris": 212,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_corr_hull_arc22": {
+  "file": "int",
+  "box": [
+   -0.99,
+   -0.12,
+   2.84,
+   0.99,
+   3.12,
+   5.09
+  ],
+  "tris": 284,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_hull_arc45": {
+  "file": "int",
+  "box": [
+   -1.95,
+   -0.12,
+   2.68,
+   1.95,
+   3.12,
+   5.1
+  ],
+  "tris": 548,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_hull_arc45_spoke": {
+  "file": "int",
+  "box": [
+   -1.95,
+   -0.12,
+   2.68,
+   1.95,
+   3.12,
+   5.1
+  ],
+  "tris": 532,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_hull_arc90": {
+  "file": "int",
+  "box": [
+   -3.61,
+   -0.12,
+   2.05,
+   3.61,
+   3.12,
+   5.1
+  ],
+  "tris": 1076,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_imperial_arc22": {
+  "file": "int",
+  "box": [
+   -0.99,
+   -0.12,
+   2.84,
+   0.99,
+   3.12,
+   5.09
+  ],
+  "tris": 304,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_imperial_arc45": {
+  "file": "int",
+  "box": [
+   -1.95,
+   -0.12,
+   2.68,
+   1.95,
+   3.12,
+   5.1
+  ],
+  "tris": 592,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_imperial_arc45_spoke": {
+  "file": "int",
+  "box": [
+   -1.95,
+   -0.12,
+   2.68,
+   1.95,
+   3.12,
+   5.1
+  ],
+  "tris": 576,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_corr_imperial_arc90": {
+  "file": "int",
+  "box": [
+   -3.61,
+   -0.12,
+   2.05,
+   3.61,
+   3.12,
+   5.1
+  ],
+  "tris": 1168,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_desert_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.82,
+   0,
+   3.75,
+   0.82,
+   3,
+   4.18
+  ],
+  "tris": 648,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.82,
+   0,
+   3.75,
+   0.82,
+   3,
+   4.18
+  ],
+  "tris": 236,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_bay_door": {
+  "file": "int",
+  "box": [
+   -0.82,
+   0,
+   3.75,
+   0.82,
+   3,
+   4.18
+  ],
+  "tris": 936,
+  "regions": [
+   0,
+   1,
+   4
+  ]
+ },
+ "int_desert_bay_window": {
+  "file": "int",
+  "box": [
+   -0.82,
+   0,
+   3.75,
+   0.82,
+   3,
+   4.18
+  ],
+  "tris": 804,
+  "regions": [
+   0,
+   1,
+   3,
+   4
+  ]
+ },
+ "int_imperial_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 560,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.79,
+   0.81,
+   3,
+   4.14
+  ],
+  "tris": 324,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_bay_door": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.79,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 536,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_imperial_bay_window": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.79,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 604,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_medical_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 560,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.13
+  ],
+  "tris": 324,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_bay_door": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 536,
+  "regions": [
+   0,
+   1,
+   2
+  ]
+ },
+ "int_medical_bay_window": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 604,
+  "regions": [
+   0,
+   1,
+   2,
+   3
+  ]
+ },
+ "int_palace_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 984,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 324,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_bay_door": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 800,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_palace_bay_window": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 892,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "int_republic_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 428,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.13
+  ],
+  "tris": 260,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_bay_door": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 428,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_republic_bay_window": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.8,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 540,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ },
+ "int_workshop_bay_arch": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 404,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_bay_blank": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 236,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_bay_door": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 404,
+  "regions": [
+   0,
+   1
+  ]
+ },
+ "int_workshop_bay_window": {
+  "file": "int",
+  "box": [
+   -0.81,
+   0,
+   3.78,
+   0.81,
+   3,
+   4.15
+  ],
+  "tris": 444,
+  "regions": [
+   0,
+   1,
+   3
+  ]
+ }
+}

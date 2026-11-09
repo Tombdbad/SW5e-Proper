@@ -61,6 +61,10 @@ export const HAIR_FILE = TOUCH ? "/figures/hair.lo.glb" : "/figures/hair.glb";
 // The blasters and their scopes (2026-11-05, tools/blender/build-weapons.py): `gun_<design>` and `scope_<size>`, each with its regions; the sockets are in shared/art/weaponKit.json
 // The architecture kit (2026-11-05, tools/blender/build-architecture.py): `crown_<family>`, `portal_<family>` and `relief_<name>`, each with its regions
 export const ARCH_FILE = "/figures/architecture.glb";
+// The modular building kit (2026-11-09, built in Mixar, interiors/modular.ts): `ext_<pack>_<piece>`, each with texture coordinates (a repeat every two squares), occlusion and regions
+export const MODULAR_FILE = "/figures/modular_ext.glb";
+// and its interior half (2026-11-09): `int_<style>_bay_<kind>` curved wall bays and `int_corr_<family>_arc<degrees>` corridor arcs, loaded only once a round room asks for them
+export const MODULAR_INT_FILE = "/figures/modular_int.glb";
 export const WEAPON_FILE = TOUCH ? "/figures/weapons.lo.glb" : "/figures/weapons.glb";
 // The heads of the species that are not a person's face with something added (2026-11-05, tools/blender/build-species.py): `sphead_<key>` (Mon Calamari,
 // Rodian, Trandoshan, Besalisk, Sullustan, Toydarian; texture coordinates into textures/figure/species, the finish `species`), and what grows out of a head:
@@ -153,6 +157,9 @@ const faces = shelf(HEAD_FILE, piecesOf);
 const hairs = shelf(HAIR_FILE, piecesOf);
 const guns = shelf(WEAPON_FILE, piecesOf);
 const arch = shelf(ARCH_FILE, piecesOf);
+// (the file's meshes are named `sw5e_ext_...`: the prefix says whose they are, the code asks for `ext_...`)
+const modularInt = shelf(MODULAR_INT_FILE, (scene) => Object.fromEntries(Object.entries(piecesOf(scene)).map(([n, p]) => [n.replace(/^sw5e_/, ""), p])) as CreatureParts);
+const modular = shelf(MODULAR_FILE, (scene) => Object.fromEntries(Object.entries(piecesOf(scene)).map(([n, p]) => [n.replace(/^sw5e_/, ""), p])) as CreatureParts);
 const kinds = shelf(SPECIES_FILE, piecesOf);
 const hulls = shelf(SHIP_FILE, piecesOf);
 export const loadBody = people.load;
@@ -180,6 +187,13 @@ export const setGunParts = guns.set;
 export const archParts = arch.get;
 export const useArchParts = arch.use;
 export const setArchParts = arch.set;
+// The modular building kit's pieces, once they are in
+export const modParts = modular.get;
+export const useModParts = modular.use;
+export const setModParts = modular.set;
+export const modIntParts = modularInt.get;
+export const useModIntParts = modularInt.use;
+export const setModIntParts = modularInt.set;
 // The species' own heads and the horns and head-tails, once they are in
 export const speciesParts = kinds.get;
 export const useSpeciesParts = kinds.use;

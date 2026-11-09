@@ -17,6 +17,9 @@ export interface Pack {
 const SPACE = "kenney-space";
 const STATION = "kenney-station";
 const FURNITURE = "kenney-furniture";
+// This project's own pieces (2026-11-09, built in Mixar, vertex-coloured like the converted packs and turned into the room's palette the same way): bars and booths, beds and bunks,
+// a medcentre's bed and tank, a workshop's bench, cart and rack, a throne room's dais. They stand in place of the kits' where a room asks for the same name.
+const MOD = "mixar-modular";
 const CONSOLES = Object.fromEntries(["Console", "Monitoring console", "Guard console", "Navigation console", "Terminal", "Data terminal", "Information terminal", "Desk"].map((n) => [n, `${SPACE}/desk_computer`]));
 
 export const PACKS = {
@@ -25,13 +28,19 @@ export const PACKS = {
   station: {
     tone: "imperial",
     walls: true,
-    pieces: { Bed: `${STATION}/bed-double`, Table: `${STATION}/table`, "Low table": `${FURNITURE}/tableCoffeeSquare`, Couch: `${FURNITURE}/loungeSofa`, Cabinet: `${STATION}/container-tall`, Chair: `${STATION}/chair-armrest-headrest` },
+    pieces: { Bed: `${STATION}/bed-double`, Table: `${STATION}/table`, "Low table": `${FURNITURE}/tableCoffeeSquare`, Couch: `${FURNITURE}/loungeSofa`, Cabinet: `${STATION}/container-tall`, Chair: `${STATION}/chair-armrest-headrest`, Dais: `${MOD}/palace_f_dais`, Bench: `${MOD}/palace_f_bench_long` },
   },
   // Servants and residents: the Furniture Kit in the frontier palette drawn from the world's walls (dust, rust and sand)
   furniture: {
     tone: "frontier",
     world: true,
-    pieces: { Bed: `${FURNITURE}/bedSingle`, Couch: `${FURNITURE}/loungeSofa`, "Low table": `${FURNITURE}/tableCoffeeSquare`, Table: `${FURNITURE}/table`, Cabinet: `${FURNITURE}/cabinetBedDrawer`, Bunk: `${FURNITURE}/bedBunk` },
+    pieces: { Bed: `${MOD}/living_bed`, Couch: `${FURNITURE}/loungeSofa`, "Low table": `${FURNITURE}/tableCoffeeSquare`, Table: `${FURNITURE}/table`, Cabinet: `${MOD}/living_wardrobe`, Bunk: `${MOD}/living_bunk`, Shelving: `${MOD}/living_shelf_unit` },
+  },
+  // Bars, cantinas and common rooms: the counter with its stools' height, the round tables, a booth, a jukebox and a stage, in the frontier palette drawn from the world's walls
+  cantina: {
+    tone: "frontier",
+    world: true,
+    pieces: { "Bar counter": `${MOD}/cantina_bar_straight`, Table: `${MOD}/cantina_table_round`, "Sabacc table": `${MOD}/cantina_table_round`, Booth: `${MOD}/cantina_booth_seat`, "Drink dispenser": `${MOD}/cantina_jukebox`, Bandstand: `${MOD}/cantina_stage`, Bed: `${MOD}/living_bed` },
   },
   // Workshops, depots and hangars: station walls and the Space Kit's machines in steel with hazard yellow
   industrial: {
@@ -49,8 +58,9 @@ export const PACKS = {
       "Vent stack": `${SPACE}/chimney`,
       "Pipe run": `${SPACE}/pipe_straight`,
       "Command chair": `${SPACE}/desk_chair`,
-      Workbench: `${STATION}/table-large`,
-      "Tool cart": `${STATION}/table-inset-small`,
+      Workbench: `${MOD}/tech_workbench`,
+      "Tool cart": `${MOD}/work_tool_cart`,
+      "Tool rack": `${MOD}/work_parts_rack`,
       Locker: `${STATION}/container-tall`,
       Footlocker: `${STATION}/container`,
     },
@@ -65,7 +75,7 @@ export const PACKS = {
   medical: {
     tone: "medical",
     walls: true,
-    pieces: { "Medical bed": `${STATION}/bed-single`, "Supply cabinet": `${STATION}/container-tall`, "Instrument cart": `${STATION}/table-inset-small`, "Bacta tank": `${SPACE}/machine_barrelLarge`, ...CONSOLES },
+    pieces: { "Medical bed": `${MOD}/med_med_bed`, "Supply cabinet": `${MOD}/med_supply_cabinet`, "Instrument cart": `${MOD}/work_tool_cart`, "Bacta tank": `${MOD}/med_bacta_tank`, ...CONSOLES },
   },
   // Ships and stations: the Space Station Kit as its makers drew it, in gunmetal blue with orange
   hull: {
@@ -88,6 +98,7 @@ export const hasWalls = (id: PackId): boolean => !!(PACKS[id] as Pack).walls;
 const ROOMS: [RegExp, PackId][] = [
   [/bedchambers|guest rooms|palatial suite|audience|dignitary|grand hall|^hall$/i, "station"],
   [/servants|quarters|apartments|tenement|residence|booth|\bden\b|rooming/i, "furniture"],
+  [/main bar|cantina|\bbar\b|common room|commons|dance floor|gambling|gaming floor|high-stakes|lounge|salon|dining/i, "cantina"],
 ];
 const BUILDINGS: [RegExp, PackId][] = [
   [/^(palace|estates|manor house|royal hangar)$/, "station"],
@@ -111,11 +122,35 @@ export function packOf(roomName: string, buildingType = ""): PackId | undefined 
 // share a wall must not each draw it in its own texture: 2026-11-01, the user)
 export const wallPackOf = (buildingType = ""): PackId | undefined => packOf("", buildingType);
 
+// What the project's own pieces are called in the room plans (2026-11-09): any room, with a pack or none, draws these by their name where its pack has no piece of the name. The
+// kits' pieces (a pack's `pieces`) win where a pack names one; these fill in the rest, in the pieces' own colours (a room with no pack) or the pack's palette (one with)
+export const OWN: Record<string, string> = {
+  "Bar counter": "cantina_bar_straight", Table: "cantina_table_round", "Sabacc table": "cantina_table_round", Booth: "cantina_booth_seat", "Drink dispenser": "cantina_jukebox", Bandstand: "cantina_stage",
+  Stool: "cantina_stool", Banner: "palace_f_banner_long", Brazier: "palace_f_brazier", Statue: "palace_f_statue", Fountain: "palace_f_fountain", Rug: "palace_f_rug_runner", Throne: "palace_f_throne", Dais: "palace_f_dais",
+  "Banquet table": "palace_f_banquet_table", Bench: "living_bench", "Long bench": "palace_f_bench_long",
+  Bed: "living_bed", Bunk: "living_bunk", Cabinet: "living_wardrobe", Shelving: "living_shelf_unit", "Goods shelf": "living_shelf_unit", "Display shelf": "living_shelf_unit", Wardrobe: "living_wardrobe",
+  "Kitchen counter": "living_kitchen_counter", Stove: "living_stove", "Water jar": "living_water_jar", "Floor lamp": "living_floor_lamp", Cushions: "living_cushions", "Mess table": "living_table_long", "Dining table": "living_table_long",
+  Console: "tech_console_desk", "Guard console": "tech_console_desk", "Monitoring console": "tech_console_desk", "Navigation console": "tech_console_desk", Desk: "tech_console_desk", "Console bank": "tech_console_bank",
+  Terminal: "tech_terminal", "Data terminal": "tech_terminal", "Information terminal": "tech_terminal", "Server rack": "tech_server_rack", Locker: "tech_locker_bank", Crate: "tech_crate_small", "Equipment crate": "tech_crate_small", "Crate stack": "tech_crate_large",
+  Workbench: "tech_workbench", "Power coupling": "tech_generator", Generator: "tech_generator", "Command chair": "tech_control_chair", "Security scanner": "tech_scanner_arch", "Cable reel": "tech_cable_reel",
+  "Medical bed": "med_med_bed", "Bacta tank": "med_bacta_tank", "Supply cabinet": "med_supply_cabinet", "Medical cabinet": "med_supply_cabinet", "IV stand": "med_iv_stand", "Privacy screen": "med_privacy_screen", "Medical chair": "med_med_chair", Sink: "med_sink", "Scanner arch": "med_scanner_arch",
+  "Tool cart": "work_tool_cart", "Instrument cart": "work_tool_cart", "Tool rack": "work_parts_rack", "Parts rack": "work_parts_rack", "Parts bin": "work_fuel_drum", "Fuel drum": "work_fuel_drum", Forge: "work_forge", "Engine block": "work_engine_block",
+  "Charging station": "work_droid_charger", "Droid charger": "work_droid_charger", "Vehicle lift": "work_lift_arm", Hoist: "work_hoist", "Tire stack": "work_tire_stack",
+};
+// The same pieces made for a round or oval room's curve (2026-11-09, built in Mixar as arcs of 45 degrees on a circle of radius 3, their backs to the wall): a piece against the wall of a
+// round room is drawn as its curved version where it has one (the squares it stands on are the straight piece's; the curve follows the room's)
+export const CURVED: Record<string, string> = {
+  "Bar counter": "curve_bar", "Sales counter": "curve_counter", "Refreshment stall": "curve_counter", Bench: "curve_bench", Couch: "curve_couch", Shelving: "curve_shelf", "Goods shelf": "curve_shelf", "Display shelf": "curve_shelf", "Wares rack": "curve_shelf",
+  Cabinet: "curve_cabinet", "Supply cabinet": "curve_cabinet", "Medical cabinet": "curve_cabinet", "Display case": "curve_display", Console: "curve_console", "Guard console": "curve_console", "Monitoring console": "curve_console", "Navigation console": "curve_console",
+  Locker: "curve_lockers", Booth: "curve_booth", Sink: "curve_sink", Bandstand: "curve_stage", Dais: "curve_stage", Barricade: "curve_rail", Planter: "curve_planter",
+};
 // The file of a piece in a room's pack (a path under /assets), or undefined where the pack has none
-export function pieceOf(pack: PackId | undefined, name: string): string | undefined {
-  if (!pack) return undefined;
-  const file = (PACKS[pack].pieces as Record<string, string>)[name];
-  return file ? `/assets/${file}.glb` : undefined;
+// (`own` false for a piece that carries stock drawn on it, whose wares are set on the code's shape: interiors/Stock.tsx)
+export function pieceOf(pack: PackId | undefined, name: string, own = true, curved = false): string | undefined {
+  if (curved && own && CURVED[name]) return `/assets/${MOD}/${CURVED[name]}.glb`;
+  const file = pack ? (PACKS[pack].pieces as Record<string, string>)[name] : undefined;
+  if (file) return `/assets/${file}.glb`;
+  return own && OWN[name] ? `/assets/${MOD}/${OWN[name]}.glb` : undefined;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -123,10 +158,10 @@ export function pieceOf(pack: PackId | undefined, name: string): string | undefi
 // ---------------------------------------------------------------------------------------------
 
 // How tall a piece may stand, in squares (a square is a little under two metres); the rest are chest high
-const TALL: [RegExp, number][] = [[/reactor core/i, 2], [/mast|chimney|vent stack/i, 2.2], [/tank/i, 1.5], [/locker|cabinet|bookcase/i, 1.3], [/bed|bunk|couch|table|bench|desk|workbench/i, 0.6], [/console|terminal/i, 0.9]];
+const TALL: [RegExp, number][] = [[/statue|banner|hoist/i, 2.2], [/server rack|forge|lift|scanner/i, 1.8], [/floor lamp|brazier|iv stand|privacy screen/i, 1.4], [/rug|cushions/i, 0.1], [/bar counter|booth|stool|kitchen|stove|sink|cart/i, 0.8], [/reactor core/i, 2], [/mast|chimney|vent stack/i, 2.2], [/tank/i, 1.5], [/locker|cabinet|bookcase/i, 1.3], [/bed|bunk|couch|table|bench|desk|workbench/i, 0.6], [/console|terminal/i, 0.9]];
 export const maxHeightOf = (name: string) => TALL.find(([m]) => m.test(name))?.[1] ?? 1;
 // Pieces that are drawn longer to fill a long footprint (a counter, a bench, a run of pipe) rather than repeated
-export const stretches = (name: string) => /table|bench|workbench|desk|counter|pipe run|shelving|dais/i.test(name) && !/low table/i.test(name);
+export const stretches = (name: string) => /table|bench|workbench|desk|counter|pipe run|shelving|dais|banner|rug|console bank|parts rack/i.test(name) && !/low table|sabacc/i.test(name);
 
 // Which way a piece on the squares `a` (corner `x`,`y`, size `w` by `h`) in a room `width` by `height` faces: its back to the
 // wall it stands against, so a console on the west wall looks east. Pieces in the open face south, as they are drawn.

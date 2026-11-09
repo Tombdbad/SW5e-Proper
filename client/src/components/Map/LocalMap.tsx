@@ -25,7 +25,7 @@ import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, Roc
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf, wallPackOf } from "./interiors/packs";
 import { loadModel } from "./interiors/assets";
-import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
+import { PackWalls, cornerCentre, CORNER_START, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { beginSwing, kickOf, motion, nowSeconds, climbPhase, mountPlace, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
@@ -42,11 +42,12 @@ import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
+import { extPackOf, roofPropOf, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -1185,7 +1186,7 @@ function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: 
 
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal, deep }: { deep?: number; portal?: { family: Family; wall: string }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal, deep }: { deep?: number; portal?: { family: Family; wall: string; pack?: ExtPack | null }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   // A cave's ways (2026-10-30, the user: "The entry to caves (a standard door) looks all wrong"): no frame and no leaf; the way out is an
@@ -1205,7 +1206,9 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint
   return (
     <>
       <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
-      {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} position={[0, 0, 0.13]} />}
+      {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} pack={portal.pack} position={[0, 0, 0.13]} />}
+      {/* (what shades the door from the street, by the pack: the desert's awning on poles, the frontier's canvas) */}
+      {portal?.pack && isDoor && !bend && awningOf(portal.pack) && <ModPiece name={awningOf(portal.pack)!} pack={portal.pack} wall={portal.wall} position={[0, 0, 0.02]} />}
       {isDoor && <DoorVoid style={style} bend={bend} deep={deep} />}
       {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} tint={tint} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
@@ -1514,7 +1517,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               const [x, z] = cornerCentre(c, width, height);
               return (
                 <group key={`corner${c.corner}:${c.from}`} position={[x, 0, z]}>
-                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} from={c.from} to={c.to} color={tint} wall={wallTexture} /></Solids>
+                  {/* (a ring of a round room's curve: the interior kit's bays, bent to it, in the style of the building; the plain ring stands until they are in) */}
+                  {c.r >= INTERIOR_BAY_MIN_R && !rocky ? (
+                    <Solids><ModBays bays={bayRing(c.r, CORNER_START[c.corner], c.from, c.to)} style={interiorStyleOf(wallPack, biome ?? "")} wall={tint} wallH={wallH} fallback={<CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} from={c.from} to={c.to} color={tint} wall={wallTexture} />} /></Solids>
+                  ) : (
+                    <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} from={c.from} to={c.to} color={tint} wall={wallTexture} /></Solids>
+                  )}
                 </group>
               );
             });
@@ -1522,7 +1530,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               <>
                 {wallLook && wallPack && hasWalls(wallPack) && !rocky ? (
                   <>
-                    <PackWalls runs={standing} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={wallLook!} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
+                    <PackWalls runs={standing} corners={cornerList.filter((c) => c.r < INTERIOR_BAY_MIN_R)} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={wallLook!} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
+                    {corner.filter((_, i) => cornerList[i].r >= INTERIOR_BAY_MIN_R)}
                     {solid(railed)}
                   </>
                 ) : <>{plain}{corner}</>}
@@ -1569,7 +1578,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
                   <CurvedPiece kind={curvedKind(a.name)!} span={ringSpan(a, width, height)!} width={width} height={height} color={look?.wood ?? "#6b5a48"} trim={look?.metal ?? "#9aa3ad"} />
                 </group>
               ) : <>
-                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height, !!plan?.shape)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height, !!plan?.shape)} round={!!plan?.shape} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
                 {/* A fighting beast in its pen (an arena's pens: models.tsx draws the cage) */}
                 {a.name === "Beast pen" && <group position={[a.w / 2, 0.06, a.h / 2]} rotation={[0, hue(a.id) % 6, 0]}><Figure kind="beast" ring="#9ca3af" name={PEN_BEASTS[hue(a.id) % PEN_BEASTS.length]} /></group>}
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height, !!plan?.shape)} />}
@@ -3313,7 +3322,20 @@ function DistanceDetail() {
   return null;
 }
 // (the trees and rocks of the open ground are the asset library's, see `ambientBlockers`: what is here stands about the streets)
-const DECOR: Record<string, string[]> = { desert: ["mast"], ice: ["ice"], forest: ["lamp", "crate"], jungle: ["lamp", "crate"], swamp: ["crate", "lamp"], temperate: ["lamp", "crate"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "crate"], volcanic: ["crate", "mast"], barren: ["crate", "mast"] };
+// What stands about the streets and yards of each world (2026-11-09): the code's own street pieces, and the modular kit's (a kind "mod:ext_<pack>_<piece>", models.tsx Decor): vaporators,
+// tin water tanks, barrels, crate stacks and signposts on the desert and rough worlds, planters and columns on the temperate, antennas and pipes in the cities, tanks, stacks and cranes
+// on the barren and volcanic, pods and spires on the sea and gas worlds
+const FRONTIER_YARD = ["mod:ext_frontier_barrel", "mod:ext_frontier_crate_stack", "mod:ext_frontier_sign_post", "mod:ext_frontier_water_tank"];
+const DECOR: Record<string, string[]> = {
+  desert: ["mast", "mod:ext_desert_vaporator", "mod:ext_desert_vaporator", ...FRONTIER_YARD],
+  ice: ["ice", "mod:ext_industrial_tank", "mod:ext_industrial_pipe_vertical", "mod:ext_frontier_crate_stack"],
+  forest: ["lamp", "crate", ...FRONTIER_YARD], jungle: ["lamp", "crate", ...FRONTIER_YARD], swamp: ["crate", "lamp", ...FRONTIER_YARD],
+  temperate: ["lamp", "crate", "mod:ext_classical_planter", "mod:ext_classical_column", "mod:ext_frontier_barrel", "mod:ext_frontier_sign_post"],
+  urban: ["lamp", "crate", "kiosk", "camera", "mod:ext_deco_antenna", "mod:ext_industrial_pipe_vertical", "mod:ext_frontier_barrel", "mod:ext_frontier_crate_stack"],
+  "gas giant": ["lamp", "crate", "mod:ext_hull_pod", "mod:ext_hull_spire"], ocean: ["lamp", "crate", "mod:ext_hull_pod", "mod:ext_hull_spire"],
+  volcanic: ["crate", "mast", "mod:ext_industrial_tank", "mod:ext_industrial_stack", "mod:ext_industrial_crane", "mod:ext_frontier_barrel"],
+  barren: ["crate", "mast", "mod:ext_industrial_tank", "mod:ext_industrial_stack", "mod:ext_industrial_crane", "mod:ext_frontier_barrel"],
+};
 
 // The square outside a wall that something set in it opens on to (on the building's grid)
 const beyond = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
@@ -4960,6 +4982,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const style = styleOf(wall === STEEL ? "station" : biome, building.type);
   // (what stands on its roof and frames its ways in: interiors/architecture.ts)
   const family = familyOf(wall === STEEL ? "station" : biome, building.type);
+  // (and the modular kit's pack for this world and kind of building: interiors/modular.ts; its textures, roof props, door awnings and cornices)
+  const pack = extPackOf(family, wall === STEEL ? "station" : biome, building.type);
   // How far each outside corner of a room is rounded (north-west, north-east, south-east, south-
   // west): a corner another room touches at the same height stays square, and so does one with a
   // door or window in the wall beside it (it is cut back to the nearest one)
@@ -5198,6 +5222,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const lift = levelY(l);
           const roof = hue(room.id);
           const crown = crownOf(family, roof, Math.min(l.width, l.height));
+          const prop = pack ? roofPropOf(pack, roof, Math.min(l.width, l.height)) : null;
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
           const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
           const rail = (sides = "nesw") => (
@@ -5358,7 +5383,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     {building.type === "cave" && l.mask && !form ? (
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
-                    <KitRoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)}
+                    <KitRoomBlock pack={pack} w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)}
                       holes={!opened && !form && !l.shape && !l.mask ? l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => ({
                         // (cut through the wall where the frame stands: the same openings drawn below, the same outline the frame is made for)
                         side: a.side as "n" | "e" | "s" | "w",
@@ -5373,18 +5398,24 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                         storeys,
                       } : undefined} />
                     )}
+                    {/* The pack's wall modules on the plain stretches of the walls of a rectangular building (interiors/modular.ts facadePlan) */}
+                    {pack && !opened && !form && !l.shape && !l.mask && building.type !== "cave" && body > 2 && (
+                      <ModFacade pack={pack} wall={wall} w={l.width} d={l.height} height={body} plan={facadePlan(pack, l.width, l.height, radiiOf(room), l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || a.kind === "door" || a.kind === "secret")).map((a) => ({ side: a.side as "n" | "e" | "s" | "w", at: a.side === "n" || a.side === "s" ? a.x + 0.5 : a.y + 0.5 })))} />
+                    )}
                     {!opened && !form && !(building.type === "cave" && l.mask) && <AimBox at={[l.width / 2, body / 2, l.height / 2]} size={[l.width, body, l.height]} />}
                     {/* out to the curve of a round room it stands against */}
                     {!(building.type === "cave" && l.mask) && meetsOf(room, rooms).map((m, i) => <MeetFill key={`meet${i}`} meet={m} width={l.width} height={l.height} y={0} h={body} color={wallColor} wall={wallSet(wallPackOf(building.type), biome)} />)}
                   </group>
                   {!opened && !form && !roofed.has(room.id) && !(building.type === "cave" && l.mask) && (
                     <>
+                      {pack && corniceOf(pack) && <RoofEdge w={l.width} d={l.height} y={body - 0.02} piece={corniceOf(pack)!} pack={pack} wall={wall} />}
                       {/* What stands on the roof */}
                       {/* (a tower of a palace is capped with a spire, its great hall with a dome) */}
                       {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
                         : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
                         : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
-                        : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} position={crown.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={Math.min(l.width, l.height) * crown.fit} />
+                        : pack && prop ? <ModPiece name={prop.piece} pack={pack} wall={wall} position={prop.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={propScale(prop, Math.min(l.width, l.height))} />
+                        : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} pack={pack} position={crown.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={Math.min(l.width, l.height) * crown.fit} />
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -5406,7 +5437,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} deep={!form && !l.shape && !l.mask && Math.min(l.width, l.height) > 2 * BLOCK_WALL + 0.2 ? BLOCK_WALL - 0.01 : 0} />
+                    <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall, pack } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} deep={!form && !l.shape && !l.mask && Math.min(l.width, l.height) > 2 * BLOCK_WALL + 0.2 ? BLOCK_WALL - 0.01 : 0} />
                     {a.kind === "window" && !form && lit(room) && <WindowGlow style={style} pane={a.pane} bend={place.bend} />}
                   </group>
                   {a.kind === "window" && !form && lit(room) && lift < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}
@@ -5460,7 +5491,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {street.decor.map((d, i) => (
               <group key={i} position={[d.x + 0.5, 0, d.y + 0.5]} rotation={[0, d.rot, 0]}>
                 <group position={[-0.5, 0, -0.5]}>
-                  <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
+                  <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} wall={wall} />
                   {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} label={d.kind === "kiosk" ? "Info kiosk" : "Security camera"} />}
                 </group>
               </group>

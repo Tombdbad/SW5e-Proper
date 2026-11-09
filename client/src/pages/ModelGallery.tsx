@@ -4,7 +4,9 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { crownOf, portalOf, type Family } from "../components/Map/interiors/architecture";
-import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, ArchPiece, Opening, DomeRoof, styleOf, bakedCount, hue, UNITS_PER_M, SHIP_KIT, type GunAim } from "@/components/Map/models";
+import { awningOf, corniceOf, facadePlan, propScale, roofPropOf, type ExtPack } from "../components/Map/interiors/modular";
+import MOD_KIT from "@shared/art/modularKit.json";
+import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, KitRoomBlock, ArchPiece, ModPiece, ModIntPiece, ModFacade, RoofEdge, Opening, DomeRoof, styleOf, bakedCount, hue, UNITS_PER_M, SHIP_KIT, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -16,7 +18,7 @@ import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
 import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UnderSea, type StallState } from "@/components/Map/siteAssets";
 import { RoomShell } from "@/components/Map/LocalMap";
 import { useModels } from "@/components/Map/interiors/assets";
-import { packOf } from "@/components/Map/interiors/packs";
+import { OWN, packOf } from "@/components/Map/interiors/packs";
 import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
@@ -821,6 +823,61 @@ export default function ModelGallery() {
                 </group>
               );
             })}
+          </>
+        )}
+        {/* ?section=modular (2026-11-09): the six packs of the modular building kit, each a block with the roof props, the cornice, the door frame and awning its world gives it (interiors/modular.ts),
+            and under them every piece of the pack in a row, in the pack's textures */}
+        {section === "modular" && (
+          <>
+            {(["desert", "classical", "deco", "industrial", "hull", "frontier"] as ExtPack[]).map((pack, i) => {
+              const wall = { desert: "#c9a56e", classical: "#e4dccb", deco: "#8a94a3", industrial: "#7a8089", hull: "#b8c4cf", frontier: "#9b8a6c" }[pack];
+              const family: Family = ({ desert: "adobe", classical: "domed", deco: "deco", industrial: "bunker", hull: "hull", frontier: "adobe" } as const)[pack];
+              return (
+                <group key={pack} position={[(i % 3) * 12 - 12, 0, Math.floor(i / 3) * 22 - 8]}>
+                  <RoomBlock w={7} d={5} height={2.6} radii={[0, 0, 0, 0]} wall={wall} roof="#4a525c" parapet />
+                  <ModFacade pack={pack} wall={wall} w={7} d={5} height={2.6} plan={facadePlan(pack, 7, 5, [0, 0, 0, 0], [{ side: "s", at: 3.5 }])} />
+                  {corniceOf(pack) && <RoofEdge w={7} d={5} y={2.58} piece={corniceOf(pack)!} pack={pack} wall={wall} />}
+                  {[0, 1, 2].map((n) => { const k = roofPropOf(pack, n, 5); return k ? <ModPiece key={n} name={k.piece} pack={pack} wall={wall} position={k.corner ? [n === 1 ? 1.4 : 5.6, 2.65, n === 1 ? 1.1 : 3.9] : [3.5, 2.65, 2.5]} scale={propScale(k, 5)} /> : null; })}
+                  <group position={[3.5, 0, 5.0]}>
+                    <Opening kind="door" color="#f59e0b" style={styleOf(pack === "desert" || pack === "frontier" ? "desert" : pack === "deco" ? "urban" : pack === "hull" ? "station" : pack === "industrial" ? "volcanic" : "temperate")} />
+                    <ArchPiece name={portalOf(family)} wall={wall} pack={pack} position={[0, 0, 0.13]} />
+                    {awningOf(pack) && <ModPiece name={awningOf(pack)!} pack={pack} wall={wall} position={[0, 0, 0.02]} />}
+                  </group>
+                  <Label at={[3.5, 0.1, 6.8]} text={pack} />
+                  {(() => {
+                    const names = Object.keys(MOD_KIT).filter((n) => n.startsWith(`ext_${pack}_`));
+                    return <Rows z={9} items={names} per={8} gap={3.6} name={(n) => n.replace(`ext_${pack}_`, "")} draw={(n) => <group position={[-0.2, 0, 0]}><ModPiece name={n} pack={pack} wall={wall} /></group>} />;
+                  })()}
+                </group>
+              );
+            })}
+          </>
+        )}
+        {/* ?section=furnishing (2026-11-09): every piece of the project's own furniture by the name a room plan gives it (interiors/packs.ts OWN), then the street pieces of each world (LocalMap DECOR) */}
+        {section === "furnishing" && (
+          <>
+            <Rows items={Object.keys(OWN)} per={10} gap={3.4} name={(n) => n} draw={(n) => <group position={[-1, 0, -0.5]}><Furniture name={n} w={2} h={1} seed={n.length} /></group>} />
+            <Rows z={26} items={["mod:ext_desert_vaporator", "mod:ext_frontier_barrel", "mod:ext_frontier_crate_stack", "mod:ext_frontier_sign_post", "mod:ext_frontier_water_tank", "mod:ext_classical_planter", "mod:ext_classical_column", "mod:ext_deco_antenna", "mod:ext_industrial_pipe_vertical", "mod:ext_industrial_tank", "mod:ext_industrial_stack", "mod:ext_industrial_crane", "mod:ext_hull_pod", "mod:ext_hull_spire"]} per={7} gap={3.4} name={(n) => n.replace("mod:ext_", "")} draw={(n) => <Decor kind={n} seed={1} />} />
+          </>
+        )}
+        {/* ?section=drums (2026-11-09): a round building of each pack, built of the pack's curved wall bays (interiors/modular.ts, KitRoomBlock), a door at the front and windows between, at three radii */}
+        {section === "drums" && (
+          <>
+            {(["desert", "classical", "deco", "industrial", "hull", "frontier"] as ExtPack[]).flatMap((pack, i) => [3, 4.5, 6].map((r, j) => {
+              const wall = { desert: "#c9a56e", classical: "#e4dccb", deco: "#8a94a3", industrial: "#7a8089", hull: "#b8c4cf", frontier: "#9b8a6c" }[pack];
+              return (
+                <group key={`${pack}${r}`} position={[j * 15 - 15, 0, i * 14 - 20]}>
+                  <KitRoomBlock pack={pack} tint={wall} w={r * 2} d={r * 2} height={3.4} radii={[r, r, r, r]} wall={wall} roof="#4a525c" drum={{ doors: [Math.PI / 2], windows: [0, Math.PI, -Math.PI / 2], adobe: false, storeys: 1 }} />
+                  <Label at={[r, 0.1, r * 2 + 1]} text={`${pack} r${r}`} />
+                </group>
+              );
+            }))}
+            {/* ring corridors of the interior kit: a ring of 45-degree arcs with a spoke every other piece, and a ring of four quarter arcs (the planner has no ring corridors yet: interiors/modular.ts) */}
+            {[["imperial", "imperial", -12], ["hull", "republic", 14]].map(([fam, style, x]) => (
+              <group key={fam as string} position={[x as number, 0, 30]}>
+                {Array.from({ length: 8 }, (_, k) => <ModIntPiece key={k} name={`int_corr_${fam}_arc45${k % 2 ? "" : "_spoke"}`} style={style as "imperial" | "republic"} wall="#8a94a3" rotation={[0, -k * (Math.PI / 4), 0]} />)}
+              </group>
+            ))}
           </>
         )}
         {section === "places" && (
