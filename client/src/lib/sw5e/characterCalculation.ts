@@ -886,6 +886,20 @@ const weaponReach = (properties: string[]) => {
   return { reach: properties.some((p) => /^reach/i.test(p)) ? 10 : 5, ...(range ? { range: [Number(range[1]), Number(range[2])] as [number, number] } : {}) };
 };
 
+// Weapon proficiency a species or feat names (audit T-015): "You have proficiency with the heavy pistol and sniper rifle", "proficiency with all
+// blasters". "Of your choice" sentences are left out: the choice is not stored on a character.
+const grantedWeapon = (character: any, weapon: { name: string; weaponClassification?: string }): boolean => {
+  // ("all" covers simple and martial weapons; exotic ones are learned one by one)
+  const kind = (weapon.weaponClassification ?? "").match(/^(?:Simple|Martial)(\w+)$/)?.[1]?.toLowerCase();
+  const name = weapon.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return characterFeatures(character).some((f) =>
+    (f.description.match(/proficien(?:t|cy)\s+(?:with|in)\s+[^.:\n]*/gi) ?? []).some((sentence) => {
+      const text = sentence.toLowerCase();
+      if (/of your choice/.test(text)) return false;
+      return (!!kind && new RegExp(`\\ball ${kind}s\\b`).test(text)) || new RegExp(`(?<=^|[,;] |\\band |\\bthe |\\bwith |\\bin |\\bas well as |\\bor )${name}s?\\b`).test(text);
+    }));
+};
+
 export function carriedWeapons(character: any): CarriedWeapon[] {
   const scores = character?.abilityScores ?? {};
   const str = getAbilityModifier(scores.strength ?? 10);
@@ -952,7 +966,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     // Smart ("smart (15/+2)"): the weapon's own Dexterity score and proficiency bonus in place of the wielder's
     const smart = (e.properties ?? []).map((p) => p.match(/^smart \((\d+)\/\+?(\d+)\)/i)).find(Boolean);
     const modifier = smart ? getAbilityModifier(Number(smart[1])) : ability === "dexterity" ? dex : str;
-    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e);
+    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e) || grantedWeapon(character, e);
     const [dice, damageType = ""] = e.damage!.split(" ");
     return {
       name,

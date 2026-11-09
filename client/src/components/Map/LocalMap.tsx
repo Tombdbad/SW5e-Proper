@@ -439,7 +439,8 @@ const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: 
   const fontSize = eyes ? size * 0.32 : size;
   return (
     <Billboard position={at}>
-      <Text fontSize={fontSize} color={color} anchorX="center" anchorY="middle" outlineWidth={fontSize * 0.08} outlineColor="#000000">
+      {/* (audit T-007) a long name wraps in two or three lines, about twelve letters' height wide, instead of running off a phone screen */}
+      <Text fontSize={fontSize} color={color} anchorX="center" anchorY="middle" textAlign="center" maxWidth={fontSize * 12} outlineWidth={fontSize * 0.08} outlineColor="#000000">
         {children}
       </Text>
     </Billboard>

@@ -16,6 +16,8 @@ Checks after Batch 3: `tsc --noEmit` clean; `vite build` to a scratch folder 0 w
 
 T-014 fixed (section 13): archetype caster tables. T-019 decided: the Downtime tab stays hidden (no change). The Phase 8 fact-check runs in its own session (audit-phase-8-independen); read AUDIT/08_factcheck_2026-11-08.md when it is done.
 
+T-015 fixed (species and feat weapon proficiency, `grantedWeapon`; choices not applied) and T-007 exit label wraps (`Label` maxWidth; not seen on a phone): TRIAGE section 14. T-016/T-012 wait for the user to pick families; T-028 needs the phone.
+
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
 2. Batches 4 to 6 as in `AUDIT/TRIAGE.md` section 2. Run `08_factcheck.md` on one or two fixed items.
