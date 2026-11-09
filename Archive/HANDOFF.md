@@ -18,6 +18,8 @@ T-014 fixed (section 13): archetype caster tables. T-019 decided: the Downtime t
 
 T-015 fixed (species and feat weapon proficiency, `grantedWeapon`; choices not applied) and T-007 exit label wraps (`Label` maxWidth; not seen on a phone): TRIAGE section 14. T-016/T-012 wait for the user to pick families; T-028 needs the phone.
 
+Trainer quests (the user, 2026-11-09): T-015 and T-016 grow into Masters who teach weapons (stage 1) and powers (stage 2) through a trail (3 systems + 3 levels, rumour, informant, Master) and 5 level-gated trials; replaces the paid master encounter and the weapon Training downtime. Design draft with web-sourced inspiration: AUDIT/TRAINER_QUESTS_DESIGN.md (open points section 8). NOT built: waiting for the user.
+
 ## Next steps (from TRIAGE, in order)
 1. Batch 1 needs the user's decisions: backup location and schedule (T-001), LAN versus Tailscale (T-002), where HANDOFF.md lives (T-005), git email (T-042).
 2. Batches 4 to 6 as in `AUDIT/TRIAGE.md` section 2. Run `08_factcheck.md` on one or two fixed items.
