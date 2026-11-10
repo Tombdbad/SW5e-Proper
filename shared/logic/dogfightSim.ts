@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------------------------
 import { headingOf, shipDamage, type Vec3 } from "./index";
 import {
-  AIR, ARENA, CLASSES, STATION, classIndex, clamp, foeSheet, frameOf, isCapital, makeVessel, toLocal, toWorld, turned, vadd, vdist, vdot, vlen, vmul, vnorm, vsub, wrapAngle,
+  AIR, ARENA, CLASSES, airGradient, airGround, STATION, classIndex, clamp, foeSheet, frameOf, isCapital, makeVessel, toLocal, toWorld, turned, vadd, vdist, vdot, vlen, vmul, vnorm, vsub, wrapAngle,
   type Dogfight, type DogfightInput, type Fx, type Gun, type HullPlane, type HullVolume, type Interior, type Part, type Projectile, type Vessel,
 } from "./dogfight";
 import { TUNNEL, clearanceAt, crossAxes, doorHole, doorOpen, makeTunnel } from "./tunnel";
@@ -432,7 +432,29 @@ function advance(v: Vessel, h: number) {
 
 // ---- In the air of a planet (house rules, dogfight.ts): the ground, bombs that fall, the pieces on the ground and the bombers' runs
 // Where a bomb let go at `p` with velocity `vel` meets the ground, and when
-export function bombFall(p: Vec3, vel: Vec3, gravity: number): { at: Vec3; t: number } {
+// (over flat ground at height 0, or over the land: `ground` gives its height at a point, and the fall is followed in tenths of a second to the first
+// time the bomb is under it)
+export function bombFall(p: Vec3, vel: Vec3, gravity: number, ground?: (x: number, z: number) => number): { at: Vec3; t: number } {
+  if (ground) {
+    const at = (t: number): Vec3 => [p[0] + vel[0] * t, p[1] + vel[1] * t - 0.5 * gravity * t * t, p[2] + vel[2] * t];
+    let lo = 0;
+    for (let t = 0.1; t <= 40; t += 0.1) {
+      const q = at(t);
+      if (q[1] <= ground(q[0], q[2])) {
+        // (the step it struck in, halved a few times)
+        let hi = t;
+        for (let k = 0; k < 6; k++) {
+          const mid = (lo + hi) / 2;
+          const m = at(mid);
+          if (m[1] <= ground(m[0], m[2])) hi = mid;
+          else lo = mid;
+        }
+        const end = at(hi);
+        return { at: [end[0], ground(end[0], end[2]), end[2]], t: hi };
+      }
+      lo = t;
+    }
+  }
   const t = (vel[1] + Math.sqrt(Math.max(0, vel[1] * vel[1] + 2 * gravity * Math.max(0, p[1])))) / gravity;
   return { at: [p[0] + vel[0] * t, 0, p[2] + vel[2] * t], t };
 }
@@ -452,10 +474,13 @@ const bombTarget = (s: Dogfight, v: Vessel) => {
   return left[k % left.length];
 };
 // A heading that keeps a flyer off the ground: up, the harder the lower it is
+// (over the land the ground that counts is the highest under the flyer and ahead of it, a few hundred metres on: a ridge is climbed before it is reached)
 function keepUp(s: Dogfight, v: Vessel, aim: Vec3): Vec3 {
   if (!s.air) return aim;
   const len = vlen(aim) || 1;
-  const low = AIR.floor + v.reach - v.p[1];
+  const [fx, fz] = [Math.cos(v.yaw), Math.sin(v.yaw)];
+  const ground = Math.max(airGround(s, v.p[0], v.p[2]), airGround(s, v.p[0] + fx * 200, v.p[2] + fz * 200), airGround(s, v.p[0] + fx * 420, v.p[2] + fz * 420));
+  const low = ground + AIR.floor + v.reach - v.p[1];
   return low > 0 ? [aim[0], Math.max(aim[1], (len * low) / 25), aim[2]] : aim;
 }
 // A bomber with bombs left flies at its run height toward where its bombs must leave to fall on the target, and lets them go there
@@ -464,7 +489,7 @@ function bomberRun(s: Dogfight, v: Vessel, h: number): boolean {
   const target = s.air && bomb ? bombTarget(s, v) : undefined;
   if (!bomb || !target) return false;
   const rel = bombRelease(v);
-  const fall = bombFall(rel.p, rel.vel, fallOf(s));
+  const fall = bombFall(rel.p, rel.vel, fallOf(s), (x, z) => airGround(s, x, z));
   const miss = vsub(target.p, fall.at);
   const flat = Math.hypot(miss[0], miss[2]);
   // Over the release point: a bomb goes (one a pass: the blast reaches a building it falls beside)
@@ -481,14 +506,14 @@ function bomberRun(s: Dogfight, v: Vessel, h: number): boolean {
   const ahead = vdot(headingOf(v.yaw, 0), vnorm([to[0], 0, to[2]]));
   if (v.ai.breakUntil <= s.t && ahead < 0 && Math.hypot(to[0], to[2]) < 450) v.ai.breakUntil = s.t + 6;
   if (v.ai.breakUntil > s.t) {
-    flyToward(v, keepUp(s, v, [Math.cos(v.yaw), clamp((AIR.bombRun - v.p[1]) / 60, -0.4, 0.4), Math.sin(v.yaw)]), h, v.top * 0.9);
+    flyToward(v, keepUp(s, v, [Math.cos(v.yaw), clamp((AIR.bombRun - (v.p[1] - airGround(s, v.p[0], v.p[2]))) / 60, -0.4, 0.4), Math.sin(v.yaw)]), h, v.top * 0.9);
     return true;
   }
   // Toward the target, at the height of the run (the lead: where the bombs would land is put on it)
   const dx = target.p[0] - v.p[0] + miss[0] * 0.3;
   const dz = target.p[2] - v.p[2] + miss[2] * 0.3;
   const across = Math.hypot(dx, dz) || 1;
-  flyToward(v, keepUp(s, v, [dx, clamp((AIR.bombRun - v.p[1]) / 60, -0.4, 0.4) * across, dz]), h, v.top * 0.9);
+  flyToward(v, keepUp(s, v, [dx, clamp((AIR.bombRun - (v.p[1] - airGround(s, v.p[0], v.p[2]))) / 60, -0.4, 0.4) * across, dz]), h, v.top * 0.9);
   return true;
 }
 function spawnBomb(s: Dogfight, v: Vessel, bomb: Gun, rel: { p: Vec3; vel: Vec3 }) {
@@ -527,6 +552,8 @@ function stepGround(s: Dogfight, v: Vessel, me: Vessel, h: number) {
   v.pitch = 0;
   v.speed = v.top;
   advance(v, h);
+  // (it drives on the ground's face)
+  if (s.air) v.p[1] = airGround(s, v.p[0], v.p[2]) + v.half[1];
   // a flak speeder in a convoy keeps its guns on the party's craft as it drives (the guns turn, not the hull: `aimYaw` for the scene)
 }
 
@@ -536,10 +563,10 @@ function moveFoe(s: Dogfight, v: Vessel, me: Vessel, h: number) {
     v.speed *= 1 - Math.min(1, 0.4 * h);
     if (s.air && !v.ground) {
       v.pitch = Math.max(-1.2, v.pitch - 0.8 * h);
-      if (v.p[1] <= v.half[1]) v.speed = 0;
+      if (v.p[1] <= airGround(s, v.p[0], v.p[2]) + v.half[1]) v.speed = 0;
     }
     if (!v.ground) advance(v, h);
-    if (s.air) v.p[1] = Math.max(v.half[1] * 0.5, v.p[1]);
+    if (s.air && !v.ground) v.p[1] = Math.max(airGround(s, v.p[0], v.p[2]) + v.half[1] * 0.5, v.p[1]);
     return;
   }
   if (v.ground) return stepGround(s, v, me, h);
@@ -547,7 +574,7 @@ function moveFoe(s: Dogfight, v: Vessel, me: Vessel, h: number) {
   if (classIndex(v.cls) <= classIndex("Medium")) {
     if (!bomberRun(s, v, h)) flyToward(v, keepUp(s, v, foeAim(s, v, me)), h, v.top);
     advance(v, h);
-    if (s.air) v.p[1] = Math.max(v.reach, v.p[1]);
+    if (s.air) v.p[1] = Math.max(airGround(s, v.p[0], v.p[2]) + v.reach, v.p[1]);
     return;
   }
   // The larger ships hold course; they turn toward the party only when it is behind them, and back toward the arena if they stray
@@ -778,9 +805,9 @@ function stepShots(s: Dogfight, me: Vessel, h: number, roll: () => number) {
     }
     if (s.air && b.kind === "bomb") b.v = [b.v[0] * (1 - 0.02 * h), b.v[1] - fallOf(s) * h, b.v[2] * (1 - 0.02 * h)];
     b.p = vadd(b.p, vmul(b.v, h));
-    if (s.air && b.p[1] <= 0) {
+    if (s.air && b.p[1] <= airGround(s, b.p[0], b.p[2])) {
       // The ground: a bolt ends, a warhead or a bomb goes off where it strikes
-      b.p = [b.p[0], 0, b.p[2]];
+      b.p = [b.p[0], airGround(s, b.p[0], b.p[2]), b.p[2]];
       if (b.kind !== "bolt") detonate(s, b, null, -1, roll);
       else boom(s, b.p, 0.8, "spark", b.by);
       continue;
@@ -1051,9 +1078,14 @@ function tick(s: Dogfight, raw: DogfightInput, h: number, roll: () => number) {
 
 // The party's craft strikes the ground: pushed back up, levelled, and hurt by how fast it came down (a graze costs nothing)
 function groundStrike(s: Dogfight, me: Vessel) {
-  const floor = me.half[1] + 1;
+  const gnd = airGround(s, me.p[0], me.p[2]);
+  const floor = gnd + me.half[1] + 1;
   if (me.p[1] >= floor) return;
-  const down = -headingOf(me.yaw, me.pitch)[1] * me.speed;
+  // How fast it came at the ground: along the ground's own normal (a hillside struck head on is as hard as a plain struck from above)
+  const [gx, gz] = airGradient(s, me.p[0], me.p[2]);
+  const nl = Math.hypot(gx, 1, gz);
+  const f = headingOf(me.yaw, me.pitch);
+  const down = Math.max(0, (f[0] * gx + f[2] * gz - f[1]) / nl) * me.speed;
   me.p = [me.p[0], floor, me.p[2]];
   if (me.pitch < 0.08) me.pitch = 0.08;
   if (down > AIR.graze && s.bumpWait <= 0) {

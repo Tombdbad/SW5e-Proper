@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRandom } from "../../shared/logic/index";
-import { AIR, SCENARIOS, dogfightStart, type Dogfight, type ScenarioId } from "../../shared/logic/dogfight";
+import { AIR, SCENARIOS, airGround, dogfightStart, type Dogfight, type ScenarioId } from "../../shared/logic/dogfight";
 import { bombFall, bombRelease, dogfightPayout, isDown, partyOf, stepDogfight } from "../../shared/logic/dogfightSim";
 import { partyShip, rows } from "./dogfightBot";
 
@@ -32,8 +32,9 @@ test("four fights in the air, each over the ground of the land with its pieces o
   assert.equal(pieces(strike, "foe", "flak").length, 1);
   // Everything on the ground stands on it; the party's craft starts in the air
   for (const s of [defend, raid, escort, strike]) {
-    for (const v of s.vessels.filter((x) => x.ground)) assert.ok(Math.abs(v.p[1] - v.half[1]) < 0.01, `${v.name} at ${v.p[1]}`);
-    assert.ok(partyOf(s).p[1] > 150);
+    // (the ground is the land's: hills, level under the settlement and along the road)
+    for (const v of s.vessels.filter((x) => x.ground)) assert.ok(Math.abs(v.p[1] - (airGround(s, v.p[0], v.p[2]) + v.half[1])) < 0.01, `${v.name} at ${v.p[1]}`);
+    assert.ok(partyOf(s).p[1] - airGround(s, partyOf(s).p[0], partyOf(s).p[2]) > 150);
   }
 });
 
@@ -106,7 +107,7 @@ test("a convoy drives its road at the convoy's pace", () => {
   const x0 = truck.p[0];
   step(s, 5);
   assert.ok(Math.abs(truck.p[0] - x0 - 5 * AIR.convoy) < 6, `it drove ${truck.p[0] - x0} m`);
-  assert.ok(Math.abs(truck.p[1] - truck.half[1]) < 0.01, "on the ground");
+  assert.ok(Math.abs(truck.p[1] - (airGround(s, truck.p[0], truck.p[2]) + truck.half[1])) < 0.01, "on the ground");
 });
 
 test("a struck convoy: destroyed it is the win; got away it is the loss", () => {

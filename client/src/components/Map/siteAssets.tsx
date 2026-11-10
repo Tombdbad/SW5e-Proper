@@ -766,9 +766,9 @@ const WILD: Record<string, { trees: string[]; shrubs: string[]; boulders: string
 export function raceScenery(biome: string, water = false): RaceScenery & { cover: string[] } {
   const wild = WILD[biome] ?? WILD.temperate;
   const hits = Object.fromEntries(Object.entries(LIBRARY).filter(([, piece]) => piece.hit).map(([key, piece]) => [key, piece.hit!]));
-  if (water) return { trees: [], shrubs: [], boulders: biome === "swamp" ? ["sea_stack", "log", "stump"] : ["sea_stack", "sea_stack", "boulder"], cover: [], hits, crossings: [], sea: true };
+  if (water) return { trees: [], shrubs: [], boulders: biome === "swamp" ? ["sea_stack", "log", "stump"] : ["sea_stack", "sea_stack", "boulder"], cover: [], hits, crossings: [], sea: true, biome };
   // (and what the world's land puts across the course: shared/logic "Skies and landforms")
-  return { ...wild, hits, crossings: biomeSky(biome).crossings };
+  return { ...wild, hits, crossings: biomeSky(biome).crossings, biome };
 }
 
 // The trees of every size have a far model (the same build with `farModel` set)

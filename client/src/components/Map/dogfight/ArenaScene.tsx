@@ -8,14 +8,15 @@ import { Stars } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { ARENA, CLASSES, classIndex, frameOf, isCapital, type Dogfight, type DogfightInput, type Fx, type Projectile, type Vessel } from "@shared/logic/dogfight";
+import { airGround } from "@shared/logic/dogfight";
 import { bombFall, bombRelease, hullPoint, isDown, partVisible, partWorld, stepDogfight } from "@shared/logic/dogfightSim";
-import { AIR } from "@shared/logic/dogfight";
+import { AIR, airTerrain, type AirField } from "@shared/logic/dogfight";
 import { ShipModel } from "../LocalMap";
 import { SpeederModel } from "../models";
 import { raceLook } from "../FlightScene";
 import { PlanetBall, WorldSky } from "../scenery";
 import { useQuality } from "../siteAssets";
-import { skyLook } from "@shared/logic";
+import { skyLook, terrainColorAt } from "@shared/logic";
 import { CapitalShip, type CapitalRig } from "./CapitalShip";
 import { StationInterior } from "./StationInterior";
 import type { Livery } from "./hullSurface";
@@ -76,51 +77,104 @@ function Backdrop({ focus, planet, seed }: { focus: { current: THREE.Vector3 }; 
 }
 
 // The air of a planet: the world's sky (scenery.tsx WorldSky: the dome, the sun, its moons, clouds, and the land on the horizon), kept round
-// the camera, with its haze as the fog; the ground of the land far out to the fog, and the roads the convoys drive
-function AirBackdrop({ biome, roads, seed }: { biome: string; roads: [number, number, number][][]; seed: number }) {
+// the camera, with its haze as the fog; the ground of the land far out to the fog (the terrain of shared/logic/terrain.ts: the biome's own hills,
+// ridges and valleys, weathered, coloured by slope and where the water went, level under a settlement and along the roads the convoys drive)
+function AirBackdrop({ air, roads, seed }: { air: AirField; roads: [number, number, number][][]; seed: number }) {
+  const biome = air.biome;
   const look = raceLook(biome);
   const sky = useMemo(() => skyLook(biome, seed), [biome, seed]);
   const lite = useQuality((q) => q.tier === "lite");
+  const land = useMemo(() => {
+    const t = airTerrain(air.land);
+    // (every other vertex on a device that cannot draw them all)
+    const stride = lite ? 2 : 1;
+    const m = Math.floor((t.n - 1) / stride) + 1;
+    const pos = new Float32Array(m * m * 3);
+    const col = new Float32Array(m * m * 3);
+    const base = new THREE.Color(look.ground);
+    const c = new THREE.Color();
+    for (let j = 0; j < m; j++) {
+      for (let i = 0; i < m; i++) {
+        const [x, z] = [t.x0 + i * stride * t.cell, t.z0 + j * stride * t.cell];
+        const k = (j * m + i) * 3;
+        pos.set([x, t.h[j * stride * t.n + i * stride], z], k);
+        const [r, g, b] = terrainColorAt(t, x, z);
+        // (the look of the world's ground, a little, so that it matches the sky's land on the horizon)
+        c.setRGB(r, g, b).lerp(base, 0.15);
+        col.set([c.r, c.g, c.b], k);
+      }
+    }
+    const index = new Uint32Array((m - 1) * (m - 1) * 6);
+    let q = 0;
+    for (let j = 0; j < m - 1; j++) {
+      for (let i = 0; i < m - 1; i++) {
+        const v = j * m + i;
+        index.set([v, v + m, v + 1, v + 1, v + m, v + m + 1], q);
+        q += 6;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(new THREE.BufferAttribute(index, 1));
+    g.computeVertexNormals();
+    return { geo: g, t };
+  }, [air.land, lite, look]);
+  // The roads: a ribbon along each route laid on the ground (the ground was levelled along it)
+  const ribbons = useMemo(
+    () =>
+      roads.map((route) => {
+        const pts: [number, number][] = [];
+        for (let k = 1; k < route.length; k++) {
+          const [from, to] = [route[k - 1], route[k]];
+          const steps = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[2] - from[2]) / 30));
+          for (let s = 0; s < steps; s++) pts.push([from[0] + ((to[0] - from[0]) * s) / steps, from[2] + ((to[2] - from[2]) * s) / steps]);
+        }
+        pts.push([route[route.length - 1][0], route[route.length - 1][2]]);
+        const pos: number[] = [];
+        const idx: number[] = [];
+        pts.forEach(([x, z], i) => {
+          const [p, q] = [pts[Math.max(0, i - 1)], pts[Math.min(pts.length - 1, i + 1)]];
+          const yaw = Math.atan2(q[1] - p[1], q[0] - p[0]);
+          const [nx, nz] = [-Math.sin(yaw) * 7, Math.cos(yaw) * 7];
+          const y = airGround({ air }, x, z) + 0.7;
+          pos.push(x - nx, y, z - nz, x + nx, y, z + nz);
+          if (i) idx.push(i * 2 - 2, i * 2 - 1, i * 2, i * 2 - 1, i * 2 + 1, i * 2);
+        });
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        g.setIndex(idx);
+        g.computeVertexNormals();
+        return g;
+      }),
+    [roads.length, air.land],
+  );
   const ground = useMemo(() => {
     const c = document.createElement("canvas");
-    c.width = c.height = 256;
+    c.width = c.height = 64;
     const g = c.getContext("2d")!;
     g.fillStyle = look.ground;
-    g.fillRect(0, 0, 256, 256);
-    let seed = 7;
-    const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
-    for (let i = 0; i < 90; i++) {
-      g.fillStyle = look.ground2;
-      g.globalAlpha = 0.25 + r() * 0.5;
-      g.beginPath();
-      g.ellipse(r() * 256, r() * 256, 6 + r() * 30, 4 + r() * 18, r() * 3, 0, Math.PI * 2);
-      g.fill();
-    }
+    g.fillRect(0, 0, 64, 64);
     const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(60, 60);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }, [look]);
   return (
     <>
       <WorldSky look={sky} light={1} hour={11} radius={7000} fog={[1400, 6500]} floor={false} lite={lite} />
+      {/* (the plain beyond the land's rim, level with the rim) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
         <planeGeometry args={[14000, 14000]} />
         <meshLambertMaterial map={ground} />
       </mesh>
-      {roads.map((route, i) =>
-        route.slice(1).map((to, k) => {
-          const from = route[k];
-          const len = Math.hypot(to[0] - from[0], to[2] - from[2]);
-          return (
-            <mesh key={`${i}-${k}`} position={[(from[0] + to[0]) / 2, 0.05, (from[2] + to[2]) / 2]} rotation={[-Math.PI / 2, 0, -Math.atan2(to[2] - from[2], to[0] - from[0])]}>
-              <planeGeometry args={[len + 14, 14]} />
-              <meshLambertMaterial color={look.track} />
-            </mesh>
-          );
-        }),
-      )}
+      <mesh geometry={land.geo} raycast={() => null}>
+        <meshLambertMaterial vertexColors />
+      </mesh>
+      {ribbons.map((g, i) => (
+        <mesh key={i} geometry={g} raycast={() => null}>
+          <meshLambertMaterial color={look.track} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        </mesh>
+      ))}
     </>
   );
 }
@@ -439,7 +493,7 @@ export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, on
       <hemisphereLight args={["#8fb0e0", "#1a1d26", 0.9]} />
       <directionalLight position={SUN.toArray().map((x) => x * 800) as [number, number, number]} intensity={2.4} color="#fff2dc" />
       <directionalLight position={[-300, -120, 200]} intensity={1.0} color="#7aa0dc" />
-      {air ? <AirBackdrop biome={air.biome} roads={roadsOf(sim.current.state)} seed={seed} /> : <Backdrop focus={focus} planet={planet ?? "temperate"} seed={seed} />}
+      {air ? <AirBackdrop air={air} roads={roadsOf(sim.current.state)} seed={seed} /> : <Backdrop focus={focus} planet={planet ?? "temperate"} seed={seed} />}
       <Dust />
       {!inside && ids.map((id) => {
         const v = vesselOf.current.get(id) ?? sim.current.state.vessels.find((x) => x.id === id);
@@ -588,7 +642,7 @@ function markers(camera: THREE.Camera, st: Dogfight, me: Vessel, out: OverlayDat
     const bomb = me.guns.find((g) => g.kind === "bomb" && g.ammo > 0);
     if (bomb && me.p[1] > 10) {
       const rel = bombRelease(me);
-      const fall = bombFall(rel.p, rel.vel, AIR.gravity * st.air.g);
+      const fall = bombFall(rel.p, rel.vel, AIR.gravity * st.air.g, (x, z) => airGround(st, x, z));
       if (fall.t < 30) marks.push({ ...project(camera, fall.at), kind: "drop", label: "BOMB", dist: dist3(fall.at, me.p), frac: 1 });
     }
   }

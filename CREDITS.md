@@ -95,4 +95,6 @@ Read for the interiors overhaul (2026-10-19); nothing of it is copied.
   with the face-card values agreed by Sleeper, Ryan B. (pagat.com/invented/sabacc.html) and Star Wars Report. Pazaak (shared/logic/pazaak.ts): the
   rules of Knights of the Old Republic as the project owner wrote them out. No card art or text from any of them is used.
 
+- Terrain (shared/logic/terrain.ts): the method of Terrain Studio (HowdyMoto/terrain-tools, MIT, Copyright (c) 2026 Wright Bagwell; github.com/HowdyMoto/terrain-tools), whose droplet erosion and conservative thermal step are ported (not copied: the code is rewritten for typed arrays and cells, seeded and cancel-free); stream-power incision after Braun and Willett (2013); droplets after Sebastian Lague's Hydraulic-Erosion and Hans Theobald Beyer; thermal talus after Musgrave, Kolb and Mace (1989); value-noise derivatives and domain warping after Inigo Quilez (iquilezles.org); the order of passes and the wash after Vault 80's terrain-erosion note. No assets are used; the ground is made from a seed.
+
 Star Wars and its settings belong to Lucasfilm; the rules data come from the SW5e project (sw5e.com).

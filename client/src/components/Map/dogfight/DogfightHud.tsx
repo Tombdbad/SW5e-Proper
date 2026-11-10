@@ -5,6 +5,7 @@
 import { useEffect, useRef } from "react";
 import { ARENA, CLASSES, isCapital, scenarioOf, type Dogfight, type Vessel } from "@shared/logic/dogfight";
 import { isDown, partyOf, shielded, weaponSlots } from "@shared/logic/dogfightSim";
+import { airGround } from "@shared/logic/dogfight";
 
 export type MarkKind = "foe" | "big" | "gen" | "bay" | "port" | "locked" | "core" | "turret" | "ally" | "drop";
 export interface Mark { x: number; y: number; behind: boolean; kind: MarkKind; label: string; dist: number; frac: number }
@@ -69,8 +70,10 @@ export function hudOf(s: Dogfight, hullDist: number | null = null): HudData {
     } else if (A.goal === "escort") {
       objective.push(`Convoy: ${A.total - A.lost} of ${A.total} rolling, ${A.arrived} through`);
     } else objective.push(`Convoy: ${A.total - standing("foe", "vehicle").length} of ${A.total} destroyed, ${A.arrived} got away`);
-    objective.push(`Altitude ${Math.round(me.p[1])} m`);
-    if (me.p[1] < 60 && me.pitch < -0.1) warn.push("PULL UP");
+    // (over the ground, not over the sea's level: the land rises under the craft)
+    const agl = me.p[1] - airGround(s, me.p[0], me.p[2]);
+    objective.push(`Altitude ${Math.round(agl)} m over the ground`);
+    if (agl < 60 && me.pitch < -0.1) warn.push("PULL UP");
   } else if (I) {
     objective.push(I.phase === "escape" ? "Out through the exhaust shaft!" : `Gate ${Math.min(I.gates, I.tunnel.gates.length)} of ${I.tunnel.gates.length}`);
     if (I.core.hp > 0) objective.push(`Reactor core ${Math.max(0, Math.round((I.core.hp / I.core.hpMax) * 100))}%: put ordnance into it`);

@@ -6,7 +6,7 @@ import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
-  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
+  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, terrainColorAt,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
@@ -192,14 +192,24 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     const [a, b, verge] = [new THREE.Color(look.ground), new THREE.Color(look.ground2), new THREE.Color(look.track)];
     const [mud, scorched] = [new THREE.Color("#4d4234"), new THREE.Color("#1e1512")];
     const c = new THREE.Color();
+    // The heights first, so that the colour can read the slope (rock on the steep, from the terrain's own rules: shared/logic/terrain.ts)
+    const ys = new Float32Array(row * row);
+    for (let j = 0; j < row; j++) for (let i = 0; i < row; i++) ys[j * row + i] = groundAt(track, -size + i * step, -size + j * step, false);
+    const land = track.land;
     for (let j = 0; j < row; j++) {
       for (let i = 0; i < row; i++) {
         const [x, z] = [-size + i * step, -size + j * step];
-        const y = groundAt(track, x, z, false);
+        const y = ys[j * row + i];
         const k = (j * row + i) * 3;
         pos.set([x, y, z], k);
         const mottle = 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013);
-        c.copy(a).lerp(b, mottle);
+        if (land) {
+          const slope = Math.hypot(ys[j * row + Math.min(row - 1, i + 1)] - ys[j * row + Math.max(0, i - 1)], ys[Math.min(row - 1, j + 1) * row + i] - ys[Math.max(0, j - 1) * row + i]) / (2 * step);
+          const [r, g, bl] = terrainColorAt(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope });
+          c.setRGB(r, g, bl);
+          // (the course's own ground colour, a little, so each world's race keeps its look)
+          c.lerp(a, 0.25);
+        } else c.copy(a).lerp(b, mottle);
         const d = raceDistance(track, x, z);
         if (d < track.width / 2 + 6) c.lerp(verge, 0.6 * (1 - Math.max(0, d - track.width / 2) / 6));
         c.multiplyScalar(0.92 + Math.max(-0.1, Math.min(0.16, y * 0.012)));

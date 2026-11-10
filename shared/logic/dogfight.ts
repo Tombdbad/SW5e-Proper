@@ -28,7 +28,7 @@
 // The foes' numbers (damage, rates of fire, accuracy) are labelled house rules below; the bot in
 // tests/ships/dogfight.test.ts plays the fight to keep them honest.
 // ---------------------------------------------------------------------------------------------
-import { bookRole, createRandom, headingOf, SHIP_SIZE_ORDER, shipCombatant, shipSheet, type Craft, type ShipCombatant, type ShipSheet, type ShipWeapon, type Vec3 } from "./index";
+import { bookRole, createRandom, headingOf, terrainFor, terrainHeight, terrainGradient, type LevelDisc, type LevelRoad, type Terrain, SHIP_SIZE_ORDER, shipCombatant, shipSheet, type Craft, type ShipCombatant, type ShipSheet, type ShipWeapon, type Vec3 } from "./index";
 import type { Clearance, Tunnel } from "./tunnel";
 import shipData from "../data/sw5e/ships.json";
 
@@ -220,7 +220,17 @@ export type GroundKind = "building" | "flak" | "vehicle";
 export interface GroundRole { kind: GroundKind; target?: boolean; route?: Vec3[]; leg?: number; arrived?: boolean }
 // The air of a planet: the land (for the scene), the pull (bombs fall at 9.8 m/s² times it), the ceiling, the goal, and the count of what the
 // party has to save or destroy, lost, got through; `why` says how a failed fight was lost
-export interface AirField { biome: string; g: number; ceiling: number; goal: "defend" | "raid" | "escort" | "strike"; total: number; lost: number; arrived: number; why: string }
+// `land`: the ground (2026-11-10, shared/logic/terrain.ts): the biome's own hills and mountains from the fight's seed, level under a settlement and along
+// the convoy's road (a pad and a road are where they are built, not where the hills let them be)
+export interface AirLand { biome: string; seed: number; discs: LevelDisc[]; roads: LevelRoad[] }
+export interface AirField { biome: string; g: number; ceiling: number; goal: "defend" | "raid" | "escort" | "strike"; total: number; lost: number; arrived: number; why: string; land: AirLand }
+// The ground of an air fight: 9.6 km across, the relief a little more than a world's land has at a settlement's scale (a fighter should have
+// ridges to fly along and valleys to hide in), the rim eased down so that the plain beyond joins it
+export const airTerrain = (land: AirLand): Terrain => terrainFor({ seed: land.seed, biome: land.biome, size: 9600, n: 257, scale: 2.4, erosion: "light", rim: 0.07 }, { discs: land.discs, roads: land.roads });
+// The height of the ground at a point (0 where the fight is not in the air of a planet)
+export const airGround = (s: { air: AirField | null }, x: number, z: number): number => (s.air ? terrainHeight(airTerrain(s.air.land), x, z) : 0);
+// Which way the ground rises there: the rise a metre, along x and z
+export const airGradient = (s: { air: AirField | null }, x: number, z: number): [number, number] => (s.air ? terrainGradient(airTerrain(s.air.land), x, z) : [0, 0]);
 export const AIR = {
   gravity: 9.8,
   ceiling: 1300,
@@ -1030,12 +1040,12 @@ export function groundVessel(rows: StarshipRow[], kind: GroundKind, side: "party
     v.half = half;
     v.volume = boxVolume(half);
     v.reach = Math.max(...half);
-    v.p = [at[0], half[1], at[2]];
+    v.p = [at[0], at[1] + half[1], at[2]];
   } else {
     v.half = kind === "flak" ? [3, 2.5, 3] : [9, 3, 4];
     v.volume = { kind: "ellipsoid" };
     v.reach = Math.max(...v.half);
-    v.p = [at[0], v.half[1], at[2]];
+    v.p = [at[0], at[1] + v.half[1], at[2]];
   }
   v.ground = { kind, ...(extra.target ? { target: true } : {}), ...(extra.route ? { route: extra.route, leg: 0 } : {}) };
   v.bounty = kind === "building" ? 300 : kind === "flak" ? 150 : 250;
@@ -1052,10 +1062,12 @@ export function airStart(o: StartOptions): Dogfight {
     seed: o.seed, scenario: scenario.id, t: 0, acc: 0, limit: scenario.limit, bound: ARENA.bound, vessels: [], shots: [], nextId: 1, me: 0, lock: null, lockPart: -1, retargetSeen: 0, subSeen: 0, pickSeen: 0, cycleSeen: 0, sel: 0, slot: 0, throttle: 0.6, dialSeen: 0, flares: Math.max(1, tier), god: false,
     aim: null, kills: {}, partsDown: {}, taken: {}, foesTotal: 0, fired: 0, hits: 0, bumps: 0, bumpWait: 0, events: [], fx: [], said: [], log: [], warnings: { missile: 0, outside: 0 },
     fighter: null, interior: null, stationDown: false, outcome: null, over: false, tier, loaned, briefing: [scenario.intro],
-    air: { biome: o.air?.biome ?? "temperate", g, ceiling: AIR.ceiling, goal, total: 0, lost: 0, arrived: 0, why: "" },
+    air: { biome: o.air?.biome ?? "temperate", g, ceiling: AIR.ceiling, goal, total: 0, lost: 0, arrived: 0, why: "", land: { biome: o.air?.biome ?? "temperate", seed: o.seed, discs: [], roads: [] } },
   };
   const imperial = /empire|imperial/i.test(o.air?.owner ?? "") || (!o.air?.owner && rand.chance(0.5));
   const owner = o.air?.owner ?? (imperial ? "the Empire" : rand.pick(["pirates", "the Black Sun", "a warlord", "the Hutts"]));
+  // A place `up` metres over the ground at x, z (the ground is the land's: set when the fight's pads and roads are known)
+  const at = (x: number, up: number, z: number): Vec3 => [x, airGround(s, x, z) + up, z];
   const foe = (kind: FoeKind, p: Vec3, yaw: number, speedShare = 0.8) => {
     const kit = KITS[kind];
     const sheet = foeSheet(o.rows, kind, tier, rand);
@@ -1071,46 +1083,53 @@ export function airStart(o: StartOptions): Dogfight {
       const a = (i / count) * Math.PI * 2 + rand.next() * 0.4;
       const r = 70 + rand.next() * 170;
       const half: Vec3 = [10 + rand.next() * 14, 6 + rand.next() * 14, 10 + rand.next() * 14];
-      s.vessels.push(groundVessel(o.rows, "building", side, [Math.cos(a) * r, 0, Math.sin(a) * r], rand.next() * Math.PI, tier, rand, s.nextId++, { half, name: names[i % names.length], owner: side === "foe" ? owner : "the settlement", target: i < targets }));
+      s.vessels.push(groundVessel(o.rows, "building", side, at(Math.cos(a) * r, 0, Math.sin(a) * r), rand.next() * Math.PI, tier, rand, s.nextId++, { half, name: names[i % names.length], owner: side === "foe" ? owner : "the settlement", target: i < targets }));
     }
   };
   const road = (from: Vec3, to: Vec3): Vec3[] => [from, [(from[0] + to[0]) / 2, 0, (from[2] + to[2]) / 2 + (rand.next() - 0.5) * 300], to];
   const convoy = (side: "party" | "foe", count: number, route: Vec3[], flak: boolean) => {
     for (let i = 0; i < count + (flak ? 1 : 0); i++) {
-      const at: Vec3 = [route[0][0] - i * 45, 0, route[0][2]];
-      const piece = groundVessel(o.rows, flak && i === 1 ? "flak" : "vehicle", side, at, 0, tier, rand, s.nextId++, { owner: side === "foe" ? owner : "the convoy", route, target: true });
+      const place = at(route[0][0] - i * 45, 0, route[0][2]);
+      const piece = groundVessel(o.rows, flak && i === 1 ? "flak" : "vehicle", side, place, 0, tier, rand, s.nextId++, { owner: side === "foe" ? owner : "the convoy", route, target: true });
       piece.top = AIR.convoy;
       s.vessels.push(piece);
     }
   };
   let start: { p: Vec3; yaw: number } = { p: [-900, 260, 0], yaw: 0 };
+  const land = s.air!.land;
   if (goal === "defend") {
+    land.discs.push({ x: 0, z: 0, r: 330, blend: 520 });
     town("party", 7, 7);
-    start = { p: [-250, 230, 0], yaw: 0 };
+    start = { p: at(-250, 230, 0), yaw: 0 };
     const bombers = 3 + Math.floor(tier / 2);
-    for (let i = 0; i < bombers; i++) foe("bomber", [1900 + i * 60, AIR.bombRun + rand.next() * 40, (i - (bombers - 1) / 2) * 140], Math.PI, 0.9);
-    foe("fighter", [1700, 260, -260], Math.PI);
-    foe("fighter", [1700, 260, 260], Math.PI);
+    for (let i = 0; i < bombers; i++) foe("bomber", at(1900 + i * 60, AIR.bombRun + rand.next() * 40, (i - (bombers - 1) / 2) * 140), Math.PI, 0.9);
+    foe("fighter", at(1700, 260, -260), Math.PI);
+    foe("fighter", at(1700, 260, 260), Math.PI);
   } else if (goal === "raid") {
+    land.discs.push({ x: 0, z: 0, r: 330, blend: 520 });
     town("foe", 8, 4);
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * Math.PI * 2 + 0.5;
-      s.vessels.push(groundVessel(o.rows, "flak", "foe", [Math.cos(a) * 130, 0, Math.sin(a) * 130], 0, tier, rand, s.nextId++, { owner }));
+      s.vessels.push(groundVessel(o.rows, "flak", "foe", at(Math.cos(a) * 130, 0, Math.sin(a) * 130), 0, tier, rand, s.nextId++, { owner }));
     }
-    start = { p: [-1300, 260, 0], yaw: 0 };
-    foe("fighter", [300, 300, -400], Math.PI);
-    foe("fighter", [300, 300, 400], Math.PI);
+    start = { p: at(-1300, 260, 0), yaw: 0 };
+    foe("fighter", at(300, 300, -400), Math.PI);
+    foe("fighter", at(300, 300, 400), Math.PI);
   } else if (goal === "escort") {
-    convoy("party", 3, road([-1500, 0, 0], [1500, 0, 0]), false);
-    start = { p: [-1450, 200, 120], yaw: 0 };
-    for (let i = 0; i < 2; i++) foe("bomber", [400 + i * 120, AIR.bombRun + 30, 1500], -Math.PI / 2, 0.9);
-    foe("fighter", [300, 280, 1500], -Math.PI / 2);
-    foe("fighter", [500, 280, -1500], Math.PI / 2);
+    const route = road([-1500, 0, 0], [1500, 0, 0]);
+    land.roads.push({ line: route.map((p) => [p[0], p[2]]), width: 60, blend: 240 });
+    convoy("party", 3, route, false);
+    start = { p: at(-1450, 200, 120), yaw: 0 };
+    for (let i = 0; i < 2; i++) foe("bomber", at(400 + i * 120, AIR.bombRun + 30, 1500), -Math.PI / 2, 0.9);
+    foe("fighter", at(300, 280, 1500), -Math.PI / 2);
+    foe("fighter", at(500, 280, -1500), Math.PI / 2);
   } else {
-    convoy("foe", 3, road([-600, 0, 0], [2000, 0, 0]), true);
-    start = { p: [-1900, 260, 500], yaw: 0 };
-    foe("fighter", [-300, 300, 300], Math.PI);
-    foe("fighter", [-300, 300, -300], Math.PI);
+    const route = road([-600, 0, 0], [2000, 0, 0]);
+    land.roads.push({ line: route.map((p) => [p[0], p[2]]), width: 60, blend: 240 });
+    convoy("foe", 3, route, true);
+    start = { p: at(-1900, 260, 500), yaw: 0 };
+    foe("fighter", at(-300, 300, 300), Math.PI);
+    foe("fighter", at(-300, 300, -300), Math.PI);
   }
   const party = makeVessel(mine, { name: mine.name, owner: o.ship.owner }, "party", { p: start.p, yaw: start.yaw }, o.seed, s.nextId++);
   party.speed = party.top * 0.6;

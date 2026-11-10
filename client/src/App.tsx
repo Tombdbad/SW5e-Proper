@@ -17,6 +17,7 @@ import ErrorBoundary from './components/ui/ErrorBoundary';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 const ModelGallery = lazy(() => import('./pages/ModelGallery'));
 const DogfightLab = lazy(() => import('./pages/DogfightLab'));
+const TerrainLab = lazy(() => import('./pages/TerrainLab'));
 
 // A character is edited on its own page (the sheet, the inventory, levelling up)
 function CharacterPageRedirect() {
@@ -103,6 +104,7 @@ function App() {
             <Route path="/dev/loading" element={<LoadingDemo />} />
             <Route path="/dev/models" element={<ModelGallery />} />
             <Route path="/dev/dogfight" element={<DogfightLab />} />
+            <Route path="/dev/terrain" element={<TerrainLab />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>

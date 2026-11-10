@@ -32,7 +32,8 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight, isArenaBowl } from "@shared/logic";
+import { moonlight, isArenaBowl, terrainStyleOf } from "@shared/logic";
+import { ReliefGround } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
 import { BOUT_LENGTH, matchState, pitGossip, pitLines, type Match, type PitItem } from "@shared/logic/pitbets";
@@ -5053,7 +5054,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <group visible={!underground}>
             <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
             {/* Under an open sky the ground goes on, plainly, to the horizon's haze */}
-            {look && <FarGround set={groundTex.set} tint={groundTex.tint} size={1000} at={[cx, -0.05, cz]} />}
+            {/* (a land of hills and valleys where the biome has them: client/src/components/Map/terrain.tsx; level under the place, rising away from it) */}
+            {look && (terrainStyleOf(biome).relief >= 20 ? <ReliefGround biome={biome} seed={look.seed} inner={sizeOfGround / 2} at={[cx, -0.1, cz]} set={groundTex.set} tint={groundTex.tint} /> : <FarGround set={groundTex.set} tint={groundTex.tint} size={1000} at={[cx, -0.05, cz]} />)}
           </group>
         ) : (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? walkHere : undefined}>
@@ -6326,7 +6328,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           {groundTex ? (
             <>
               <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={600} h={600} at={[0, -0.6, 0]} />
-              <FarGround set={groundTex.set} tint={groundTex.tint} size={1400} at={[0, -0.65, 0]} />
+              {look && terrainStyleOf(biome).relief >= 20 ? <ReliefGround biome={biome} seed={look.seed} inner={300} at={[0, -0.7, 0]} set={groundTex.set} tint={groundTex.tint} /> : <FarGround set={groundTex.set} tint={groundTex.tint} size={1400} at={[0, -0.65, 0]} />}
             </>
           ) : (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>

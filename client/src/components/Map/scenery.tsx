@@ -127,11 +127,13 @@ export function landHeight(land: Land, p: THREE.Vector3): number {
   const { recipe: R, seed: s } = land;
   if (R.bands) return 0;
   const [x, y, z] = [p.x, p.y, p.z];
-  // Continents, their coasts broken by finer noise
-  let h = fbm(x * 1.6, y * 1.6, z * 1.6, s, 5) * 0.9 - R.sea;
+  // Continents, their coasts broken by finer noise; the noise is looked up where a noise of its own has pushed the point (domain warp: 2026-11-10, shared/logic/terrain.ts),
+  // so that coasts and ranges bend and no line of them runs along an axis
+  const [wx, wy, wz] = [fbm(x * 1.1 + 3.1, y * 1.1 + 7.7, z * 1.1, s + 5, 3) * 0.4, fbm(x * 1.1 + 11.3, y * 1.1 + 1.9, z * 1.1, s + 9, 3) * 0.4, fbm(x * 1.1 + 5.9, y * 1.1 + 13.1, z * 1.1, s + 13, 3) * 0.4];
+  let h = fbm(x * 1.6 + wx, y * 1.6 + wy, z * 1.6 + wz, s, 5) * 0.9 - R.sea;
   const landness = smooth(-0.05, 0.25, h);
   // Mountain ranges along the crests of a ridged noise, on land
-  h += ridged(x * 3.2 + 7, y * 3.2, z * 3.2, s + 3) ** 2 * R.mountains * (0.35 + 0.65 * landness) * smooth(0.3, 0.7, noise3(x * 1.4, y * 1.4, z * 1.4, s + 9));
+  h += ridged(x * 3.2 + 7 + wx * 1.5, y * 3.2 + wy * 1.5, z * 3.2 + wz * 1.5, s + 3) ** 2 * R.mountains * (0.35 + 0.65 * landness) * smooth(0.3, 0.7, noise3(x * 1.4, y * 1.4, z * 1.4, s + 9));
   // Canyons cut in a winding line
   if (R.canyons) h -= Math.pow(Math.max(0, 1 - Math.abs(fbm(x * 2.4, y * 2.4, z * 2.4, s + 21, 3)) * 7), 3) * 0.35 * R.canyons;
   // Volcanoes: a cone with a crater

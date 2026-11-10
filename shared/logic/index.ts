@@ -28,6 +28,8 @@ import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShi
 export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
+import { terrainFor, terrainHeight, type Terrain } from "./terrain";
+export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -13490,7 +13492,7 @@ export interface RaceProp { id: number; key: string; p: Vec3; yaw: number; scale
 // What a course is dressed with: the library's pieces for the world's trees, shrubs and boulders, and the shapes of every piece
 // `crossings`: what the land of the world puts across the course (see "Skies and landforms": a gorge, a hill, a river or lava under bridges)
 // `sea`: the course is over open water (a water craft's trip, "Over the water"): flat, marked by buoys, with rocks standing out of the sea
-export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit>; crossings?: CrossingKind[]; sea?: boolean }
+export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit>; crossings?: CrossingKind[]; sea?: boolean; biome?: string }
 export interface RaceGate { p: Vec3; yaw: number; half: number; s: number }
 export interface RaceRamp { p: Vec3; yaw: number; len: number; wid: number; h: number }
 // A ravine across a trail: `yaw` along the trail
@@ -13505,6 +13507,9 @@ export interface RaceTrack {
   points: Vec3[]; yaws: number[]; bends: number[]; length: number;
   gates: RaceGate[]; ramps: RaceRamp[]; dips: RaceDip[]; trails: RaceTrail[]; props: RaceProp[]; hazards: Hazard[]; marks: RaceMark[];
   hills: number[];
+  // The land (2026-11-10, shared/logic/terrain.ts): a height field of the biome's own kind over the whole course, a tenth of it near the track and all of it
+  // far from it; a course without one (an older save) has the swells of `hills` as before
+  land?: Terrain;
   // Distance to the nearest centre line (track or trail) on a grid of `cell` metres, for the lie of the ground, and how far round the lap
   // the nearest point of the main track is (-1 where a trail is nearer)
   field: { x0: number; z0: number; cell: number; n: number; d: Float32Array; s?: Float32Array };
@@ -13699,9 +13704,9 @@ export function raceWater(track: RaceTrack, x: number, z: number): { level: numb
 // trails, and (unless left out, for drawing the ground under them) the ramps
 function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
   if (track.sea) return 0;
-  let y = hillsAt(track.hills, x, z);
   const d = fieldAt(track, x, z);
-  y += easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
+  // (the terrain's ground, eased down to a few metres' swell where the speeders run and up to its full height a few hundred metres off the track)
+  let y = track.land ? terrainHeight(track.land, x, z) * (0.06 + 0.94 * easeStep(track.width / 2 + 40, track.width / 2 + 340, d)) : hillsAt(track.hills, x, z) + easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
   for (const f of track.features ?? []) {
     if (f.kind === "hill") {
       const r2 = ((x - f.p[0]) ** 2 + (z - f.p[2]) ** 2) / (f.len / 2) ** 2;
@@ -14025,6 +14030,8 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
   const field = new Float32Array(fn * fn).fill(999);
   track.field = { x0: -extent, z0: -extent, cell, n: fn, d: field };
   track.extent = extent;
+  // The land: the biome's own, a third of its height at most (a hover race is not a mountain climb), with the rim eased down
+  if (!scenery.sea) track.land = terrainFor({ seed: seed * 13 + 5, biome: scenery.biome ?? "temperate", size: extent * 2 + 440, n: 129, scale: 0.35, erosion: "light" });
   const index = trackIndexOf(track);
   const reach = 104;
   // (with how far round the lap the nearest point of the main track is: its segments are the index's first, in order)
