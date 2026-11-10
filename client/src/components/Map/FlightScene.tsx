@@ -7,7 +7,7 @@ import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
   CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, terrainColorAt,
-  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type Racer, type RaceTrack, type SpeederKind, type Vec3,
+  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
@@ -177,67 +177,100 @@ const GATE_POST = { r: 0.45, h: 8 };
 const SPARKS = 48;
 
 
-// The ground: one mesh over the course and well past it (the fog hides its edge), mottled, its
-// verges worn to the colour of the track, lighter on the heights
+// The ground: one mesh over the course and well past it (the fog hides its edge), made of 128 m squares, fine (a few metres a vertex) near the course
+// and coarse far from it, so that a gorge's cliffs and a jump's bluff are cut cleanly where the speeders are and the hills beyond are cheap; the squares
+// are drawn with skirts so that no crack shows where the fine meet the coarse. It is the land (shared/logic/terrain.ts under `groundAt`: ramps, gorges and
+// rivers included) coloured by its slope and where the water went: rock on the cliffs, wet mud by a river, and the way itself not a marked ribbon but
+// a worn, feathered band of the course's own dust (2026-11-10, the user: a less defined road), its edge lost in the verge
 function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
-  // (finer where the device can draw it: a gorge's walls and a river's banks are a few metres across)
   const lite = useQuality((q) => q.tier === "lite");
   const geo = useMemo(() => {
-    const size = track.extent + 220;
-    const segs = lite ? 200 : 300;
-    const step = (size * 2) / segs;
-    const row = segs + 1;
-    const pos = new Float32Array(row * row * 3);
-    const col = new Float32Array(row * row * 3);
+    const half = track.extent + 220;
+    const CH = 128;
+    const count = Math.ceil((half * 2) / CH);
+    const [nearSegs, farSegs] = lite ? [20, 8] : [40, 12];
     const [a, b, verge] = [new THREE.Color(look.ground), new THREE.Color(look.ground2), new THREE.Color(look.track)];
     const [mud, scorched] = [new THREE.Color("#4d4234"), new THREE.Color("#1e1512")];
     const c = new THREE.Color();
-    // The heights first, so that the colour can read the slope (rock on the steep, from the terrain's own rules: shared/logic/terrain.ts)
-    const ys = new Float32Array(row * row);
-    for (let j = 0; j < row; j++) for (let i = 0; i < row; i++) ys[j * row + i] = groundAt(track, -size + i * step, -size + j * step, false);
+    const pos: number[] = [];
+    const col: number[] = [];
+    const nor: number[] = [];
+    const idx: number[] = [];
     const land = track.land;
-    for (let j = 0; j < row; j++) {
-      for (let i = 0; i < row; i++) {
-        const [x, z] = [-size + i * step, -size + j * step];
-        const y = ys[j * row + i];
-        const k = (j * row + i) * 3;
-        pos.set([x, y, z], k);
-        const mottle = 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013);
-        if (land) {
-          const slope = Math.hypot(ys[j * row + Math.min(row - 1, i + 1)] - ys[j * row + Math.max(0, i - 1)], ys[Math.min(row - 1, j + 1) * row + i] - ys[Math.max(0, j - 1) * row + i]) / (2 * step);
-          const [r, g, bl] = terrainColorAt(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope });
-          c.setRGB(r, g, bl);
-          // (the course's own ground colour, a little, so each world's race keeps its look)
-          c.lerp(a, 0.25);
-        } else c.copy(a).lerp(b, mottle);
-        const d = raceDistance(track, x, z);
-        if (d < track.width / 2 + 6) c.lerp(verge, 0.6 * (1 - Math.max(0, d - track.width / 2) / 6));
-        c.multiplyScalar(0.92 + Math.max(-0.1, Math.min(0.16, y * 0.012)));
-        // A river's banks are wet mud; a lava flow's are scorched black
-        const water = track.rivers?.length ? raceWater(track, x, z) : null;
-        if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
-        col.set([c.r, c.g, c.b], k);
-      }
-    }
-    const index = new Uint32Array(segs * segs * 6);
-    let q = 0;
-    for (let j = 0; j < segs; j++) {
-      for (let i = 0; i < segs; i++) {
-        const v = j * row + i;
-        index.set([v, v + row, v + 1, v + 1, v + row, v + row + 1], q);
-        q += 6;
+    const w2 = track.width / 2;
+    for (let cj = 0; cj < count; cj++) {
+      for (let ci = 0; ci < count; ci++) {
+        const [ox, oz] = [-half + ci * CH, -half + cj * CH];
+        const segs = raceDistance(track, ox + CH / 2, oz + CH / 2) < 150 + CH * 0.72 ? nearSegs : farSegs;
+        const step = CH / segs;
+        // The heights with a vertex of border, for the normals and the slope
+        const side = segs + 3;
+        const hs = new Float32Array(side * side);
+        for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) hs[j * side + i] = groundAt(track, ox + (i - 1) * step, oz + (j - 1) * step, true);
+        const base = pos.length / 3;
+        const row = segs + 1;
+        for (let j = 0; j <= segs; j++) {
+          for (let i = 0; i <= segs; i++) {
+            const [x, z] = [ox + i * step, oz + j * step];
+            const at = (j + 1) * side + i + 1;
+            const y = hs[at];
+            const [dx, dz] = [(hs[at + 1] - hs[at - 1]) / (2 * step), (hs[at + side] - hs[at - side]) / (2 * step)];
+            const nl = Math.hypot(dx, 1, dz);
+            pos.push(x, y, z);
+            nor.push(-dx / nl, 1 / nl, -dz / nl);
+            const slope = Math.hypot(dx, dz);
+            if (land) {
+              const around = (hs[at + 1] + hs[at - 1] + hs[at + side] + hs[at - side]) / 4;
+              const [r, g, bl] = terrainColorAt(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope, curve: (around - y) / step });
+              c.setRGB(r, g, bl);
+              c.lerp(a, 0.25);
+            } else c.copy(a).lerp(b, 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013));
+            // The way: the dust of the course, worn most in the middle and gone into the verge past the edge, broken up a little
+            const d = raceDistance(track, x, z);
+            const worn = (1 - Math.min(1, Math.max(0, (d - w2 * 0.35) / (w2 * 0.65 + 10)))) * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11)) * (1 - Math.min(1, slope * 1.4));
+            if (worn > 0) c.lerp(verge, Math.min(0.7, worn));
+            c.multiplyScalar(0.94 + Math.max(-0.08, Math.min(0.12, y * 0.004)));
+            // A river's banks are wet mud; a lava flow's are scorched black
+            const water = track.rivers?.length ? raceWater(track, x, z) : null;
+            if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
+            col.push(c.r, c.g, c.b);
+          }
+        }
+        for (let j = 0; j < segs; j++) {
+          for (let i = 0; i < segs; i++) {
+            const v = base + j * row + i;
+            idx.push(v, v + row, v + 1, v + 1, v + row, v + row + 1);
+          }
+        }
+        // Skirts: the square's four edges let down a few metres (the next square may be coarser, and its edge not quite on this one's)
+        const edge: number[][] = [[], [], [], []];
+        for (let k = 0; k <= segs; k++) {
+          edge[0].push(base + k);
+          edge[1].push(base + segs * row + k);
+          edge[2].push(base + k * row);
+          edge[3].push(base + k * row + segs);
+        }
+        for (const list of edge) {
+          const down = pos.length / 3;
+          for (const v of list) {
+            pos.push(pos[v * 3], pos[v * 3 + 1] - 4, pos[v * 3 + 2]);
+            nor.push(nor[v * 3], nor[v * 3 + 1], nor[v * 3 + 2]);
+            col.push(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]);
+          }
+          for (let k = 0; k < list.length - 1; k++) idx.push(list[k], down + k, list[k + 1], list[k + 1], down + k, down + k + 1);
+        }
       }
     }
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    g.setIndex(new THREE.BufferAttribute(index, 1));
-    g.computeVertexNormals();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+    g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
     return g;
   }, [track, look, lite]);
   return (
-    <mesh geometry={geo} raycast={() => null}>
-      <meshLambertMaterial vertexColors />
+    <mesh geometry={geo} raycast={() => null} frustumCulled={false}>
+      <meshLambertMaterial vertexColors side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -360,71 +393,6 @@ function RaceRivers({ track }: { track: RaceTrack }) {
   );
 }
 
-// A ribbon laid over the ground along a line: the track with kerbs (red and white stripes on the
-// bends), or a trail. Each strip of each stretch is two triangles of one colour, so the stripes are sharp.
-function ribbon(track: RaceTrack, points: Vec3[], width: number, closed: boolean, surface: string, kerbs: boolean): THREE.BufferGeometry {
-  const n = points.length;
-  const rows = closed ? n + 1 : n;
-  // (the way itself in strips 4 m across or less, so that it follows the ground over a hill's crest rather than cutting through it)
-  const parts = Math.max(1, Math.ceil(width / 4));
-  const way: [number, number][] = Array.from({ length: parts }, (_, k) => [-width / 2 + (width * k) / parts, -width / 2 + (width * (k + 1)) / parts]);
-  const strips: [number, number][] = kerbs ? [[-width / 2 - 1, -width / 2], ...way, [width / 2, width / 2 + 1]] : way;
-  const edges = (r: number) => {
-    const i = r % n;
-    const [a, b] = [points[closed ? (i - 1 + n) % n : Math.max(0, i - 1)], points[closed ? (i + 1) % n : Math.min(n - 1, i + 1)]];
-    const yaw = Math.atan2(b[2] - a[2], b[0] - a[0]);
-    const [rx, rz] = [-Math.sin(yaw), Math.cos(yaw)];
-    return (off: number): Vec3 => {
-      const [x, z] = [points[i][0] + rx * off, points[i][2] + rz * off];
-      return [x, groundAt(track, x, z, false) + 0.07, z];
-    };
-  };
-  const pos: number[] = [];
-  const col: number[] = [];
-  const [base, red, white, edge] = [new THREE.Color(surface), new THREE.Color("#c83a32"), new THREE.Color("#ece8e0"), new THREE.Color(surface).multiplyScalar(0.78)];
-  const c = new THREE.Color();
-  let here = edges(0);
-  for (let r = 0; r < rows - 1; r++) {
-    const next = edges(r + 1);
-    const bend = closed ? track.bends[r % n] : 0;
-    strips.forEach(([from, to], k) => {
-      const kerb = kerbs && (k === 0 || k === strips.length - 1);
-      if (kerb) c.copy(bend > 1 / 90 ? (r % 2 ? red : white) : edge);
-      else c.copy(base).multiplyScalar(0.95 + 0.06 * Math.sin(r * 0.7));
-      const [a, b, d, e] = [here(from), here(to), next(from), next(to)];
-      for (const v of [a, b, d, b, e, d]) {
-        pos.push(...v);
-        col.push(c.r, c.g, c.b);
-      }
-    });
-    here = next;
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  g.computeVertexNormals();
-  return g;
-}
-function RaceRibbons({ track, look }: { track: RaceTrack; look: RaceLook }) {
-  // (a road is the loop only from the grid behind its start to a little past its last gate)
-  const main = useMemo(() => {
-    if (!track.road) return ribbon(track, track.points, track.width, true, look.track, true);
-    const n = track.points.length;
-    const end = Math.min(n - 1, Math.round(track.road.finish / track.step) + 14);
-    return ribbon(track, [...track.points.slice(n - 4), ...track.points.slice(0, end + 1)], track.width, false, look.track, true);
-  }, [track, look]);
-  const geos = useMemo(() => [main, ...track.trails.map((t) => ribbon(track, t.points, t.width, false, look.trail, false))], [main, track, look]);
-  return (
-    <>
-      {geos.map((g, i) => (
-        <mesh key={i} geometry={g} raycast={() => null}>
-          <meshLambertMaterial vertexColors polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
-        </mesh>
-      ))}
-    </>
-  );
-}
-
 // A chequered texture, for the start line and the finish gate
 function useChequer(): THREE.Texture {
   return useMemo(() => {
@@ -465,27 +433,6 @@ function Gate({ gate, first, lit, chequer, track }: { gate: RaceGate; first: boo
           <meshBasicMaterial map={chequer} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
         </mesh>
       )}
-    </group>
-  );
-}
-
-// A ramp: a steel wedge with yellow treads and a lit lip, sunk into the ground behind
-function buildRamp(k: Kit, { len, wid, h }: RaceRamp) {
-  const side = new THREE.Shape();
-  side.moveTo(-len / 2, -0.8);
-  side.lineTo(-len / 2, 0);
-  side.lineTo(len / 2, h);
-  side.lineTo(len / 2, -0.8);
-  side.lineTo(-len / 2, -0.8);
-  k.extrude(side, wid, "#7d858f", { at: [0, 0, -wid / 2], bevel: 0.05, finish: "sheen" });
-  const slope = Math.atan2(h, len);
-  for (let t = 0.12; t < 0.95; t += 0.2) k.box([0.45, 0.04, wid * 0.86], "#f2c14e", { at: [-len / 2 + len * t, h * t + 0.03, 0], rot: [0, 0, slope] });
-  k.box([0.3, 0.06, wid], "#e8483a", { at: [len / 2 - 0.15, h + 0.02, 0], finish: "glow" });
-}
-function RampModel({ ramp, track }: { ramp: RaceRamp; track: RaceTrack }) {
-  return (
-    <group position={[ramp.p[0], groundAt(track, ramp.p[0], ramp.p[2], false), ramp.p[2]]} rotation={[0, -ramp.yaw, 0]}>
-      <Model id={`race:ramp:${ramp.len}:${ramp.wid}:${ramp.h}`} build={(k) => buildRamp(k, ramp)} shadow={false} />
     </group>
   );
 }
@@ -969,11 +916,9 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
         <>
           <RaceGround track={track} look={look} />
           <RaceRivers track={track} />
-          <RaceRibbons track={track} look={look} />
         </>
       )}
       {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0 || (!!track.road && i === track.gates.length - 1)} lit={i === next} chequer={chequer} track={track} />)}
-      {track.ramps.map((ramp, i) => <RampModel key={i} ramp={ramp} track={track} />)}
       <Hazards track={track} hazards={snap.hazards} />
       <RaceProps track={track} biome={biome} broken={snap.broken} cover={cover} />
       {race0.racers.map((racer, i) => (

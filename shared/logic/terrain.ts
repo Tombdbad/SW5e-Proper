@@ -538,15 +538,17 @@ const rgb = (hex: string): [number, number, number] => {
   if (!c) HEX.set(hex, (c = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255]));
   return c;
 };
+// What the ground drawn is, where it is not the terrain's own (a course's, flattened near its track, cut by a gorge): the height share (0..1), the
+// slope, and the curve (the mean of the ground round it, less its own, over the distance: positive in a hollow)
+export interface GroundOver { alt?: number; slope?: number; curve?: number }
 // How much of each ground there is at a point (rock, soil, sand, snow, wet: each 0..1, rock and snow taking from the rest)
-export function terrainSplat(t: Terrain, x: number, z: number, over: { alt?: number; slope?: number } = {}): { rock: number; soil: number; sand: number; snow: number; wet: number } {
+export function terrainSplat(t: Terrain, x: number, z: number, over: GroundOver = {}): { rock: number; soil: number; sand: number; snow: number; wet: number } {
   const st = terrainStyleOf(t.biome);
   const alt = over.alt ?? (terrainHeight(t, x, z) - t.min) / Math.max(1, t.max - t.min);
   const slope = over.slope ?? terrainSlope(t, x, z);
   // Concave ground (lower than what is round it) collects, convex sheds
   const e = t.cell * 2;
-  const around = (terrainHeight(t, x + e, z) + terrainHeight(t, x - e, z) + terrainHeight(t, x, z + e) + terrainHeight(t, x, z - e)) / 4;
-  const curve = (around - terrainHeight(t, x, z)) / e;
+  const curve = over.curve ?? ((terrainHeight(t, x + e, z) + terrainHeight(t, x - e, z) + terrainHeight(t, x, z + e) + terrainHeight(t, x, z - e)) / 4 - terrainHeight(t, x, z)) / e;
   const flow = terrainFlow(t, x, z);
   const noise = terrainNoise(x * 0.02, z * 0.02, t.seed + 71, 3) * 0.5;
   let rock = smoothstep(0.42, 0.85, slope + noise * 0.15) * (1 - 0.5 * smoothstep(0.1, 0.3, curve)) + smoothstep(0.6, 1, alt) * 0.25 * smoothstep(0.2, 0.5, slope);
@@ -558,7 +560,7 @@ export function terrainSplat(t: Terrain, x: number, z: number, over: { alt?: num
 }
 // The colour (0..1 each) of the ground at a point
 // (`over`: the height share and slope where the ground drawn is not the terrain's own, as a course's, flattened near its track)
-export function terrainColorAt(t: Terrain, x: number, z: number, over: { alt?: number; slope?: number } = {}): [number, number, number] {
+export function terrainColorAt(t: Terrain, x: number, z: number, over: GroundOver = {}): [number, number, number] {
   const st = terrainStyleOf(t.biome);
   const P = st.palette;
   const alt = over.alt ?? (terrainHeight(t, x, z) - t.min) / Math.max(1, t.max - t.min);
@@ -576,7 +578,7 @@ export function terrainColorAt(t: Terrain, x: number, z: number, over: { alt?: n
   // A little variation, and the dark of the hollows (ambient occlusion from the curve)
   const fine = 1 + terrainNoise(x * 0.15, z * 0.15, t.seed + 83, 3) * 0.07;
   const e = t.cell * 2;
-  const hollow = clamp01(((terrainHeight(t, x + e, z) + terrainHeight(t, x - e, z) + terrainHeight(t, x, z + e) + terrainHeight(t, x, z - e)) / 4 - terrainHeight(t, x, z)) / e) * 0.22;
+  const hollow = clamp01(over.curve ?? ((terrainHeight(t, x + e, z) + terrainHeight(t, x - e, z) + terrainHeight(t, x, z + e) + terrainHeight(t, x, z - e)) / 4 - terrainHeight(t, x, z)) / e) * 0.22;
   return [clamp01(out[0] * fine * (1 - hollow)), clamp01(out[1] * fine * (1 - hollow)), clamp01(out[2] * fine * (1 - hollow))];
 }
 

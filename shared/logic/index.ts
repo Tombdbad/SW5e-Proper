@@ -29,7 +29,7 @@ export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
 import { terrainFor, terrainHeight, type Terrain } from "./terrain";
-export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
+export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -13444,19 +13444,20 @@ export function pilotMinutes(minutes: number, collected: number, total: number):
 // frames come, so nothing passes through anything.
 export const RACE_PRIZES = [1000, 500, 250, 100];
 export const RACE = {
-  laps: 3, width: 16, step: 4, gates: 8, radius: 300, tick: 1 / 60,
+  laps: 3, width: 16, step: 4, gates: 12, radius: 600, tick: 1 / 60,
   // Speeds in m/s: plain driving, boost (the old top speed of 40 and 15% more), and the accelerations
   drive: 38, boost: 46, accel: 16, boostAccel: 34, brake: 30, reverse: 8, coast: 10,
   // The boost meter, as a share of full: drained a second while held, refilled a second once `wait` has passed, faster in the air
   drain: 0.22, fill: 0.07, wait: 0.8, airFill: 0.15,
-  // Grip (how fast sliding sideways is stopped, m/s²) on the track, off it and on oil; off the track's share of speed; steering (rad/s)
-  grip: 30, roughGrip: 18, slickGrip: 6, rough: 0.68, steer: 1.9,
+  // Grip (how fast sliding sideways is stopped, m/s²) on the track, off it and on oil; off the track's share of speed (2026-11-10, the user: no slowdown for a speeder
+  // off the track: the land is the course, the track only the way round it, so both are the whole of it); steering (rad/s)
+  grip: 30, roughGrip: 30, slickGrip: 6, rough: 1, steer: 1.9,
   // Hover height, gravity, the hover's spring and damping, and the step a speeder rides up without striking it
   hover: 0.7, gravity: 20, spring: 140, damp: 24, stepUp: 0.6,
   // Contacts: restitution, friction, and the head-on speed from which a hit costs hull (one, and one more each `hitPer` over it)
   restitution: 0.25, friction: 0.35, hitSpeed: 7, hitPer: 8, landHard: 11,
   // The finish window after the winner; a racer stuck or far off the course is towed back and passes through others for a while
-  grace: 30, stuck: 3.5, off: 45, offTime: 2, ghost: 1.5,
+  grace: 30, stuck: 3.5, off: 260, offTime: 8, ghost: 1.5,
 };
 
 export type SpeederKind = "bike" | "land" | "air";
@@ -13541,7 +13542,7 @@ export interface RaceRiver { lava: boolean; line: [number, number][]; half: numb
 // A bridge where the course crosses a river: its deck's centre line (the course's own points) and the width of the way it carries
 export interface RaceBridge { points: Vec3[]; width: number; lava: boolean }
 // The deck reaches `deck` metres past the way's edge, its rails stand `rail` past it; lava burns a hull point each `lavaBurn` seconds
-export const CROSSING = { gorgeDepth: 9, gorgeLen: 250, gorgeRamp: 70, hillHeight: 12, hillRadius: 55, riverHalf: 10, riverBank: 7, riverDrop: 2.6, lavaBurn: 0.5, deck: 2.4, rail: 1.7 };
+export const CROSSING = { gorgeDepth: 26, gorgeLen: 340, gorgeRamp: 90, hillHeight: 18, hillRadius: 80, riverHalf: 10, riverBank: 7, riverDrop: 2.6, lavaBurn: 0.5, deck: 2.4, rail: 1.7 };
 
 // ---- The course
 
@@ -13706,17 +13707,17 @@ function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
   if (track.sea) return 0;
   const d = fieldAt(track, x, z);
   // (the terrain's ground, eased down to a few metres' swell where the speeders run and up to its full height a few hundred metres off the track)
-  let y = track.land ? terrainHeight(track.land, x, z) * (0.06 + 0.94 * easeStep(track.width / 2 + 40, track.width / 2 + 340, d)) : hillsAt(track.hills, x, z) + easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
+  let y = track.land ? terrainHeight(track.land, x, z) * (Math.min(0.22, 14 / Math.max(1, track.land.max)) + (1 - Math.min(0.22, 14 / Math.max(1, track.land.max))) * easeStep(track.width / 2 + 30, track.width / 2 + 300, d)) : hillsAt(track.hills, x, z) + easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
   for (const f of track.features ?? []) {
     if (f.kind === "hill") {
       const r2 = ((x - f.p[0]) ** 2 + (z - f.p[2]) ** 2) / (f.len / 2) ** 2;
       if (r2 < 9) y += f.depth * Math.exp(-r2);
-    } else if (d < track.width / 2 + 20) {
-      // The gorge's walls stand from 4 m off the track's edge to 20 m (the land beyond rises as it does anywhere)
+    } else if (d < track.width / 2 + 12) {
+      // The gorge's walls: cliffs, standing from 3 m off the track's edge to 9 m (the land beyond rises as it does anywhere)
       const s = fieldS(track, x, z);
       if (s < 0) continue;
       const a = easeStep(f.at - f.len / 2, f.at - f.len / 2 + f.ramp, s) * easeStep(f.at + f.len / 2, f.at + f.len / 2 - f.ramp, s);
-      if (a > 0) y -= f.depth * a * (1 - easeStep(track.width / 2 + 4, track.width / 2 + 20, d));
+      if (a > 0) y -= f.depth * a * (1 - easeStep(track.width / 2 + 3, track.width / 2 + 9, d));
     }
   }
   for (const dip of track.dips) {
@@ -13730,7 +13731,8 @@ function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
       const [dx, dz] = [x - ramp.p[0], z - ramp.p[2]];
       const u = dx * Math.cos(ramp.yaw) + dz * Math.sin(ramp.yaw);
       const v = -dx * Math.sin(ramp.yaw) + dz * Math.cos(ramp.yaw);
-      if (Math.abs(u) <= ramp.len / 2 && Math.abs(v) <= ramp.wid / 2) y += (ramp.h * (u + ramp.len / 2)) / ramp.len;
+      // (a bluff of the land: eased up from the ground to its lip, its sides falling away, so that a jump is a slope the land has and not a wedge laid on it)
+      if (Math.abs(u) <= ramp.len / 2 && Math.abs(v) <= ramp.wid / 2) y += ramp.h * easeStep(-ramp.len / 2, ramp.len / 2, u) * (0.15 + 0.85 * (1 - easeStep(ramp.wid * 0.25, ramp.wid / 2, Math.abs(v))));
     }
   }
   return y;
@@ -13824,15 +13826,15 @@ function shortcutsOf(flat: [number, number][], yaws: number[], step: number, W: 
   };
   const pairs: { i: number; j: number; save: number }[] = [];
   for (let i = Math.ceil(120 / step); i < n - Math.ceil(160 / step); i += 2) {
-    for (let j = i + Math.ceil(120 / step); j <= Math.min(n - Math.ceil(100 / step), i + Math.ceil(700 / step)); j += 2) {
+    for (let j = i + Math.ceil(160 / step); j <= Math.min(n - Math.ceil(100 / step), i + Math.ceil(1400 / step)); j += 2) {
       const arc = (j - i) * step;
       const chord = Math.hypot(flat[i][0] - flat[j][0], flat[i][1] - flat[j][1]);
-      if (chord < 80 || chord > 240 || chord > arc * 0.62) continue;
+      if (chord < 120 || chord > 480 || chord > arc * 0.62) continue;
       pairs.push({ i, j, save: arc - chord * 1.15 });
     }
   }
-  // A shortcut worth taking but not the race: about 150 m saved, before its ravine
-  pairs.sort((a, b) => Math.abs(a.save - 150) - Math.abs(b.save - 150));
+  // A shortcut worth taking but not the race: about 300 m saved, before its ravine
+  pairs.sort((a, b) => Math.abs(a.save - 300) - Math.abs(b.save - 300));
   const trailLine = (i: number, j: number): [number, number][] | null => {
     const a = flat[i];
     const b = flat[j];
@@ -14015,10 +14017,10 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
       return [x, 0, z];
     });
     const lip = total * 0.5;
-    const [rx, rz, ryaw] = along(lip - 6);
-    track.ramps.push({ p: [rx, 0, rz], yaw: ryaw, len: 12, wid: width + 1, h: 2.4 });
-    const [dx, dz, dyaw] = along(lip + 13);
-    track.dips.push({ p: [dx, 0, dz], yaw: dyaw, len: 24, wid: 30, depth: 5 });
+    const [rx, rz, ryaw] = along(lip - 10);
+    track.ramps.push({ p: [rx, 0, rz], yaw: ryaw, len: 24, wid: width + 3, h: 4.6 });
+    const [dx, dz, dyaw] = along(lip + 20);
+    track.dips.push({ p: [dx, 0, dz], yaw: dyaw, len: 34, wid: 34, depth: 8 });
     track.trails.push({ points: pts, width, from: c.i * step, to: c.j * step, ramp: track.ramps.length - 1, dip: track.dips.length - 1 });
   }
   const inTrail = (s: number, margin: number) => track.trails.some((t) => s > t.from - margin && s < t.to + margin);
@@ -14031,7 +14033,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
   track.field = { x0: -extent, z0: -extent, cell, n: fn, d: field };
   track.extent = extent;
   // The land: the biome's own, a third of its height at most (a hover race is not a mountain climb), with the rim eased down
-  if (!scenery.sea) track.land = terrainFor({ seed: seed * 13 + 5, biome: scenery.biome ?? "temperate", size: extent * 2 + 440, n: 129, scale: 0.35, erosion: "light" });
+  if (!scenery.sea) track.land = terrainFor({ seed: seed * 13 + 5, biome: scenery.biome ?? "temperate", size: extent * 2 + 440, n: 161, scale: 0.5, erosion: "light" });
   const index = trackIndexOf(track);
   const reach = 104;
   // (with how far round the lap the nearest point of the main track is: its segments are the index's first, in order)
@@ -14096,7 +14098,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
     if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || crossed(s, 60) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
     const side = r.next() < 0.5 ? -1 : 1;
     const [x, z] = pointAt(i, (side * W) / 4);
-    track.ramps.push({ p: [x, 0, z], yaw: yaws[i], len: 12, wid: 7, h: 2.2 });
+    track.ramps.push({ p: [x, 0, z], yaw: yaws[i], len: 22, wid: 12, h: 4 });
     rampAt.push(s);
   }
   const reserved = [...used, ...rampAt, ...rampAt.map((s) => s + 30)];

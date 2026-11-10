@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower,
-  raceCourse, groundAt, biomeSky, type RaceScenery, type Terrain,
+  raceCourse, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
 import { bombFall } from "../../shared/logic/dogfightSim";
@@ -139,4 +139,26 @@ test("an air fight is over the land: level under a settlement and along the conv
   const hill = bombFall(p, [90, 0, 0], AIR.gravity, (x) => Math.max(0, x - 200) * 0.5);
   assert.ok(hill.t < flat.t && Math.abs(hill.at[1] - Math.max(0, hill.at[0] - 200) * 0.5) < 1e-6, JSON.stringify([flat, hill]));
   assert.deepEqual(bombFall(p, [90, 0, 0], AIR.gravity, () => 0).at[1], 0);
+});
+
+test("a course is twice as long, a speeder is not slowed off the track, a gorge is a pair of cliffs with the track between, a jump is a slope of the land", () => {
+  assert.equal(RACE.rough, 1, "no slowdown off the track");
+  assert.equal(RACE.roughGrip, RACE.grip, "nor less grip");
+  for (const [biome, seed] of [["temperate", 3], ["desert", 5], ["forest", 8]] as [string, number][]) {
+    const track = raceCourse(seed, scenery(biome));
+    assert.ok(track.length > 3000 && track.length < 7000, `${biome}: ${Math.round(track.length)} m round`);
+    // A ramp is part of the ground: with it counted the land rises over it by about its height, without it it does not
+    const ramp = track.ramps[0];
+    const [cx, cz] = [ramp.p[0] + Math.cos(ramp.yaw) * (ramp.len / 2 - 0.5), ramp.p[2] + Math.sin(ramp.yaw) * (ramp.len / 2 - 0.5)];
+    assert.ok(groundAt(track, cx, cz, true) - groundAt(track, cx, cz, false) > ramp.h * 0.8, `${biome}: the jump is a bluff of the land`);
+    // The gorge (where the world has one): cliffs a track's width apart, nearly as high as its depth over a few metres
+    for (const f of (track.features ?? []).filter((x) => x.kind === "gorge")) {
+      const i = Math.round(f.at / track.step) % track.points.length;
+      const [p, yaw] = [track.points[i], track.yaws[i]];
+      const [rx, rz] = [-Math.sin(yaw), Math.cos(yaw)];
+      const floor = groundAt(track, p[0], p[2], false);
+      const top = groundAt(track, p[0] + rx * (track.width / 2 + 10), p[2] + rz * (track.width / 2 + 10), false);
+      assert.ok(top - floor > CROSSING.gorgeDepth * 0.7, `${biome}: the gorge's wall is ${(top - floor).toFixed(1)} m of ${CROSSING.gorgeDepth}`);
+    }
+  }
 });
