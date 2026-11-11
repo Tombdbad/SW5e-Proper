@@ -4,10 +4,9 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
-import * as THREE from "three";
 import { ReliefGround } from "@/components/Map/terrain";
 import { babylonGl } from "@/components/Map/babylon";
-import { groundTexture } from "@/components/Map/siteAssets";
+import { GroundSurface, groundTexture } from "@/components/Map/siteAssets";
 
 export default function TerrainLab() {
   const [q] = useSearchParams();
@@ -28,10 +27,7 @@ export default function TerrainLab() {
         <Suspense fallback={null}>
           <ReliefGround biome={biome} seed={seed} inner={inner} at={[0, -0.1, 0]} set={tex.set} tint={tex.tint} />
           {/* the place's own ground, as the map lays it */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
-            <planeGeometry args={[inner * 2, inner * 2]} />
-            <meshLambertMaterial color={new THREE.Color("#8a7a5a")} />
-          </mesh>
+          <GroundSurface set={tex.set} tint={tex.tint} parallax={tex.parallax} w={inner * 2} h={inner * 2} at={[0, -0.02, 0]} />
         </Suspense>
         <OrbitControls target={target} />
       </Canvas>

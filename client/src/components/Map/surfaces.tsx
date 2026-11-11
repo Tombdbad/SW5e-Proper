@@ -67,6 +67,21 @@ export function groundShader(shader: THREE.WebGLProgramParametersWithUniforms, h
   parallaxShader(shader, { value: heightMap }, parallax);
 }
 
+// The mean colour of a photograph as the ground shader sees it (stored values, not light): the shader takes the picture divided by this as the pattern
+export function meanOf(image: CanvasImageSource): [number, number, number] {
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    const g = c.getContext("2d")!;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(image, 0, 0, 1, 1);
+    const [r, gr, b] = g.getImageData(0, 0, 1, 1).data;
+    return [Math.max(0.05, r / 255), Math.max(0.05, gr / 255), Math.max(0.05, b / 255)];
+  } catch {
+    return [0.5, 0.5, 0.5];
+  }
+}
+
 const loader = new THREE.TextureLoader();
 const flat = (rgb: [number, number, number]) => {
   const t = new THREE.DataTexture(new Uint8Array([...rgb, 255]), 1, 1);

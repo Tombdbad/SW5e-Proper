@@ -277,13 +277,16 @@ class LimbPlugin extends MaterialPluginBase {
 const WATER_GLSL = `varying float vShore;
 float wHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float wNoise(vec2 p) {
-  vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  vec2 i = floor(p); vec2 f = fract(p); f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
   return mix(mix(wHash(i), wHash(i + vec2(1.0, 0.0)), f.x), mix(wHash(i + vec2(0.0, 1.0)), wHash(i + vec2(1.0, 1.0)), f.x), f.y);
 }
-float wRipple(vec2 p) { return 0.6 * wNoise(p * 0.9 + vec2(wTime * 0.35, wTime * 0.2)) + 0.4 * wNoise(p * 2.3 - vec2(wTime * 0.3, wTime * 0.5)); }
+float wRipple(vec2 p) {
+  vec2 q = vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+  return 0.6 * wNoise(p * 0.7 + vec2(wTime * 0.35, wTime * 0.2)) + 0.4 * wNoise(q * 1.7 - vec2(wTime * 0.3, wTime * 0.5));
+}
 vec3 wNormal(vec2 p) {
   float h = wRipple(p); float e = 0.1;
-  return vec3(-(wRipple(p + vec2(e, 0.0)) - h) / e, 0.0, -(wRipple(p + vec2(0.0, e)) - h) / e) * 0.3;
+  return vec3(-(wRipple(p + vec2(e, 0.0)) - h) / e, 0.0, -(wRipple(p + vec2(0.0, e)) - h) / e) * 0.16;
 }
 `;
 const WATER_ALBEDO = `{
@@ -301,6 +304,7 @@ uniform sampler2D gPale;
 uniform sampler2D gWet;
 uniform sampler2D gSoilN;
 uniform sampler2D gRockN;
+uniform sampler2D gSoilH;
 varying vec4 vSplat;
 varying vec4 vWay;
 vec3 gNd = vec3(0.0);
@@ -324,15 +328,22 @@ const GROUND_ALBEDO = `{
   bool lite = gMode.x > 0.5;
   float wr = vSplat.x; float wp = lite ? 0.0 : vSplat.y; float ww = lite ? 0.0 : vSplat.z;
   float ws = max(0.0, 1.0 - wr - wp - ww);
-  float macro = 0.82 + 0.36 * (0.6 * gNoise(gp * 0.03) + 0.4 * gNoise(gp * 0.11 + 7.0));
+  float macro = 0.89 + 0.22 * (0.6 * gNoise(gp * 0.03) + 0.4 * gNoise(gp * 0.11 + 7.0));
   float near = 1.0 - smoothstep(90.0, 260.0, length(vPositionW - vEyePosition.xyz));
   vec3 ds = vec3(1.0); vec3 dr = vec3(1.0); vec3 dp = vec3(1.0); vec3 dw = vec3(1.0);
   float hs = 0.0; float hr = 0.0; float hp = 0.0; float hw = 0.0;
   vec3 nrm = normalize(vNormalW);
   vec3 nd = vec3(0.0);
   if (ws > 0.02) {
-    ds = clamp(gTap(gSoil, gp, gdx, gdy, gTile.x, !lite) / gAvg0.rgb, 0.3, 2.0); hs = dot(ds, vec3(0.1667));
-    if (!lite && near > 0.0) { vec3 t = textureGrad(gSoilN, gp * gTile.x, gdx * gTile.x, gdy * gTile.x).xyz * 2.0 - 1.0; nd += (ws + wp + ww) * vec3(t.x, 0.0, t.y); }
+    // (offset parallax for the ground underfoot: the height here moves the soil toward the eye, in the soil's own repeats)
+    vec2 gps = gp;
+    if (gMode.w > 0.0) {
+      vec3 toEye = normalize(vEyePosition.xyz - vPositionW);
+      float hh = textureGrad(gSoilH, gp * gTile.x, gdx * gTile.x, gdy * gTile.x).r;
+      gps = gp - toEye.xz / max(toEye.y, 0.2) * (hh - 0.5) * gMode.w / gTile.x;
+    }
+    ds = clamp(gTap(gSoil, gps, gdx, gdy, gTile.x, !lite) / gAvg0.rgb, 0.3, 2.0); hs = dot(ds, vec3(0.1667));
+    if (!lite && near > 0.0) { vec3 t = textureGrad(gSoilN, gps * gTile.x, gdx * gTile.x, gdy * gTile.x).xyz * 2.0 - 1.0; nd += (ws + wp + ww) * vec3(t.x, 0.0, t.y); }
   }
   if (wr > 0.02) {
     vec3 bw = pow(abs(nrm), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
@@ -396,6 +407,8 @@ export type ShaderPatch =
 export interface GroundLayers {
   soil: THREE.Texture; rock: THREE.Texture; pale: THREE.Texture | null; wet: THREE.Texture | null;
   soilN: THREE.Texture | null; rockN: THREE.Texture | null;
+  // The soil's height map and how far it shifts the soil toward the eye (offset parallax, in repeats; 0 none): for the flat ground a person walks on
+  soilH?: THREE.Texture | null; parallax?: number;
   // The average colour of each photograph (soil, rock, pale, wet), and the squares of ground in one repeat of it
   avg: [number, number, number][]; tile: [number, number, number, number];
   // How much of the pattern shows (0..1) and how steep the normal maps read
@@ -1362,7 +1375,7 @@ class Mirror {
       new CodePlugin(mat, {
         name: "GroundLayers",
         ubo: [{ name: "gTile", size: 4, type: "vec4" }, { name: "gAvg0", size: 4, type: "vec4" }, { name: "gAvg1", size: 4, type: "vec4" }, { name: "gAvg2", size: 4, type: "vec4" }, { name: "gAvg3", size: 4, type: "vec4" }, { name: "gMode", size: 4, type: "vec4" }],
-        samplers: ["gSoil", "gRock", "gPale", "gWet", "gSoilN", "gRockN"],
+        samplers: ["gSoil", "gRock", "gPale", "gWet", "gSoilN", "gRockN", "gSoilH"],
         attributes: ["splat", "way"],
         vertex: { CUSTOM_VERTEX_DEFINITIONS: "attribute vec4 splat;\nattribute vec4 way;\nvarying vec4 vSplat;\nvarying vec4 vWay;", CUSTOM_VERTEX_MAIN_END: "vSplat = splat;\nvWay = way;" },
         fragment: {
@@ -1379,9 +1392,10 @@ class Mirror {
           ubo.setTexture("gWet", get(L.wet) ?? soil);
           ubo.setTexture("gSoilN", get(L.soilN) ?? soil);
           ubo.setTexture("gRockN", get(L.rockN) ?? soil);
+          ubo.setTexture("gSoilH", get(L.soilH ?? null) ?? soil);
           ubo.updateFloat4("gTile", 1 / L.tile[0], 1 / L.tile[1], 1 / L.tile[2], 1 / L.tile[3]);
           L.avg.forEach((a, i) => ubo.updateFloat4(`gAvg${i}`, a[0], a[1], a[2], 1));
-          ubo.updateFloat4("gMode", L.lite ? 1 : 0, L.strength, L.normal, 0);
+          ubo.updateFloat4("gMode", L.lite ? 1 : 0, L.strength, L.normal, L.soilH && !L.lite ? (L.parallax ?? 0) : 0);
         },
       });
     }

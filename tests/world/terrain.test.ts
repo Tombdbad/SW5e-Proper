@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
+  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, kitSpots, terrainGradient, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
   raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
@@ -228,4 +228,24 @@ test("raceWay: the signed side of the centre line (the ground's wheel ruts lie b
   }
   assert.ok(checked > 40, `${checked} points checked`);
   assert.equal(raceWay(track, 99999, 99999), null);
+});
+
+test("kit places boulders, scree and ledges by the ground's slope, ledges facing downhill, the same every time (2026-11-11)", () => {
+  const t = terrainFor({ seed: 8, biome: "volcanic", size: 1200, n: 129, erosion: "none" });
+  const o = { boulders: 0.6, scree: 0.8, ledges: 0.8, seed: 5 };
+  const spots = kitSpots(t, o);
+  assert.deepEqual(spots, kitSpots(t, o), "deterministic");
+  const by = (k: string) => spots.filter((s) => s.kind.startsWith(k));
+  assert.ok(by("boulder").length > 10, `${by("boulder").length} boulders`);
+  for (const s of by("boulder")) assert.ok(terrainSlope(t, s.x, s.z) >= 0.12 - 1e-9, "a boulder is not on the flat");
+  for (const s of by("ledge")) {
+    assert.ok(terrainSlope(t, s.x, s.z) >= 0.85 - 1e-9, "a ledge is on a cliff");
+    const [gx, gz] = terrainGradient(t, s.x, s.z);
+    const l = Math.hypot(gx, gz);
+    assert.ok((Math.sin(s.yaw) * -gx + Math.cos(s.yaw) * -gz) / l > 0.99, "a ledge faces downhill");
+  }
+  for (const s of by("scree")) assert.ok(terrainSlope(t, s.x, s.z) >= 0.3 - 1e-9, "scree is on a slope");
+  assert.ok(kitSpots(t, { ...o, cap: 7 }).length <= 7, "capped");
+  const nowhere = kitSpots(t, { ...o, within: () => false });
+  assert.equal(nowhere.length, 0, "nothing where it may not stand");
 });

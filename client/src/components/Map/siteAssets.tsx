@@ -7,9 +7,9 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
-import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
+import { groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
-import { setRenderTier, shaderPatch } from "./babylon";
+import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
 import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -1289,30 +1289,39 @@ export function groundTexture(biome: string, buildingType: string, base: string)
   return { set: "dirt_floor", tint: hue.multiplyScalar(EARTH_LIGHT), parallax: PARALLAX };
 }
 
+// (2026-11-11, ground material v2) The ground underfoot is drawn by the layered shader (babylon.ts GroundLayers) with the one photograph as its soil: the
+// pattern is the photograph divided by its own mean colour, over the mean colour times the site's tint, so the look is the photograph's; but it is mapped in
+// world coordinates, broken up by two octaves of noise and a second, turned tap (the repeat no longer shows), lit by its normal map and shifted toward the eye
+// by its height map (offset parallax, as before). The plane is flat for now: a ground with slopes and roads comes with the walkable street map.
 export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const lite = useQuality((q) => q.tier === "lite");
+  // (the tint is made anew by each caller's render: it is the material's key by its colour)
+  const tintKey = tint.getHexString();
   const [diffuse, normal, height] = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`]);
-  // The three maps share one repeat, so a shift found in the height map lines up on the others
-  const maps = useMemo(() => {
-    const repeat = (t: THREE.Texture) => {
-      const c = t.clone();
-      c.wrapS = c.wrapT = THREE.RepeatWrapping;
-      c.repeat.set(w / GROUND_TILE, h / GROUND_TILE);
-      c.needsUpdate = true;
-      return c;
+  const geo = useMemo(() => {
+    const g = new THREE.PlaneGeometry(w, h);
+    // (the layered shader's attributes: all soil, no way)
+    g.setAttribute("splat", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
+    g.setAttribute("way", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
+    return g;
+  }, [w, h]);
+  const material = useMemo(() => {
+    for (const t of [diffuse, normal, height]) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = 4;
+    }
+    const avg = meanOf(diffuse.image as CanvasImageSource);
+    const layers: GroundLayers = {
+      soil: diffuse, rock: diffuse, pale: null, wet: null, soilN: lite ? null : normal, rockN: null, soilH: lite ? null : height, parallax,
+      avg: [avg, avg, avg, avg], tile: [GROUND_TILE, GROUND_TILE, GROUND_TILE, GROUND_TILE], strength: 1, normal: NORMAL_SCALE.x * 0.85, lite,
     };
-    const d = repeat(diffuse);
-    d.colorSpace = THREE.SRGBColorSpace;
-    return { diffuse: d, normal: repeat(normal), height: repeat(height) };
-  }, [diffuse, normal, height, w, h]);
-  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
-  // (the Babylon renderer's parallax, babylon.ts)
-  const patch = (mm: THREE.Material | null) => mm && shaderPatch(mm, { kind: "parallax", height: { value: maps.height }, parallax });
-  return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
-      <planeGeometry args={[w, h]} />
-      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} ref={patch} />
-    </mesh>
-  );
+    // (the mean colour of the photograph, in light, times the site's tint: what the texture map times the colour was)
+    const base = new THREE.Color().setRGB(avg[0], avg[1], avg[2], THREE.SRGBColorSpace).multiply(tint);
+    return shaderPatch(new THREE.MeshStandardMaterial({ color: base, roughness: 1, metalness: 0 }), { kind: "ground", layers });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffuse, normal, height, tintKey, parallax, lite]);
+  useEffect(() => () => material.dispose(), [material]);
+  return <mesh geometry={geo} material={material} rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap} />;
 }
 
 // The ground beyond the walkable ground, out to the horizon under an open sky (2026-10-26, scenery.tsx WorldSky): the same photograph and

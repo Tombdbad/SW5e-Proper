@@ -622,6 +622,38 @@ export function scatterOn(t: Terrain, rule: ScatterRule, within?: (x: number, z:
   return out;
 }
 
+// ---- The kit's places (2026-11-11, tools/blender/build-terrain-kit.py): where a boulder, a heap of scree and an overhanging ledge stand on the land. Rules
+// from the ground, not noise: boulders on the ground that is not flat (more on a steep one), scree at the foot of a steep slope (steep here, gentle a little
+// downhill: where the loose rock comes to rest), and a ledge only on a cliff (past 40 degrees), turned to face downhill, its back sunk into the slope.
+export type KitKind = "boulder_a" | "boulder_b" | "boulder_c" | "scree" | "ledge_a" | "ledge_b";
+export interface KitSpot { kind: KitKind; x: number; z: number; yaw: number; scale: number; sink: number }
+export function kitSpots(t: Terrain, o: { boulders: number; scree?: number; ledges?: number; seed?: number; within?: (x: number, z: number) => boolean; cap?: number }): KitSpot[] {
+  const out: KitSpot[] = [];
+  const rand = rng((o.seed ?? 1) * 977 + t.seed);
+  const room = (x: number, z: number) => !o.within || o.within(x, z);
+  for (const [x, z] of scatterOn(t, { spacing: 22, density: o.boulders, minSlope: 0.12, maxSlope: 0.95, seed: 5 }, room)) {
+    const slope = terrainSlope(t, x, z);
+    out.push({ kind: (["boulder_a", "boulder_b", "boulder_c"] as const)[Math.floor(rand() * 3)], x, z, yaw: rand() * Math.PI * 2, scale: 0.7 + rand() * 0.9 + slope * 0.8, sink: 0.28 });
+  }
+  if (o.scree) {
+    for (const [x, z] of scatterOn(t, { spacing: 26, density: o.scree, minSlope: 0.3, maxSlope: 0.85, seed: 7 }, room)) {
+      // The foot: gentle ground a little downhill
+      const [gx, gz] = terrainGradient(t, x, z);
+      const len = Math.hypot(gx, gz) || 1;
+      if (terrainSlope(t, x - (gx / len) * 14, z - (gz / len) * 14) > 0.24) continue;
+      out.push({ kind: "scree", x, z, yaw: rand() * Math.PI * 2, scale: 0.9 + rand() * 0.9, sink: 0.05 });
+    }
+  }
+  if (o.ledges) {
+    for (const [x, z] of scatterOn(t, { spacing: 30, density: o.ledges, minSlope: 0.85, seed: 9 }, room)) {
+      const [gx, gz] = terrainGradient(t, x, z);
+      // facing downhill: the piece's front (+z) turned by yaw is (sin, cos)
+      out.push({ kind: rand() < 0.5 ? "ledge_a" : "ledge_b", x, z, yaw: Math.atan2(-gx, -gz), scale: 1 + rand() * 0.7, sink: 0.35 });
+    }
+  }
+  return o.cap ? out.slice(0, o.cap) : out;
+}
+
 // ---- Water (2026-11-10; the user: "lakes where drainage pools, a river network on the local map"). Where the ground is a bowl the water stands in it (priority-flood
 // fill, Barnes 2014: the level of each hollow is the lowest point of its rim), and where a great deal of rain has come down the water runs: the vertices
 // of the stream pass with the most drainage (`flow`) are the rivers, followed down to the edge or a lake. `carveBasins` digs a few bowls on the flat, wet
