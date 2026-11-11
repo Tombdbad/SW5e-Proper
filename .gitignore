@@ -14,3 +14,6 @@ tools/blender/__pycache__/
 # reference stills (Lucasfilm and their photographers): fetched again by tools/refs/moodboard.py and tools/refs/species.py
 tools/refs/moodboard/
 tools/refs/species/
+# Quixel Megascans (Fab Standard License: not redistributable; the repo is public): downloads and what is made from them stay on this PC
+tools/refs/megascans/
+client/public/megascans/
