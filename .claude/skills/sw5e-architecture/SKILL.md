@@ -55,7 +55,7 @@ Each step: code, `npx tsc --noEmit` clean, tests, the stats script, a look in th
 - Every vertex has `_REGION` (0 body takes the wall colour, 1 trim, 2 glow, 3 dark glass and slits, 4 timber, 5 leaf and needles, 6 thatch) and `_AO`. No materials, no UVs in the file: finishes are applied at run time (`archColour`, `ARCH_FINISH`).
 - Pieces that depend on a radius are built for the radii the planner makes (`_r3`, `_r4`, `_r5`): scaling a curve also scales the deck width, which must stay 2.
 - Budget: a crown under 1,200 triangles, a portal under 450, a gantry arc under 300, a span under 250. Low-detail copies when the far distance drawing needs them.
-- Original shapes, CC0. No AI-generated meshes in the game without the user's word and a CREDITS.md line.
+- Original shapes or AI-generated meshes (allowed since 2026-11-11), either way recorded in CREDITS.md and made to fit the kit: the same budgets, scale, pivots and naming.
 
 ## Iterating in Mixar (the user's open GUI session)
 - Headless build, as before: `blender --background --python tools/blender/build-architecture.py -- <ABS out dir>` (or Mixar's exe), copy `architecture.glb` to `client/public/figures/`.
