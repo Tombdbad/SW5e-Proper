@@ -125,7 +125,7 @@ def cut_atlas(base, opacity, accept, cell_w, cell_h, cols, rows, solid_last):
     if solid_last:
         i = cap
         cx, cy = i % cols, i // cols
-        mean = np.mean([f[6] for f in found[:cap]], axis=0) * 0.8
+        mean = np.mean([f[6] for f in found[:cap]], axis=0) * 1.4
         atlas[cy * cell_h:(cy + 1) * cell_h, cx * cell_w:(cx + 1) * cell_w, :3] = mean
         atlas[cy * cell_h:(cy + 1) * cell_h, cx * cell_w:(cx + 1) * cell_w, 3] = 1.0
         rects.append(((cx * cell_w + 8) / W, (cy * cell_h + 8) / H, ((cx + 1) * cell_w - 8) / W, ((cy + 1) * cell_h - 8) / H, 1.0))
@@ -438,7 +438,106 @@ def build():
         ob.name = "stump__%s__bark" % variant; me.name = ob.name
         return [ob]
 
+    # ---- palm and fern: the pieces the biome packs already hold (build-megascans-pack.py must have run first), set to a height of their own
+    def from_pack(pack, src, piece, height):
+        path = os.path.join(OUT, pack + ".glb")
+        if not os.path.exists(path):
+            print("no", path, "(run build-megascans-pack.py first): no", piece)
+            return []
+        before = set(bpy.data.objects)
+        bpy.ops.import_scene.gltf(filepath=path)
+        new = [o for o in bpy.data.objects if o not in before]
+        res = []
+        for v in "ABC":
+            found = [o for o in new if o.type == "MESH" and o.name.split(".")[0] == "%s__%s" % (src, v)]
+            if not found:
+                continue
+            ob = found[0]
+            mw = ob.matrix_world.copy(); ob.parent = None; ob.data.transform(mw); ob.matrix_world = Matrix.Identity(4)
+            co = np.array([vv.co[:] for vv in ob.data.vertices])
+            s = height / max(np.ptp(co[:, 2]), 1e-6)
+            ob.data.transform(Matrix.Scale(s, 4) @ Matrix.Translation((-(co[:, 0].min() + co[:, 0].max()) / 2, -(co[:, 1].min() + co[:, 1].max()) / 2, -co[:, 2].min())))
+            ob.name = "%s__%s__leaf" % (piece, v); ob.data.name = ob.name
+            res.append(ob)
+        for o in new:
+            if o not in res and o.name in bpy.data.objects:
+                bpy.data.objects.remove(o, do_unlink=True)
+        return res
+
+    # ---- a leaf-card ball (topiary) or bush (shrub): cards on the shell of a squashed sphere, a plain core inside so no sky shows through
+    def shell(part, centre, radii, count, length, r, solid):
+        for i in range(count):
+            z = 1 - 2 * ((i + 0.5) / count)
+            if z < -0.25:
+                z = -0.25 + (z + 0.25) * 0.2
+            ring = math.sqrt(max(0.0, 1 - z * z)); a = i * 2.39996 + r.random() * 0.4
+            nrm = unit(Vector((math.cos(a) * ring / radii[0], math.sin(a) * ring / radii[1], z / radii[2])))
+            p = Vector(centre) + Vector((math.cos(a) * ring * radii[0], math.sin(a) * ring * radii[1], z * radii[2])) * r.uniform(0.9, 1.0)
+            tang = unit(Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1))) - nrm * r.uniform(0, 0.6))
+            tang = unit(tang - nrm * tang.dot(nrm) * 0.85)
+            side = unit(tang.cross(nrm))
+            leaf_quad(part, leaves, r.randrange(len(leaves) - 1), p, tang, side, length * r.uniform(0.85, 1.15), unit(nrm + Vector((0, 0, 0.3))))
+        # (the core: a coarse sphere just inside, in the solid cell: six sides and four rings)
+        c = Vector(centre); k = 0.88; segs, rings = 6, 4
+        def at(i, j):
+            th = math.pi * j / rings; ph = 6.2832 * (i % segs) / segs
+            return c + Vector((math.sin(th) * math.cos(ph) * radii[0] * k, math.sin(th) * math.sin(ph) * radii[1] * k, math.cos(th) * radii[2] * k * (1.0 if j <= rings / 2 else 0.6)))
+        for j in range(rings):
+            for i in range(segs):
+                p00, p10, p11, p01 = at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)
+                part.quad(p00, p10, p11, p01, solid[:4], unit((p00 + p11) / 2 - c))
+
+    def shrub(variant, seed):
+        r = random.Random(seed)
+        part = Part()
+        shell(part, (0, 0, 0.34), (0.5, 0.5, 0.4), 110, 0.3, r, leaves[-1])
+        return [part.object("shrub__%s__leaf" % variant, m_leaf)]
+
+    def topiary(variant, seed):
+        r = random.Random(seed)
+        bark_part, leaf_part = Part(), Part()
+        # the pedestal and stem: two plain eight-sided columns on the alder's bark
+        for (rad, z0, z1) in ((0.26, 0.0, 0.34), (0.05, 0.34, 0.9)):
+            n = 8
+            for i in range(n):
+                a0, a1 = i / n * 6.2832, (i + 1) / n * 6.2832
+                p0 = Vector((math.cos(a0) * rad, math.sin(a0) * rad, z0)); p1 = Vector((math.cos(a1) * rad, math.sin(a1) * rad, z0))
+                bark_part.quad(p0, p1, p1 + Vector((0, 0, z1 - z0)), p0 + Vector((0, 0, z1 - z0)), (0.25 + 0.5 * i / n, 0.25, 0.25 + 0.5 * (i + 1) / n, 0.55), unit((p0 + p1) / 2))
+        shell(leaf_part, (0, 0, 1.0), (0.4, 0.4, 0.4), 120, 0.17, r, leaves[-1])
+        shell(leaf_part, (0, 0, 1.58), (0.27, 0.27, 0.27), 64, 0.14, r, leaves[-1])
+        # (the pedestal's lid)
+        n = 8
+        for i in range(n):
+            a0, a1 = i / n * 6.2832, (i + 1) / n * 6.2832
+            bark_part.quad(Vector((0, 0, 0.34)), Vector((math.cos(a0) * 0.26, math.sin(a0) * 0.26, 0.34)), Vector((math.cos(a1) * 0.26, math.sin(a1) * 0.26, 0.34)), Vector((0, 0, 0.34)), (0.3, 0.3, 0.7, 0.5), (0, 0, 1))
+        return [bark_part.object("topiary__%s__bark" % variant, m_alder), leaf_part.object("topiary__%s__leaf" % variant, m_leaf)]
+
+    # ---- a dead tree: the alder's trunk and three bare aspen limbs
+    def drytree(variant, seed):
+        r = random.Random(seed)
+        trunk = copy_object(alder, "drytree__%s__bark" % variant, m_alder)
+        shape_trunk(trunk.data, 1.9 + 0.2 * r.random(), 0.4 + 0.05 * r.random(), 0.6)
+        trunk.data.transform(Matrix.Rotation(r.random() * 6.28, 4, "Z"))
+        limbs = []
+        for i in range(4):
+            az = i * 1.7 + r.uniform(-0.4, 0.4)
+            elev = math.radians(r.uniform(35, 60))
+            Ls = r.uniform(0.9, 1.3)
+            d = Vector((math.cos(az) * math.cos(elev), math.sin(az) * math.cos(elev), math.sin(elev)))
+            limb = copy_object(aspen, "limb", m_aspen)
+            limb.data.transform(Matrix.Scale(Ls / 4.41, 4) @ Matrix.Diagonal((0.55, 0.55, 1.0, 1.0)))
+            limb.data.transform(Matrix.Translation((0, 0, 1.2 + 0.15 * i)) @ Vector((0, 0, 1)).rotation_difference(d).to_matrix().to_4x4())
+            limbs.append(limb)
+        limb_part = join(limbs, "drytree__%s__limb" % variant)
+        return [trunk, limb_part]
+
     out = []
+    out += from_pack("jungle", "tropical_palm", "palm", 1.8)
+    out += from_pack("forest", "bracken_fern", "fern", 0.6)
+    for v, seed in (("A", 5), ("B", 6), ("C", 7)):
+        out += shrub(v, seed)
+        out += topiary(v, seed + 10)
+        out += drytree(v, seed + 20)
     out += stump("A", os.path.join(REF, "pine_tree_stump", "pine_tree_stump_rfxaw_low.glb"), 0.7)
     out += stump("B", os.path.join(REF, "broken_stump", "broken_stump_rkswd_low.glb"), 1.0)
     out += stump("C", os.path.join(REF, "tree_stump", "tree_stump_qegv0_low.glb"), 0.95)

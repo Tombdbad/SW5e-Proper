@@ -25,7 +25,7 @@ function loadTreePack(): Promise<TreePack | null> {
           if (!lifted.has(mat)) {
             lifted.add(mat);
             // (the laurel's leaves are darker than the spruce's needles: 0.08 against 0.15)
-            mat.color.multiplyScalar(/laurel/.test(mat.name) ? 8 : mat.alphaTest > 0 ? 3.4 : 2.2);
+            mat.color.multiplyScalar(/laurel/.test(mat.name) ? 11 : mat.alphaTest > 0 ? 3.4 : 2.2);
             mat.roughness = 1; mat.metalness = 0;
           }
           const [piece, variant] = m.name.split("__");
@@ -45,6 +45,8 @@ export function useTreePack(): TreePack | null | undefined {
   const [pack, setPack] = useState<TreePack | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
+    // (`?oldtrees=1` on a developer page: the library's own trees, to compare)
+    if (typeof location !== "undefined" && /[?&]oldtrees\b/.test(location.search)) { setPack(null); return; }
     loadTreePack().then((p) => live && setPack(p));
     return () => { live = false; };
   }, []);
@@ -52,9 +54,10 @@ export function useTreePack(): TreePack | null | undefined {
 }
 
 // Which library piece each model stands in for, and how tall that piece is (metres), the model being `HEIGHT` tall; `variant` forces one (the birch)
-const HEIGHT: Record<string, number> = { conifer: 6.14, broadleaf: 5.6, hedge: 0.85, stump: 0.6 };
-export const TREE_SWAP: Record<string, { piece: "conifer" | "broadleaf" | "hedge" | "stump"; h: number; variant?: string }> = {
+const HEIGHT = { conifer: 6.14, broadleaf: 5.6, hedge: 0.85, stump: 0.6, palm: 1.8, fern: 0.6, shrub: 0.75, topiary: 1.85, drytree: 2.5 };
+export const TREE_SWAP: Record<string, { piece: keyof typeof HEIGHT; h: number; variant?: string }> = {
   stump: { piece: "stump", h: 0.45 },
+  tree_palm: { piece: "palm", h: 1.8 }, fern: { piece: "fern", h: 0.6 }, shrub: { piece: "shrub", h: 0.7 }, topiary: { piece: "topiary", h: 1.85 }, tree_dry: { piece: "drytree", h: 1.9 },
   tree_conifer: { piece: "conifer", h: 3.1 }, tree_conifer_m: { piece: "conifer", h: 4.65 }, tree_conifer_l: { piece: "conifer", h: 6.5 }, tree_conifer_xl: { piece: "conifer", h: 9.8 },
   tree_pine: { piece: "conifer", h: 4.1 }, tree_pine_m: { piece: "conifer", h: 6.2 }, tree_pine_l: { piece: "conifer", h: 8.6 }, tree_pine_xl: { piece: "conifer", h: 12.5 },
   tree_broad: { piece: "broadleaf", h: 3.1 }, tree_broad_m: { piece: "broadleaf", h: 4.7 }, tree_broad_l: { piece: "broadleaf", h: 6.5 },
