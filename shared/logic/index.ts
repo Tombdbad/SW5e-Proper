@@ -4584,7 +4584,10 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
   // square that stands (see `outside`), so the doors stay on the curve.
   for (const room of rooms) {
     const l = room.layout!;
-    const pick: Shape = r.next() < 0.5 ? "round" : "oval";
+    // (a hut of a tree or stilt village tries the circle first, always: its walls are the kit's rounded wall bays, a drum, wherever it fits one; the roll is still taken, so that
+    // the rest of the world's plan does not move: 2026-11-11, the user: "rework the building logic for tree villages to focus on relevant rounded modular wall segments")
+    const roll = r.next();
+    const pick: Shape = canopyOf(world, buildingId) ? "round" : roll < 0.5 ? "round" : "oval";
     // (a room over or under another takes the shape of the room its column stands on, below: only the ground room is shaped)
     if (formOf(room) || !room.tags.includes("round") || Math.min(l.width, l.height) < 5 || inColumn(room)) continue;
     const ring = { ...l, x: l.x - 1, y: l.y - 1, width: l.width + 2, height: l.height + 2 };

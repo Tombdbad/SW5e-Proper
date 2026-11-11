@@ -41,6 +41,11 @@ export const MOD_REGIONS: Record<ExtPack, Record<number, RegionLook>> = {
   frontier: { 0: { finish: "corrugated" }, 1: { finish: "rustmetal" }, 4: { finish: "planks" }, 5: { finish: "cloth", colour: "#6f7d52" }, 6: { finish: "cloth", colour: "#b79d63" } },
 };
 
+// The timber villages' kit (Endor's and Kashyyyk's: the pieces of tools/blender/build-architecture.py, no pack of their own) drawn in the wood photograph (2026-11-11, the user:
+// the tree villages' walls and platforms in "more realistic wood textures", the interiors to match: LocalMap's rooms of such a village take `TIMBER_SET` for their walls):
+// the body, the trim and the timbers are planks; the canopy's leaf and the thatch keep their own finishes
+export const TIMBER_REGIONS: Record<number, RegionLook> = { 0: { finish: "planks" }, 1: { finish: "planks" }, 4: { finish: "planks" } };
+
 // What stands on a room's roof, by the pack and a number from the room: a piece of the pack, how much of the roof's smaller side it takes (`fit`; a piece about two squares
 // across is scaled to it) or, for the things that keep their size (a vaporator, a chimney, a spire), `fixed`; and where it stands (the middle, or a corner)
 export interface RoofProp { piece: string; fit?: number; fixed?: true; corner?: boolean }

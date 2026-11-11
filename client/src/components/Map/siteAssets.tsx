@@ -8,7 +8,8 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
 import { GreatCrown, GreatPiece, TREE_SWAP, TreeStand, hasGreat, hasGreatCrown, useTreePack } from "./treePack";
-import { groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
+import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
+import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
 import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
@@ -1705,13 +1706,13 @@ function Cyl({ at, r0, r1, h, color, seg = 10 }: { at: V3; r0: number; r1: numbe
     </mesh>
   );
 }
+// (a plank is the wood photograph, not a flat brown: 2026-11-11, the user: "more realistic wood textures to the platforms"; its coordinates run on from plank to plank
+// by where it lies, so a row of them reads as one deck; a colour other than the default tints the photograph)
 function Plank({ at, size, color = PLANK, turn = 0 }: { at: V3; size: V3; color?: string; turn?: number }) {
-  return (
-    <mesh position={at} rotation={[0, turn, 0]} castShadow receiveShadow>
-      <boxGeometry args={size} />
-      <meshStandardMaterial color={color} roughness={0.85} />
-    </mesh>
-  );
+  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(...size), 0.45, at), [size.join(","), at.join(",")]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  const mat = useMemo(() => surfaceMaterial("wood", "brown_planks_03", { tint: color === PLANK ? undefined : color, lift: 1.5, parallax: 0.03, shininess: 6 }), [color]);
+  return <mesh position={at} rotation={[0, turn, 0]} geometry={geo} material={mat} castShadow receiveShadow />;
 }
 // (a beam from one point to another, for struts, braces and the ladder's rails)
 function Beam({ from, to, thick, color }: { from: V3; to: V3; thick: number; color: string }) {
@@ -1744,19 +1745,26 @@ export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0, clear }:
     <Plank at={[cx, -0.2, cz]} size={[w + 0.7, 0.34, d + 0.7]} />
   );
   const rim = (t: number): V3 => [cx + Math.cos(t) * (rx - 0.3), -0.37, cz + Math.sin(t) * (rz - 0.3)];
+  // A round hut stands on the kit's round platform (2026-11-11, the user: "use the existing round platforms"): the kit's `platform_wide`, radial planks round the trunk with its
+  // braces down to the trunk, sized to the hut (it is 4.8 from the trunk's middle to its rim). The kit's piece is drawn in the wood photograph (`timber`)
+  useArchParts();
+  const wide = round && !!archParts()?.platform_wide;
+  const sx = rx / 4.8;
+  const sz = rz / 4.8;
   if (kind === "tree") {
-    const r = Math.min(1.35, 0.55 + Math.min(w, d) * 0.09);
+    // (the post is as wide as the platform's braces need: they start on the trunk's surface, 1.2 from its middle in the kit, so that they are fixed to it)
+    const r = Math.max(Math.min(1.35, 0.55 + Math.min(w, d) * 0.09), wide ? 1.3 * Math.max(sx, sz) : 0);
     return (
       <group>
-        {deck}
+        {wide ? <ArchPiece name="platform_wide" wall={bark} thatch timber position={[cx, -0.03, cz]} scale={[sx, 1, sz]} /> : deck}
         <GreatTree w={w} d={d} aloft={aloft} biome={biome} seed={seed} clear={clear} />
         {hasGreat(trees, "deckpost")
           ? <group position={[cx, -aloft / 2 - 0.2, cz]}><GreatPiece pack={trees} name="deckpost" variant={"ABC"[Math.abs(seed) % 3]} scale={[r, aloft, r]} /></group>
           : <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={r * 1.12} r1={r * 0.92} h={aloft} color={bark} seg={12} />}
         {/* the roots splaying into the ground */}
         <Cyl at={[cx, -aloft + 0.35, cz]} r0={r * 2.1} r1={r * 1.1} h={0.7} color={bark} seg={12} />
-        {/* the struts from the trunk to the deck's rim */}
-        {[0.4, 2.0, 3.55, 5.1].map((t, i) => (
+        {/* the struts from the trunk to the deck's rim (the platform has its own) */}
+        {!wide && [0.4, 2.0, 3.55, 5.1].map((t, i) => (
           <Beam key={i} from={[cx + Math.cos(t) * r * 0.9, -2.4, cz + Math.sin(t) * r * 0.9]} to={rim(t)} thick={0.22} color={bark} />
         ))}
       </group>
@@ -1805,7 +1813,8 @@ export function GreatTree({ w, d, aloft, biome, seed, clear }: { w: number; d: n
       {/* (two beams from the trunk to the deck's rim, under the planks) */}
       {[-0.5, 0.5].map((o, i) => {
         const a = toward + o;
-        return <Beam key={i} from={[tx + Math.cos(a) * reach, -0.32, tz + Math.sin(a) * reach]} to={[tx + Math.cos(toward) * (reach + 1.6) + Math.cos(a) * 0.4, -0.32, tz + Math.sin(toward) * (reach + 1.6) + Math.sin(a) * 0.4]} thick={0.18} color={bark} />;
+        // (from inside the trunk, which is a little narrower than its reach at the deck's height: so that the beam is fixed to it, not standing off it)
+        return <Beam key={i} from={[tx + Math.cos(a) * reach * 0.55, -0.32, tz + Math.sin(a) * reach * 0.55]} to={[tx + Math.cos(toward) * (reach + 1.6) + Math.cos(a) * 0.4, -0.32, tz + Math.sin(toward) * (reach + 1.6) + Math.sin(a) * 0.4]} thick={0.18} color={bark} />;
       })}
     </group>
   );
@@ -1842,10 +1851,22 @@ export function CanopyPlatform({ w, d, open, aloft, kind, biome }: { w: number; 
           </group>
         );
       })}
-      {/* braced from below: to the trunk in the trees, on piles over the swamp */}
-      {kind === "tree"
-        ? [[0.15, 0.15], [w - 0.15, d - 0.15]].map(([x, z], i) => <Beam key={`k${i}`} from={[x, -0.2, z]} to={[w / 2, -2.2, d / 2]} thick={0.14} color={bark} />)
-        : [[0.15, 0.15], [w - 0.15, 0.15], [0.15, d - 0.15], [w - 0.15, d - 0.15]].map(([x, z], i) => <Cyl key={`k${i}`} at={[x, -aloft / 2 - 0.1, z]} r0={0.13} r1={0.11} h={aloft} color={bark} seg={7} />)}
+      {/* held from below on posts at its free corners, down to the ground (2026-11-11, the user: the support beams "are not physically connected": the braces it had ran to
+          a trunk that is not there under a balcony, and ended in the air). In the trees each post has a knee brace up into the planks; over the swamp the piles stand alone */}
+      {(kind === "tree"
+        ? (() => {
+          const corners: [number, number, string, string][] = [[0, 0, "n", "w"], [w, 0, "n", "e"], [0, d, "s", "w"], [w, d, "s", "e"]];
+          const both = corners.filter((c) => open.includes(c[2]) && open.includes(c[3]));
+          const some = corners.filter((c) => open.includes(c[2]) || open.includes(c[3]));
+          return (both.length ? both : some.slice(0, 2)).map(([x, z]) => [x === 0 ? 0.14 : w - 0.14, z === 0 ? 0.14 : d - 0.14] as [number, number]);
+        })()
+        : [[0.15, 0.15], [w - 0.15, 0.15], [0.15, d - 0.15], [w - 0.15, d - 0.15]]
+      ).map(([x, z], i) => (
+        <group key={`k${i}`}>
+          <Cyl at={[x, -aloft / 2 - 0.1, z]} r0={kind === "tree" ? 0.15 : 0.13} r1={kind === "tree" ? 0.17 : 0.11} h={aloft} color={bark} seg={7} />
+          {kind === "tree" && <Beam from={[x, -1.3, z]} to={[x + (x < w / 2 ? 0.9 : -0.9) * Math.min(1, w / 2 / 0.9), -0.2, z + (z < d / 2 ? 0.9 : -0.9) * Math.min(1, d / 2 / 0.9)]} thick={0.1} color={bark} />}
+        </group>
+      ))}
     </group>
   );
 }

@@ -169,7 +169,9 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
 
 // The walls of rooms: which set a room's plain walls get, by its pack style (`packOf`), else by its world (sandstone on the desert,
 // plaster elsewhere). `wallSet` is pure; the sets are the Poly Haven wall sets in public/textures/wall.
-export type WallSet = "painted_plaster_wall" | "brick_wall_001" | "concrete_wall_003" | "corrugated_iron_02" | "rusty_metal_02" | "sandstone_blocks_05";
+export type WallSet = "painted_plaster_wall" | "brick_wall_001" | "concrete_wall_003" | "corrugated_iron_02" | "rusty_metal_02" | "sandstone_blocks_05" | "brown_planks_03";
+// The walls of a tree or stilt village's huts, inside and out (2026-11-11, the user: the interiors to match): the planks photograph, a set of public/textures/wood
+export const TIMBER_SET: WallSet = "brown_planks_03";
 export function wallSet(pack: string | undefined, biome: string): WallSet {
   // (a ship's plain bulkheads: clean concrete-grey plating, rusted for the freighters and the underworld's)
   if (pack?.startsWith("ship_")) return pack === "ship_civilian" || pack === "ship_criminal" ? "rusty_metal_02" : "concrete_wall_003";
@@ -185,7 +187,7 @@ export function wallSet(pack: string | undefined, biome: string): WallSet {
 // A wall's material: the photograph in the room's wall colour (lightened toward white so the photograph shows), or the kit's own colours
 export function wallMaterial(set: WallSet, o: { tint?: string; vertexColors?: boolean } = {}): THREE.MeshPhongMaterial {
   const tint = o.tint ? new THREE.Color(o.tint).lerp(new THREE.Color("#ffffff"), 0.5).getStyle() : undefined;
-  return surfaceMaterial("wall", set, { vertexColors: o.vertexColors, tint, lift: 1.5, parallax: 0.03 });
+  return surfaceMaterial(set === TIMBER_SET ? "wood" : "wall", set, { vertexColors: o.vertexColors, tint, lift: 1.5, parallax: 0.03 });
 }
 // A plain wall's box, with texture coordinates in squares
 // Where the room being drawn stands in its building (set by the building's scene), for the wall textures' frame

@@ -19,7 +19,7 @@ import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
-import { MOD_REGIONS, MOD_TEXTURED, INTERIOR_LOOK, runOf, type ExtPack, type Skin, type BayPlace, type InteriorStyle } from "./interiors/modular";
+import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, INTERIOR_LOOK, runOf, type ExtPack, type Skin, type BayPlace, type InteriorStyle } from "./interiors/modular";
 import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import shipKitJson from "@shared/art/shipKit.json";
@@ -1767,6 +1767,8 @@ const DOOR_LOOKS: Record<WallSet, { folder: string; set: string; tint: string; l
   corrugated_iron_02: { folder: "wear", set: "painted_metal_shutter", tint: "#a9b2ba", lift: 1.1 },
   brick_wall_001: { folder: "wear", set: "rusty_painted_metal", tint: "#b09888", lift: 1.2 },
   rusty_metal_02: { folder: "wear", set: "rust_coarse_01", tint: "#b8a090", lift: 1.2 },
+  // (a tree village's huts are planks: its doors are a darker plank, as the wall's set is the wood photograph itself)
+  brown_planks_03: { folder: "wood", set: "brown_planks_03", tint: "#8f6a42", lift: 1.3 },
 };
 // The outline of a doorway's opening (inside its frame), `inset` in from it all round but at the floor
 function doorShape(style: Pick<Style, "arch" | "porthole"> | undefined, inset = 0): THREE.Shape {
@@ -1882,13 +1884,13 @@ function BentModel({ id, build, bend, scale }: { id: string; build: (k: Kit) => 
 // and windows take the shape of the building's style. `scale` sizes a window (it used to be a group round this, which a bend could not
 // see), `bend` lays it on a curved wall.
 // A piece of the architecture kit (interiors/architecture.ts, made by tools/blender/build-architecture.py), in the wall's colours: a crown on a roof, a frame round a way in
-export function ArchPiece({ name, wall, thatch = false, pack, position, rotation, scale }: { name: string; wall: string; thatch?: boolean; pack?: ExtPack | null; position?: V3; rotation?: V3; scale?: number | V3 }) {
+export function ArchPiece({ name, wall, thatch = false, timber = false, pack, position, rotation, scale }: { name: string; wall: string; thatch?: boolean; timber?: boolean; pack?: ExtPack | null; position?: V3; rotation?: V3; scale?: number | V3 }) {
   useArchParts();
   const piece = archParts()?.[name];
   if (!piece) return null;
   return (
     <Model
-      id={`arch:${name}:${wall}:${thatch ? 1 : 0}:${pack ?? ""}`}
+      id={`arch:${name}:${wall}:${thatch ? 1 : 0}:${pack ?? ""}:${timber ? "t" : ""}`}
       position={position}
       rotation={rotation}
       scale={scale as number}
@@ -1896,7 +1898,7 @@ export function ArchPiece({ name, wall, thatch = false, pack, position, rotation
         // (a pack's textures for the regions it has a look for: the old kit's crowns and frames then stand in the same plaster, stone and metal as the modular pieces beside them;
         // the parts are copied, a part drawn is moved and stripped)
         for (const [region, g] of Object.entries(piece.part)) {
-          const look = pack ? MOD_REGIONS[pack][Number(region)] : undefined;
+          const look = pack ? MOD_REGIONS[pack][Number(region)] : timber ? TIMBER_REGIONS[Number(region)] : undefined;
           k.add(g.clone(), modColour(look, archColour(Number(region), wall, shade, thatch)), { finish: look?.finish ?? ARCH_FINISH[Number(region)] ?? "matte" });
         }
       }}
@@ -2050,10 +2052,10 @@ export function drumPlan(drum: Drum, bays = 16): Placed[] {
   }
   return out;
 }
-export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: Drum; tint: string; pack?: ExtPack | null }) {
+export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: Drum; tint: string; pack?: ExtPack | null; timber?: boolean }) {
   useArchParts();
   useModParts();
-  const { drum, tint, pack, ...block } = props;
+  const { drum, tint, pack, timber, ...block } = props;
   const r = block.w / 2;
   if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R) return <RoomBlock {...block} />;
   const bays = baysFor(r);
@@ -2068,7 +2070,7 @@ export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: D
             {pack && modParts()?.[`ext_${pack}_bay_blank`] && /_bay(_blank|_door|_window)?_r4$/.test(p.piece) ? (
               <ModPiece name={`ext_${pack}_bay_${/door/.test(p.piece) ? "door" : /blank/.test(p.piece) ? "blank" : "window"}`} pack={pack} wall={tint} position={[0, p.y, fit.out]} scale={[fit.across * MOD_BAY_FIT, 1, 1]} />
             ) : (
-              <ArchPiece name={p.piece} wall={tint} pack={pack} position={[0, p.y, fit.out]} scale={[fit.across, 1, 1]} />
+              <ArchPiece name={p.piece} wall={tint} pack={pack} timber={timber} thatch={timber} position={[0, p.y, fit.out]} scale={[fit.across, 1, 1]} />
             )}
           </group>
         ))}

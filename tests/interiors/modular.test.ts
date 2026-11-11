@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { MOD_REGIONS, MOD_TEXTURED, awningOf, corniceOf, extPackOf, propScale, roofPropOf, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
+import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, awningOf, corniceOf, extPackOf, propScale, roofPropOf, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
 import { familyOf } from "../../client/src/components/Map/interiors/architecture";
 
 const kit = JSON.parse(fs.readFileSync("shared/art/modularKit.json", "utf8")) as Record<string, { file: string; box: number[]; tris: number; regions: number[] }>;
@@ -98,4 +98,12 @@ test("a round room's wall ring is bays of the interior kit, fewer where a way in
     assert.ok(INTERIOR_LOOK[style][0], `${style} has a look for its body`);
   }
   for (const f of ["imperial", "hull"]) for (const a of ["arc22", "arc45", "arc90", "arc45_spoke"]) assert.ok(kit[`int_corr_${f}_${a}`], `${f} ${a}`);
+});
+
+test("the timber villages' kit is drawn in planks on its body, trim and timbers, and its canopy and thatch keep their own finishes", () => {
+  for (const region of [0, 1, 4]) {
+    assert.equal(TIMBER_REGIONS[region]?.finish, "planks", `region ${region}`);
+    assert.ok(MOD_TEXTURED.has(TIMBER_REGIONS[region].finish), "a finish that takes the piece's own coordinates");
+  }
+  for (const region of [2, 3, 5, 6]) assert.equal(TIMBER_REGIONS[region], undefined, `region ${region} keeps the kit's own look (glow, glass, leaf, thatch)`);
 });
