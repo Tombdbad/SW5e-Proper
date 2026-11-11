@@ -28,8 +28,8 @@ import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShi
 export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
-import { terrainFor, terrainHeight, type Terrain } from "./terrain";
-export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, kitSpots, type KitSpot, type KitKind, ECOLOGY, ecologySpots, type EcoEntry, type EcoSpot, terrainNoise, levelDisc, levelRoad, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
+import { ECO_HIT, ECOLOGY, PACK_SCALE, ecologySpots, terrainFor, terrainHeight, type EcoSpot, type Terrain } from "./terrain";
+export { ECO_HIT, PACK_SCALE, TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, kitSpots, type KitSpot, type KitKind, ECOLOGY, ecologySpots, type EcoEntry, type EcoSpot, terrainNoise, levelDisc, levelRoad, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -13692,6 +13692,22 @@ function fieldAt(track: RaceTrack, x: number, z: number): number {
 }
 // How far a point is from the nearest centre line, track or trail (from the grid; for scenery and the look of the ground)
 export const raceDistance = (track: RaceTrack, x: number, z: number) => fieldAt(track, x, z);
+// What the land's biome pack stands by a course (client/src/components/Map/terrain.tsx `RacePackDress`; the rocks, dead trees and palms of it are props the speeders strike,
+// `mega:` in `track.props`): ground cover from the way's verge out to 160 m, the rest clear of the way by 16 m, none in a river or on the sea, the spots nearest the course
+// kept when a tier is full. The same land, the same spots, on the server and in every browser.
+export function raceEcology(track: RaceTrack, cap: Partial<Record<"cover" | "mid" | "rock", number>> = { cover: 1300, mid: 160, rock: 320 }): EcoSpot[] {
+  const biome = track.land?.biome ?? "";
+  if (!track.land || track.sea || !ECOLOGY[biome]) return [];
+  const w2 = track.width / 2;
+  const dry = (x: number, z: number) => !track.rivers?.length || !raceWater(track, x, z);
+  return ecologySpots(track.land, biome, {
+    within: (x, z) => { const d = raceDistance(track, x, z); return d > w2 + 5 && d < 420 && dry(x, z); },
+    cover: (x, z) => raceDistance(track, x, z) < 160,
+    focus: (x, z) => raceDistance(track, x, z),
+    seed: 17,
+    cap,
+  }).filter((s) => s.tier === "cover" || raceDistance(track, s.x, s.z) > w2 + 16);
+}
 // Where a point lies across the main track (2026-11-11, the ground's wheel ruts): how far to the side of the centre line (metres, signed: the left of the
 // heading is positive), the unit vector that points that way, and how far round the lap. Null where the track is not near (past 14 m) or a trail is nearer.
 export function raceWay(track: RaceTrack, x: number, z: number): { lat: number; nx: number; nz: number; s: number } | null {
@@ -14419,6 +14435,19 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
   }
   scatter(scenery.boulders, scenery.sea ? 70 : 110, W / 2 + (scenery.sea ? 9 : 3.5), W / 2 + 130, scenery.sea ? 2.5 : 1.4, scenery.sea ? 6.5 : 2.8, scenery.sea ? 6 : 2.5, false);
   scatter(scenery.shrubs, 240, W / 2 + 2.5, W / 2 + 110, 1.8, 2.8, 1.8, false);
+  // The land's Megascans pieces, struck as they stand (2026-11-11, the user: "add collision hitboxes to assets in the speeder minigames"): the rocks, the dead trees and the palms
+  // the pack stands beside the course (`raceEcology`, which the 3D scene draws from the same props), kept off the jumps' landings and apart from what stands there already
+  if (track.land && !scenery.sea) {
+    for (const s of raceEcology(track)) {
+      const hit = ECO_HIT[s.kind];
+      if (!hit || s.tier === "cover") continue;
+      const size = s.scale * PACK_SCALE;
+      const radius = hit.r * size;
+      if (!free(s.x, s.z, radius) || !clearOfJumps(s.x, s.z, 4)) continue;
+      take(s.x, s.z, radius);
+      track.props.push({ id: track.props.length, key: `mega:${s.kind}:${"ABC"[s.variant]}`, p: [s.x, groundAt(track, s.x, s.z, false), s.z], yaw: s.yaw, scale: s.scale, v: s.variant, hit: { r: radius, h: hit.h * size, ...(hit.soft ? { soft: hit.soft * size } : {}) } });
+    }
+  }
   // Rivals' marks for the hazards and props on the track were set above; the time allowed is generous
   track.limit = Math.ceil(((road ? roadEnd : laps * loop.length)) / 22) + 60 + (road?.block ? 60 : 0);
   // (the index of what stands by the course is first made before its props are placed, and so holds none: made again, with them, the next time it is

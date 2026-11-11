@@ -45,7 +45,7 @@ import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { extPackOf, roofPropOf, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
@@ -1395,7 +1395,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const wallTexture = canopy ? TIMBER_SET : wallSet(wallPack, mood?.biome ?? biome ?? "");
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
-  const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
+  // (a tree or stilt village's huts are floored in planks too: siteAssets.tsx `timberFloor`; the roofs and the open decks keep theirs)
+  const floorTexture = canopy && plan?.form !== "roof" ? timberFloor() : floorLook(floor, mood?.buildingType, plan?.form === "roof");
   // The wall line round the room (straight sides, a quarter circle at each rounded corner: shared/logic footprint `outline`), where each
   // door, way out and window stands on it (on the curve of a round room), and the wall that is left round them: straight runs and arcs
   const wallLine = useMemo(() => outline(width, height, [nw, ne, se, sw]), [width, height, nw, ne, se, sw]);

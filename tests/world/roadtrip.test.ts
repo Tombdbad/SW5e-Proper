@@ -2,7 +2,7 @@
 // roadblock (stopped at, opened, rammed), the crewmate (driving while the party fires, or firing while the party drives), the trip's time.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CHASE, chaseResult, raceCourse, roadAt, roadStart, settleBlock, stepRace, type Race, type RaceScenery, type RaceTrack, type World } from "../../shared/logic/index";
+import { CHASE, chaseResult, raceCourse, raceDistance, roadAt, roadStart, settleBlock, stepRace, type Race, type RaceScenery, type RaceTrack, type World } from "../../shared/logic/index";
 import { BIOME_LINKS, blockPursuit, crewmate, legCount, legPar, planTrip, settleStop, driveMinutes, type Block } from "../../shared/logic/roadtrip";
 
 const scenery: RaceScenery = {
@@ -246,4 +246,19 @@ test("where the guards ride, their speeders stand idle until the party runs the 
   assert.ok(!now.over, "a chase with riders is a chase, not an end");
   const after = run(now, track, auto, 120);
   assert.ok(after.racers.find((r) => r.party)!.finish !== null || after.racers.find((r) => r.party)!.wrecked, "and the road goes on to its end");
+});
+
+test("the land's Megascans rocks, dead trees and palms stand beside a course as props a speeder strikes, clear of the way, the same each time", () => {
+  const woods: RaceScenery = { ...scenery, biome: "forest" };
+  const a = raceCourse(5, woods, 1, {});
+  const b = raceCourse(5, woods, 1, {});
+  const mega = a.props.filter((p) => p.key.startsWith("mega:"));
+  assert.ok(mega.length > 10, `some stand by the course (${mega.length})`);
+  assert.deepEqual(mega.map((p) => [p.key, Math.round(p.p[0]), Math.round(p.p[2])]), b.props.filter((p) => p.key.startsWith("mega:")).map((p) => [p.key, Math.round(p.p[0]), Math.round(p.p[2])]), "the same course gives the same props");
+  for (const p of mega) {
+    assert.ok(p.hit && (p.hit.r ?? 0) > 0 && p.hit.h > 0, `${p.key} has a shape to strike`);
+    assert.ok(raceDistance(a, p.p[0], p.p[2]) > a.width / 2 + 16 - 1, `${p.key} is clear of the way`);
+  }
+  assert.ok(new Set(mega.map((p) => p.key.split(":")[1])).size >= 2, "more than one kind");
+  assert.equal(raceCourse(5, { ...scenery, biome: "forest", sea: true }, 1, {}).props.filter((p) => p.key.startsWith("mega:")).length, 0, "none over the sea");
 });

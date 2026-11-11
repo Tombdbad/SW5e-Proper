@@ -20,6 +20,9 @@ REF = os.path.join(ROOT, "tools", "refs", "megascans")
 OUT = os.path.join(ROOT, "client", "public", "megascans")
 PREVIEW = sys.argv[sys.argv.index("--preview") + 1] if "--preview" in sys.argv else None
 TMP = tempfile.mkdtemp(prefix="megascans-trees-")
+# (the user, 2026-11-11: "the laurel leaves are too big, reduce size by 35%": every leaf card and the cut-out's leaves are this much of the scan's size; the counts are raised a quarter
+# to keep a crown from thinning)
+LEAF = 0.65
 
 # ---------------------------------------------------------------------------------------------------------------- images
 def pixels(img):
@@ -142,7 +145,7 @@ def leaf_cutout(atlas, rects, size=1024, count=120, seed=77):
     for _ in range(count):
         c = crops[rnd.randrange(len(crops))]
         h, w = c.shape[:2]
-        s = rnd.uniform(1.0, 1.5); ang = rnd.uniform(0, 2 * math.pi)
+        s = rnd.uniform(1.0, 1.5) * LEAF; ang = rnd.uniform(0, 2 * math.pi)
         R = int(math.hypot(w, h) * s / 2) + 2
         ys, xs = np.mgrid[-R:R + 1, -R:R + 1]
         ca, sa = math.cos(ang), math.sin(ang)
@@ -407,21 +410,21 @@ def build():
             rot = Vector((0, 0, 1)).rotation_difference(d).to_matrix().to_4x4()
             me.transform(Matrix.Translation((0, 0, th * 0.9)) @ rot)
             limbs.append(limb)
-            for q in range(72):
+            for q in range(90):
                 t = r.uniform(0.3, 1.0)
                 spread = 0.35 + 0.65 * t
                 p = Vector((0, 0, th * 0.9)) + d * (Ls * t) + Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-0.7, 0.7))) * spread * 0.8
                 out = unit(p - centre)
                 dirv = unit(out * 0.8 + Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-0.2, 0.5))))
                 side = unit(dirv.cross(Vector((r.uniform(-0.3, 0.3), r.uniform(-0.3, 0.3), 1))))
-                leaf_quad(leaf, leaves, r.randrange(len(leaves) - 1), p - dirv * 0.12, dirv, side, r.uniform(0.42, 0.62), unit(out * 0.7 + Vector((0, 0, 0.7))))
-        for q in range(130):
+                leaf_quad(leaf, leaves, r.randrange(len(leaves) - 1), p - dirv * 0.12, dirv, side, r.uniform(0.42, 0.62) * LEAF, unit(out * 0.7 + Vector((0, 0, 0.7))))
+        for q in range(160):
             a = r.uniform(0, 6.2832); rr = r.uniform(0.3, 2.1)
             p = centre + Vector((math.cos(a) * rr, math.sin(a) * rr, r.uniform(0.2, 1.5)))
             out = unit(p - centre + Vector((0, 0, 0.3)))
             dirv = unit(out * 0.6 + Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(0, 0.8))))
             side = unit(dirv.cross(Vector((r.uniform(-0.3, 0.3), r.uniform(-0.3, 0.3), 1))))
-            leaf_quad(leaf, leaves, r.randrange(len(leaves) - 1), p, dirv, side, r.uniform(0.42, 0.62), unit(out * 0.6 + Vector((0, 0, 0.8))))
+            leaf_quad(leaf, leaves, r.randrange(len(leaves) - 1), p, dirv, side, r.uniform(0.42, 0.62) * LEAF, unit(out * 0.6 + Vector((0, 0, 0.8))))
         limb_part = join(limbs, "broadleaf__%s__limb" % variant)
         for p_ in limb_part.data.polygons:
             p_.use_smooth = True
@@ -440,7 +443,7 @@ def build():
             part.quad(c[idx[0]], c[idx[1]], c[idx[2]], c[idx[3]], solid[:4], nrm)
         faces = [("top", X * Y), ("front", X * Z), ("back", X * Z), ("left", Y * Z), ("right", Y * Z)]
         total = sum(a for _, a in faces)
-        for i in range(130):
+        for i in range(165):
             pick = r.random() * total; acc = 0
             for name, a in faces:
                 acc += a
@@ -459,7 +462,7 @@ def build():
             tang = unit(Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1))) - nrm * r.uniform(-0.2, 0.8))
             tang = unit(tang - nrm * tang.dot(nrm) * 0.9)
             side = unit(tang.cross(nrm))
-            leaf_quad(part, leaves, r.randrange(len(leaves) - 1), p + nrm * 0.02, tang, side, r.uniform(0.26, 0.36), unit(nrm + Vector((0, 0, 0.4))))
+            leaf_quad(part, leaves, r.randrange(len(leaves) - 1), p + nrm * 0.02, tang, side, r.uniform(0.26, 0.36) * LEAF, unit(nrm + Vector((0, 0, 0.4))))
         return [part.object("hedge__%s__leaf" % variant, m_leaf)]
 
     # ---- stumps: the three scans, each a variant, set on the ground at about 0.6 m a side and cut to ~250 triangles
@@ -515,7 +518,7 @@ def build():
             tang = unit(Vector((r.uniform(-1, 1), r.uniform(-1, 1), r.uniform(-1, 1))) - nrm * r.uniform(0, 0.6))
             tang = unit(tang - nrm * tang.dot(nrm) * 0.85)
             side = unit(tang.cross(nrm))
-            leaf_quad(part, leaves, r.randrange(len(leaves) - 1), p, tang, side, length * r.uniform(0.85, 1.15), unit(nrm + Vector((0, 0, 0.3))))
+            leaf_quad(part, leaves, r.randrange(len(leaves) - 1), p, tang, side, length * LEAF * r.uniform(0.85, 1.15), unit(nrm + Vector((0, 0, 0.3))))
         # (the core: a coarse sphere just inside, in the solid cell: six sides and four rings)
         c = Vector(centre); k = 0.88; segs, rings = 6, 4
         def at(i, j):
@@ -526,11 +529,39 @@ def build():
                 p00, p10, p11, p01 = at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)
                 part.quad(p00, p10, p11, p01, solid[:4], unit((p00 + p11) / 2 - c))
 
-    def shrub(variant, seed):
-        r = random.Random(seed)
-        part = Part()
-        shell(part, (0, 0, 0.34), (0.5, 0.5, 0.4), 110, 0.3, r, leaves[-1])
-        return [part.object("shrub__%s__leaf" % variant, m_leaf)]
+    # ---- shrubs: the Bay Laurel scan's own meshes (2026-11-11, the user: "the shrub meshes need to be replaced with low-poly megascans alternatives"): the plant's LOD2 variants C, D and E,
+    # each decimated to ~350 triangles, in the plant's own 512 map, stood to 0.75 m (the scan is 0.2-0.4 m across: a sprig)
+    laurel_dir = os.path.join(REF, "bay_laurel", "x")
+    def laurel_material():
+        b = bpy.data.images.load(os.path.join(laurel_dir, "Bay_Laurel_umjjbjzja_Low_1K_BaseColor.jpg")); b.scale(512, 512)
+        o = bpy.data.images.load(os.path.join(laurel_dir, "Bay_Laurel_umjjbjzja_Low_1K_Opacity.jpg")); o.scale(512, 512)
+        arr = pixels(b).copy(); arr[:, :, 3] = pixels(o)[:, :, 0]
+        return image_material("shrub_laurel", arr, True)
+    m_shrub = laurel_material()
+    def shrub(variant, seed, var):
+        path = os.path.join(laurel_dir, "Bay_Laurel_umjjbjzja_Low_umjjbjzja_Var%s_LOD2.fbx" % var)
+        before = set(bpy.data.objects)
+        bpy.ops.wm.fbx_import(filepath=path)
+        new = [o for o in bpy.data.objects if o not in before]
+        meshes = [o for o in new if o.type == "MESH"]
+        for o in meshes:
+            mw = o.matrix_world.copy(); o.parent = None; o.data.transform(mw); o.matrix_world = Matrix.Identity(4)
+        if len(meshes) > 1:
+            with bpy.context.temp_override(active_object=meshes[0], selected_editable_objects=meshes, selected_objects=meshes):
+                bpy.ops.object.join()
+        ob = meshes[0]
+        for o in new:
+            if o is not ob and o.name in bpy.data.objects:
+                bpy.data.objects.remove(o, do_unlink=True)
+        for attr in list(ob.data.color_attributes):
+            ob.data.color_attributes.remove(attr)
+        co = np.array([v.co[:] for v in ob.data.vertices])
+        k = 0.95 / max(np.ptp(co[:, 2]), 1e-6)
+        ob.data.transform(Matrix.Scale(k, 4) @ Matrix.Translation((-(co[:, 0].min() + co[:, 0].max()) / 2, -(co[:, 1].min() + co[:, 1].max()) / 2, -co[:, 2].min())))
+        decimate(ob, 350)
+        ob.data.materials.clear(); ob.data.materials.append(m_shrub)
+        ob.name = "shrub__%s__leaf" % variant; ob.data.name = ob.name
+        return [ob]
 
     def topiary(variant, seed):
         r = random.Random(seed)
@@ -542,8 +573,8 @@ def build():
                 a0, a1 = i / n * 6.2832, (i + 1) / n * 6.2832
                 p0 = Vector((math.cos(a0) * rad, math.sin(a0) * rad, z0)); p1 = Vector((math.cos(a1) * rad, math.sin(a1) * rad, z0))
                 bark_part.quad(p0, p1, p1 + Vector((0, 0, z1 - z0)), p0 + Vector((0, 0, z1 - z0)), (0.25 + 0.5 * i / n, 0.25, 0.25 + 0.5 * (i + 1) / n, 0.55), unit((p0 + p1) / 2))
-        shell(leaf_part, (0, 0, 1.0), (0.4, 0.4, 0.4), 120, 0.17, r, leaves[-1])
-        shell(leaf_part, (0, 0, 1.58), (0.27, 0.27, 0.27), 64, 0.14, r, leaves[-1])
+        shell(leaf_part, (0, 0, 1.0), (0.4, 0.4, 0.4), 150, 0.17, r, leaves[-1])
+        shell(leaf_part, (0, 0, 1.58), (0.27, 0.27, 0.27), 80, 0.14, r, leaves[-1])
         # (the pedestal's lid)
         n = 8
         for i in range(n):
@@ -582,7 +613,7 @@ def build():
         lumps += [((math.cos(2 * math.pi * i / 5 + 0.4) * 4.2, 15.2 + 0.3 * (i % 2), math.sin(2 * math.pi * i / 5 + 0.4) * 4.2), 2.4) for i in range(5)]
         lumps += [((math.cos(2 * math.pi * i / 3 + 1.1) * 2.2, 17.6, math.sin(2 * math.pi * i / 3 + 1.1) * 2.2), 2.0) for i in range(3)]
         for (p, rad) in lumps:
-            shell(part, kit(*p), (rad, rad, rad * 0.72), int(11 * rad * rad), 0.4 * rad + 0.1, r, leaves[-1])
+            shell(part, kit(*p), (rad, rad, rad * 0.72), int(14 * rad * rad), 0.4 * rad + 0.1, r, leaves[-1])
         return [part.object("greatcrown__%s__leaf" % variant, m_leaf)]
 
     def greatneedles(variant, seed):
@@ -663,7 +694,7 @@ def build():
     out += from_pack("jungle", "tropical_palm", "palm", 1.8)
     out += from_pack("forest", "bracken_fern", "fern", 0.6)
     for v, seed in (("A", 5), ("B", 6), ("C", 7)):
-        out += shrub(v, seed)
+        out += shrub(v, seed, {"A": "C", "B": "D", "C": "E"}[v])
         out += topiary(v, seed + 10)
         out += drytree(v, seed + 20)
     out += stump("A", os.path.join(REF, "pine_tree_stump", "pine_tree_stump_rfxaw_low.glb"), 0.7)

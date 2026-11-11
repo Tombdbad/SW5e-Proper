@@ -7,7 +7,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
-import { GreatCrown, GreatPiece, TREE_SWAP, TreeStand, hasGreat, hasGreatCrown, useTreePack } from "./treePack";
+import { GreatCrown, GreatPiece, RockStand, TREE_SWAP, TreeStand, hasGreat, hasGreatCrown, isRockKey, useTreePack } from "./treePack";
+import { useMegascans } from "./packs";
 import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
@@ -1057,7 +1058,10 @@ function Group({ name, v, items, biome, palette }: { name: string; v: number; it
   const colours = pieceColours(name, v, palette);
   // Trees and hedges are the Megascans-built ones (treePack.tsx) where public/megascans/trees.glb is there: nothing is drawn of them for the moment it loads, the library's own where it is missing
   const trees = useTreePack();
+  // (and the rocks are the biome's Megascans rocks where it has a pack: treePack.tsx `RockStand`)
+  const rocks = useMegascans(isRockKey(name) ? biome : "");
   if (TREE_SWAP[name] && trees !== null) return trees ? <TreeStand pack={trees} name={name} variant={"ABC"[v % 3]} items={items} /> : null;
+  if (rocks && isRockKey(name)) return <RockStand pack={rocks} biome={biome} name={name} v={v} items={items} />;
   return (
     <>
       <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} far={piece.far && ((k) => { k.surfaces = plantSurfaces(colours); piece.far!(k, colours, v); })} items={items} file={file} />
@@ -1354,10 +1358,12 @@ export function FarGround({ set, tint, size, at }: { set: string; tint: THREE.Co
 // flat slab of a room (which stays as what shows while the maps load). `tile` is the squares in one repeat; `tint` multiplies the
 // photograph (dark sets are brought up, the plating is a steel version of the metal plate, made by tools/build-hull-textures.mjs)
 // `dir` is the folder under public/textures the set is in: the floors ("floor") or the ground's sets ("ground"), which the sand and rock floors share
-export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number; dir: "floor" | "ground" };
+export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number; dir: "floor" | "ground" | "wood" };
 const FLOOR_PARALLAX = 0.04;
-const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX, dir: "floor" | "ground" = "floor"): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax, dir });
+const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX, dir: "floor" | "ground" | "wood" = "floor"): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax, dir });
 
+// The floor of a hut of a tree or stilt village: planks, as its walls are (2026-11-11, the user: the interiors to match the outside)
+export const timberFloor = (): FloorLook => floorSet("brown_planks_03", 3, new THREE.Color(1.15, 1.05, 0.95), 0.03, "wood");
 // What a room's floor is made of, by the floor kind its building gives it (sprites.tsx floorOf), the building's type and whether it is a roof
 export function floorLook(kind: string, buildingType = "", roof = false): FloorLook | null {
   if (roof) return floorSet("concrete_floor_worn_02", 6, "#ffffff", 0.03);

@@ -729,6 +729,24 @@ export const ECOLOGY: Record<string, { pack: string; thin: number; entries: EcoE
     ],
   },
 };
+// How much bigger than life the pack's pieces are stood (the user, 2026-11-11: they read too small, "at least 100%"); client/src/components/Map/packs.ts uses this
+export const PACK_SCALE = 2;
+// What a speeder strikes of the pack's pieces (2026-11-11, the user: "add collision hitboxes to assets in the speeder minigames"): the half-width, height and drag-through radius of
+// the piece as the pack has it, before PACK_SCALE and the spot's own scale (the measured size of each model, tools/megascans.json). Ground cover (ferns, grass, shrubs) is struck by nothing.
+export const ECO_HIT: Record<string, { r: number; h: number; soft?: number }> = {
+  forest_boulder: { r: 0.5, h: 0.85 },
+  mossy_forest_boulder: { r: 0.9, h: 1.25 },
+  canyon_sandstone_boulder: { r: 0.42, h: 0.4 },
+  desert_western_pile_rock_small_01: { r: 0.8, h: 0.3 },
+  icelandic_boulder: { r: 0.95, h: 1.4 },
+  volcanic_dolerite_rocks: { r: 0.28, h: 0.3 },
+  limestone_rocks: { r: 0.8, h: 0.25 },
+  snow_pile: { r: 2.6, h: 1.9, soft: 3.2 },
+  dead_tree: { r: 0.4, h: 5.9 },
+  tropical_palm: { r: 0.22, h: 1.5, soft: 1.0 },
+  alexandra_palm: { r: 0.22, h: 1.4, soft: 0.9 },
+  chinese_fan_palm: { r: 0.22, h: 1.1, soft: 1.0 },
+};
 export interface EcoSpot { kind: string; tier: EcoEntry["tier"]; variant: number; x: number; z: number; yaw: number; scale: number; sink: number }
 // `within`: where anything may stand (not in water, not on the place); `cover`: where ground cover may (near the place only: far off a fern is a speck); `cap`: the most of
 // each tier; `focus`: how far a spot is from what matters (default: the distance from the origin, the place; a race course gives its distance from the track)

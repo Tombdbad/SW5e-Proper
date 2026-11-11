@@ -8,8 +8,9 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { ECOLOGY, ecologySpots, groundAt, raceDistance, raceWater, type RaceTrack, kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
+import { ECOLOGY, ecologySpots, groundAt, raceEcology, type RaceTrack, kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
 import { UNITS_PER_M } from "./models";
+import { PACK_SCALE, useMegascans, type MegaPack } from "./packs";
 import { useQuality } from "./siteAssets";
 import { shaderPatch, type GroundLayers } from "./babylon";
 import { meanOf } from "./surfaces";
@@ -94,57 +95,6 @@ function useTerrainKit(): Record<string, THREE.BufferGeometry> {
   }, [gltf]);
 }
 
-// The Megascans pack of a biome (public/megascans/<pack>.glb, tools/blender/build-megascans-pack.py): pieces named <piece>__<variant>. The files are NOT in the
-// repository (the Fab Standard License, a public repo): where they are missing the loader fails quietly and the kit and the cones are what is drawn. Loaded once
-// a pack, shared; null while loading or when there is none.
-// How much bigger than life the pack's pieces are stood (the user, 2026-11-11: they read too small beside the figures and buildings, "at least 100%"): a fern 2.8 m across, a boulder 2.5 m
-export const PACK_SCALE = 2;
-export interface PackPiece { geometry: THREE.BufferGeometry; material: THREE.Material }
-export type MegaPack = Map<string, PackPiece>;
-const PACKS = new Map<string, Promise<MegaPack | null>>();
-function loadPack(name: string): Promise<MegaPack | null> {
-  let p = PACKS.get(name);
-  if (!p) {
-    p = new Promise((done) => {
-      new GLTFLoader().load(
-        `/megascans/${name}.glb`,
-        (g) => {
-          const pack: MegaPack = new Map();
-          const lifted = new Set<THREE.Material>();
-          g.scene.traverse((o) => {
-            const m = o as THREE.Mesh;
-            if (m.isMesh && m.name) {
-              const mat = m.material as THREE.MeshStandardMaterial;
-              // (a scan's albedo is a real leaf's or rock's, dark: the sun of the scan's own scenes is stronger than ours: lifted, as the leaf textures are, surfaces.tsx)
-              if (!lifted.has(mat)) {
-                lifted.add(mat);
-                mat.color.multiplyScalar(mat.alphaTest > 0 ? 3 : 1.5);
-              }
-              pack.set(m.name, { geometry: m.geometry, material: mat });
-            }
-          });
-          done(pack);
-        },
-        undefined,
-        () => done(null),
-      );
-    });
-    PACKS.set(name, p);
-  }
-  return p;
-}
-export function useMegascans(biome: string): MegaPack | null {
-  const name = ECOLOGY[biome]?.pack;
-  const [pack, setPack] = useState<MegaPack | null>(null);
-  useEffect(() => {
-    let live = true;
-    setPack(null);
-    if (name) loadPack(name).then((p) => live && setPack(p));
-    return () => { live = false; };
-  }, [name]);
-  return pack;
-}
-
 // What the pack stands on the land (shared/logic ecologySpots): rocks and dead trees out to the horizon, ground cover near the place only, each piece an instanced
 // mesh by its variant, stood on the ground and sunk by its share, turned at random
 function PackDress({ pack, biome, built, lite }: { pack: MegaPack; biome: string; built: { t: Terrain; heightAt: (x: number, z: number) => number; away: (x: number, z: number) => boolean; unit: number; inner: number }; lite: boolean }) {
@@ -194,20 +144,18 @@ export function RacePackDress({ track }: { track: RaceTrack }) {
   const biome = track.land?.biome ?? "";
   const pack = useMegascans(track.sea ? "" : biome);
   const lite = useQuality((q) => q.tier === "lite");
-  const w2 = track.width / 2;
   const spots = useMemo(() => {
     if (!track.land || track.sea || !ECOLOGY[biome]) return [];
-    const dry = (x: number, z: number) => !track.rivers?.length || !raceWater(track, x, z);
-    const focus = (x: number, z: number) => raceDistance(track, x, z);
-    return ecologySpots(track.land, biome, {
-      within: (x, z) => { const d = raceDistance(track, x, z); return d > w2 + 5 && d < 420 && dry(x, z); },
-      cover: (x, z) => raceDistance(track, x, z) < 160,
-      // (rocks and dead trees at least 16 m from the way's edge: the cover is allowed nearer)
-      focus,
-      seed: 17,
-      cap: lite ? { cover: 400, mid: 60, rock: 120 } : { cover: 1300, mid: 160, rock: 320 },
-    }).filter((s) => s.tier === "cover" || raceDistance(track, s.x, s.z) > w2 + 16);
-  }, [track, biome, w2, lite]);
+    // The ground cover is the land's (`raceEcology`); the rocks, dead trees and palms are the course's own props (`mega:`: shared/logic puts them where it has room, with the hit
+    // shapes a speeder strikes), the nearest ones where the device is a light one
+    const cover = raceEcology(track, { cover: lite ? 400 : 1300, mid: 0, rock: 0 }).filter((s) => s.tier === "cover");
+    const sink: Record<string, number> = Object.fromEntries(ECOLOGY[biome].entries.map((e) => [e.kind, e.sink ?? 0]));
+    const struck = track.props.filter((p) => p.key.startsWith("mega:")).slice(0, lite ? 180 : 480).map((p) => {
+      const [, kind, variant] = p.key.split(":");
+      return { kind, tier: "rock" as const, variant: "ABC".indexOf(variant), x: p.p[0], z: p.p[2], yaw: p.yaw, scale: p.scale, sink: sink[kind] ?? 0 };
+    });
+    return [...cover, ...struck];
+  }, [track, biome, lite]);
   const heightAt = useMemo(() => (x: number, z: number) => groundAt(track, x, z, true), [track]);
   if (!pack || !spots.length) return null;
   return <PackStand pack={pack} spots={spots} heightAt={heightAt} unit={1} />;
@@ -361,6 +309,9 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
   }, [biome, seed, inner, lite, diffuse, tint]);
   // The kit: boulders on the ground that is not flat (unless the Megascans pack stands the rocks), scree at the foot of a steep slope, overhanging ledges on the cliffs (shared/logic kitSpots)
   const kitMeshes = useMemo(() => {
+    // (the kit's own boulders, scree and ledges only where there is no Megascans pack: with one, Megascans rocks stand in their places, `rockSpots` below: 2026-11-11, the user: "remove
+    // the rocks and scree clusters that we had PRIOR, and replace with megascans assets")
+    if (pack) return [];
     const { t, heightAt, away, unit, palette, ridges } = built;
     const rocks = pack ? 0 : (ROCKS[biome] ?? 0.04) * 2.5;
     const spots = kitSpots(t, { boulders: rocks, scree: (ROCKS[biome] ?? 0.04) * 3, ledges: ridges >= 0.35 ? 0.35 : 0.1, seed: 5, within: away, cap: lite ? 500 : 1400 });
@@ -385,6 +336,24 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     }
     return out;
   }, [built, kit, pack, biome, lite]);
+  // The kit's places for scree and ledges, with the biome's own Megascans rocks stood there: a heap of scree is four small rocks of the biome about its spot, a ledge a big one with its
+  // back sunk in the slope, turned downhill
+  const rockSpots = useMemo(() => {
+    const kinds = ECOLOGY[biome]?.entries.filter((e) => e.tier === "rock").map((e) => e.kind) ?? [];
+    if (!pack || !kinds.length) return [];
+    const { t, away, ridges } = built;
+    const out: { kind: string; tier: "rock"; variant: number; x: number; z: number; yaw: number; scale: number; sink: number }[] = [];
+    kitSpots(t, { boulders: 0, scree: (ROCKS[biome] ?? 0.04) * 3, ledges: ridges >= 0.35 ? 0.35 : 0.1, seed: 5, within: away, cap: lite ? 500 : 1400 }).forEach((s, i) => {
+      if (s.kind === "scree") {
+        for (let k = 0; k < 4; k++) {
+          const a = k * 2.4 + i;
+          const d = 1.2 + (k % 3) * 0.9;
+          out.push({ kind: kinds[(i + k) % kinds.length], tier: "rock", variant: 0, x: s.x + Math.cos(a) * d, z: s.z + Math.sin(a) * d, yaw: a, scale: 0.16 + 0.1 * ((i + k) % 3), sink: 0.15 });
+        }
+      } else if (s.kind.startsWith("ledge")) out.push({ kind: kinds[i % kinds.length], tier: "rock", variant: 0, x: s.x, z: s.z, yaw: s.yaw, scale: 0.9 + (s.scale - 1) * 0.8, sink: 0.4 });
+    });
+    return out;
+  }, [built, pack, biome, lite]);
   useEffect(() => () => {
     built.geo.dispose();
     built.lakes?.dispose();
@@ -404,6 +373,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
       {built.treeMesh && <primitive object={built.treeMesh} />}
       {kitMeshes.map((m) => <primitive key={m.uuid} object={m} />)}
       {pack && <PackDress pack={pack} biome={biome} built={built} lite={lite} />}
+      {pack && rockSpots.length > 0 && <PackStand pack={pack} spots={rockSpots} heightAt={built.heightAt} unit={built.unit} />}
     </group>
   );
 }

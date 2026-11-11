@@ -6,6 +6,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { ECOLOGY } from "@shared/logic";
+import type { MegaPack } from "./packs";
 
 export interface TreePart { geometry: THREE.BufferGeometry; material: THREE.Material }
 export type TreePack = Map<string, TreePart[]>;
@@ -54,10 +56,10 @@ export function useTreePack(): TreePack | null | undefined {
 }
 
 // Which library piece each model stands in for, and how tall that piece is (metres), the model being `HEIGHT` tall; `variant` forces one (the birch)
-const HEIGHT = { conifer: 6.14, broadleaf: 5.6, hedge: 0.85, stump: 0.6, palm: 1.8, fern: 0.6, shrub: 0.75, topiary: 1.85, drytree: 2.5 };
+const HEIGHT = { conifer: 6.14, broadleaf: 5.6, hedge: 0.85, stump: 0.6, palm: 1.8, fern: 0.6, shrub: 0.95, topiary: 1.85, drytree: 2.5 };
 export const TREE_SWAP: Record<string, { piece: keyof typeof HEIGHT; h: number; variant?: string }> = {
   stump: { piece: "stump", h: 0.45 },
-  tree_palm: { piece: "palm", h: 1.8 }, fern: { piece: "fern", h: 0.6 }, shrub: { piece: "shrub", h: 0.7 }, topiary: { piece: "topiary", h: 1.85 }, tree_dry: { piece: "drytree", h: 1.9 },
+  tree_palm: { piece: "palm", h: 1.8 }, fern: { piece: "fern", h: 0.6 }, shrub: { piece: "shrub", h: 0.85 }, topiary: { piece: "topiary", h: 1.85 }, tree_dry: { piece: "drytree", h: 1.9 },
   tree_conifer: { piece: "conifer", h: 3.1 }, tree_conifer_m: { piece: "conifer", h: 4.65 }, tree_conifer_l: { piece: "conifer", h: 6.5 }, tree_conifer_xl: { piece: "conifer", h: 9.8 },
   tree_pine: { piece: "conifer", h: 4.1 }, tree_pine_m: { piece: "conifer", h: 6.2 }, tree_pine_l: { piece: "conifer", h: 8.6 }, tree_pine_xl: { piece: "conifer", h: 12.5 },
   tree_broad: { piece: "broadleaf", h: 3.1 }, tree_broad_m: { piece: "broadleaf", h: 4.7 }, tree_broad_l: { piece: "broadleaf", h: 6.5 },
@@ -108,4 +110,40 @@ export function TreeStand({ pack, name, variant, items }: { pack: TreePack; name
       ))}
     </>
   );
+}
+
+// The library's rocks (siteAssets.tsx `rock`, `boulder`, `rock_small`, `sea_stack`) as the biome's own Megascans rocks (2026-11-11, the user: "remove the rocks and scree clusters that we
+// had PRIOR, and replace with megascans assets"): the pack's rock pieces of the biome (`ECOLOGY` entries of the rock tier), sized to the library piece's own hit radius so that what a
+// speeder strikes is what is drawn; a heap of small stones is three small rocks; a sea stack the tallest piece stood to its height
+const ROCK_SWAP: Record<string, { r: number; tall?: number; copies?: number }> = { rock: { r: 0.55 }, boulder: { r: 0.9 }, rock_small: { r: 0.16, copies: 3 }, sea_stack: { r: 0.85, tall: 2.6 } };
+export const isRockKey = (key: string): boolean => key in ROCK_SWAP;
+export function RockStand({ pack, biome, name, v, items }: { pack: MegaPack; biome: string; name: string; v: number; items: Spot[] }) {
+  const kinds = ECOLOGY[biome]?.entries.filter((e) => e.tier === "rock").map((e) => e.kind) ?? [];
+  const spec = ROCK_SWAP[name];
+  const piece = kinds.length ? pack.get(`${kinds[v % kinds.length]}__A`) : undefined;
+  const mesh = useMemo(() => {
+    if (!piece) return null;
+    piece.geometry.computeBoundingBox();
+    const size = piece.geometry.boundingBox!.getSize(new THREE.Vector3());
+    const k = spec.tall ? spec.tall / Math.max(size.y, 1e-3) : (2 * spec.r) / Math.max(size.x, size.z, 1e-3);
+    const copies = spec.copies ?? 1;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), sc = new THREE.Vector3();
+    const out = new THREE.InstancedMesh(piece.geometry, piece.material, items.length * copies);
+    items.forEach((it, i) => {
+      for (let c = 0; c < copies; c++) {
+        const a = it.rot + c * 2.1;
+        const off = copies > 1 ? 0.3 * it.scale : 0;
+        const s = k * it.scale * (copies > 1 ? 0.55 + 0.2 * c : 1);
+        m.compose(pos.set(it.x + Math.cos(a) * off, (it.h ?? 0) - 0.2 * size.y * s, it.y + Math.sin(a) * off), q.setFromEuler(e.set(0, a * 1.7, 0)), sc.setScalar(s));
+        out.setMatrixAt(i * copies + c, m);
+      }
+    });
+    out.instanceMatrix.needsUpdate = true;
+    out.frustumCulled = false;
+    out.castShadow = true;
+    out.receiveShadow = true;
+    out.raycast = () => null;
+    return out;
+  }, [piece, items, spec]);
+  return mesh ? <primitive object={mesh} /> : null;
 }

@@ -512,7 +512,7 @@ function RaceProps({ track, biome, broken, cover }: { track: RaceTrack; biome: s
   const gone = broken.length;
   const placed = useMemo(() => {
     const out = new Set(broken);
-    return track.props.filter((p) => p.key !== "gate" && !out.has(p.id)).map((p): Placed => ({ key: p.key, x: p.p[0], y: p.p[2], h: p.p[1], rot: -p.yaw, scale: p.scale, v: p.v }));
+    return track.props.filter((p) => p.key !== "gate" && !p.key.startsWith("mega:") && !out.has(p.id)).map((p): Placed => ({ key: p.key, x: p.p[0], y: p.p[2], h: p.p[1], rot: -p.yaw, scale: p.scale, v: p.v }));
   }, [track, gone]);
   const ground = useMemo(() => {
     if (!cover.length) return [];
