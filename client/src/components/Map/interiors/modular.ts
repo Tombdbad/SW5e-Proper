@@ -74,6 +74,29 @@ export const propScale = (prop: RoofProp, side: number): number => (prop.fixed ?
 // What shades a door from the street, and what runs along the roof's edge (the classical cornice): a piece of the pack, or null
 export const awningOf = (pack: ExtPack): string | null => ({ desert: "ext_desert_awning", frontier: "ext_frontier_awning_canvas" } as Partial<Record<ExtPack, string>>)[pack] ?? null;
 export const corniceOf = (pack: ExtPack): string | null => (pack === "classical" ? "ext_classical_cornice" : null);
+// Where a prop stands on a roof (2026-11-11; the user: the dome was off its building): the spot it wants (a share of the roof across and down, or the middle), kept inside the
+// roof's real footprint (the rounded rectangle `radii` make: a round drum is a circle) by at least `clear` squares, its own half width. A corner prop wants 25 or 75 per cent of each
+// side, which on a rounded or round roof is out over the edge; it is drawn in towards the middle until it stands on the roof.
+// Squares from the roof's north-west corner.
+export function roofSpot(w: number, d: number, radii: Radii, want: [number, number], clear = 0): [number, number] {
+  const depth = (x: number, z: number) => {
+    // (how far inside the outline the point is: a rounded rectangle's signed distance, each corner with its own radius)
+    const [hx, hz, px, pz] = [w / 2, d / 2, x - w / 2, z - d / 2];
+    const r = px < 0 ? (pz < 0 ? radii[0] : radii[3]) : pz < 0 ? radii[1] : radii[2];
+    const [qx, qz] = [Math.abs(px) - (hx - r), Math.abs(pz) - (hz - r)];
+    return -(Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - r);
+  };
+  const room = Math.min(w, d) / 2;
+  const need = Math.min(clear, room * 0.9);
+  if (depth(want[0], want[1]) >= need) return want;
+  // (towards the middle, in steps of a twentieth, until it stands clear)
+  for (let k = 1; k <= 20; k++) {
+    const t = k / 20;
+    const at: [number, number] = [want[0] + (w / 2 - want[0]) * t, want[1] + (d / 2 - want[1]) * t];
+    if (depth(at[0], at[1]) >= need) return at;
+  }
+  return [w / 2, d / 2];
+}
 // A piece of a run along a roof's edge is about two squares long: how many fill a side, and how far each is stretched to fill it
 export function runOf(length: number, piece = 2): { count: number; stretch: number } {
   const count = Math.max(1, Math.round(length / piece));

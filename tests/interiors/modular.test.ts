@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, awningOf, corniceOf, extPackOf, propScale, roofEdgeRuns, roofPropOf, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
+import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, awningOf, corniceOf, extPackOf, propScale, roofEdgeRuns, roofPropOf, roofSpot, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
 import { familyOf } from "../../client/src/components/Map/interiors/architecture";
 
 const kit = JSON.parse(fs.readFileSync("shared/art/modularKit.json", "utf8")) as Record<string, { file: string; box: number[]; tris: number; regions: number[] }>;
@@ -137,4 +137,24 @@ test("a cornice follows the roof's radii: the four straight runs of a square roo
   const corner = mixed.filter((r) => r.at[0] < 2.5 && r.at[1] < 2.5);
   assert.ok(corner.length >= 2 && corner.every((r) => Math.hypot(r.at[0] - 2.5, r.at[1] - 2.5) > 1.9), "the north-west corner is an arc, not the square one");
   assert.ok(!mixed.some((r) => r.at[0] < 0.5 && r.at[1] < 0.5), "no piece at the square-cut corner");
+});
+
+test("a roof prop stands on the roof: a corner dome is drawn in off a rounded or round roof's edge, and a square roof keeps its spot", () => {
+  const square: [number, number, number, number] = [0, 0, 0, 0];
+  // A square 12 x 8 roof: the corner spot at 75% / 72% is already well inside
+  assert.deepEqual(roofSpot(12, 8, square, [9, 5.76], 1.4), [9, 5.76]);
+  assert.deepEqual(roofSpot(12, 8, square, [6, 4], 3), [6, 4], "the middle stays");
+  // A round drum of radius 4: the same corner is outside the circle; it comes in until its whole width is on the roof
+  const round: [number, number, number, number] = [4, 4, 4, 4];
+  const at = roofSpot(8, 8, round, [6, 5.76], 1.5);
+  assert.ok(Math.hypot(at[0] - 4, at[1] - 4) <= 4 - 1.5 + 0.2, `clear of the edge: ${Math.hypot(at[0] - 4, at[1] - 4).toFixed(2)} from the middle`);
+  assert.ok(at[0] < 6 && at[1] < 5.76, "drawn in towards the middle");
+  // A stadium (an oval room): the same, and the middle is always allowed
+  const stadium: [number, number, number, number] = [4, 4, 4, 4];
+  const s2 = roofSpot(12, 8, stadium, [9, 5.76], 1.5);
+  assert.ok(s2[0] <= 9 && s2[1] <= 5.76);
+  assert.deepEqual(roofSpot(12, 8, stadium, [6, 4], 1.5), [6, 4]);
+  // A prop too big for the roof is kept at the middle rather than flung off it
+  const tiny = roofSpot(3, 3, [1.5, 1.5, 1.5, 1.5], [2.25, 2.0], 9);
+  assert.ok(Math.hypot(tiny[0] - 1.5, tiny[1] - 1.5) < 0.2, `near the middle: ${tiny}`);
 });

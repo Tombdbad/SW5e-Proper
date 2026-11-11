@@ -43,7 +43,7 @@ import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
-import { extPackOf, roofPropOf, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
+import { extPackOf, roofPropOf, roofSpot, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
@@ -5268,6 +5268,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const roof = hue(room.id);
           const crown = crownOf(family, roof, Math.min(l.width, l.height));
           const prop = pack ? roofPropOf(pack, roof, Math.min(l.width, l.height)) : null;
+          // (where a roof prop or crown stands: the middle, or a corner, drawn in over the roof when its corner is rounded away: modular.ts roofSpot)
+          // (a dome on a round or oval room crowns it, at the middle and at the size of the middle one: the corner dome is for a rectangular roof, and off to one side of a drum it reads as misplaced)
+          const crowned = !!l.shape && ((!!prop?.corner && /dome/.test(prop.piece)) || (!!crown?.corner && /dome/.test(crown.piece)));
+          const propSpot = (corner: boolean, size: number, y: number): V3 => { const [sx, sz] = roofSpot(l.width, l.height, radiiOf(room), corner ? [l.width * (roof % 2 ? 0.25 : 0.75), l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, l.height / 2], size / 2); return [sx, y, sz]; };
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
           const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
           const rail = (sides = "nesw") => (
@@ -5293,7 +5297,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <WallAnchor key={room.id} at={[l.x, lift, l.y]}><group position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
-              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && <Box at={[l.width / 2, -(lift - (l.aloft ?? 0)) / 2, l.height / 2]} size={[l.width - 0.1, lift - (l.aloft ?? 0), l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={buildingSet} solid={!opened} />}
+              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && (() => {
+                // (2026-11-11, the user: square corners on a building of rounded ones: the block follows the radii of the room it holds up, a roof those of the room under it, as the roof's own parapet does, and is drawn as every other block is)
+                const held = lift - (l.aloft ?? 0);
+                const under = form === "roof" ? roofUnder(l) : undefined;
+                const inset = (r: number) => Math.max(0, r - 0.05);
+                const radii = (under ? radiiOf(under) : radiiOf(room)).map(inset) as [number, number, number, number];
+                return (
+                  <>
+                    <group position={[0.05, -held, 0.05]}><RoomBlock w={l.width - 0.1} d={l.height - 0.1} height={held} radii={radii} wall={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} set={buildingSet} /></group>
+                    {!opened && <AimBox at={[l.width / 2, -held / 2, l.height / 2]} size={[l.width - 0.1, held, l.height - 0.1]} />}
+                  </>
+                );
+              })()}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} biome={biome} like={likeOf(room)} corners={(() => { const under = roofUnder(l); return under ? radiiOf(under) : undefined; })()} />
@@ -5459,8 +5475,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
                         : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={buildingSet} /></group>
                         : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={buildingSet} /></group>
-                        : pack && prop ? <ModPiece name={prop.piece} pack={pack} wall={wall} position={prop.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={propScale(prop, Math.min(l.width, l.height))} />
-                        : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} timber={family === "timber"} pack={pack} position={crown.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={Math.min(l.width, l.height) * crown.fit} />
+                        : pack && prop ? <ModPiece name={prop.piece} pack={pack} wall={wall} position={propSpot(!!prop.corner && !crowned, propScale(prop, Math.min(l.width, l.height)), tall + 0.05)} scale={crowned ? Math.min(l.width, l.height) * 0.36 : propScale(prop, Math.min(l.width, l.height))} />
+                        : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} timber={family === "timber"} pack={pack} position={propSpot(!!crown.corner && !crowned, Math.min(l.width, l.height) * crown.fit, tall + 0.05)} scale={Math.min(l.width, l.height) * (crowned ? 0.36 : crown.fit)} />
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
