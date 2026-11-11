@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
+  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
   raceCourse, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
@@ -184,4 +184,29 @@ test("water: lakes stand in the hollows of a wet land (flat, shallow, few), a dr
   const dry = terrainWater(makeTerrain({ seed: 3, biome: "desert", size: 2000, n: 129, basins: 0 }));
   assert.equal(dry.lakes.length, 0);
   assert.equal(dry.rivers.length, 0);
+});
+
+test("terrainSurface: the palette colour and the layers' weights (2026-11-11, ground material v2): weights are 0..1 and sum to at most 1, rock on the steep, pale where it is sandy or snowy", () => {
+  for (const biome of ["forest", "desert", "ice", "volcanic"]) {
+    const t = terrainFor({ seed: 4, biome, size: 800, n: 97, erosion: "none" });
+    let rock = 0, pale = 0, count = 0;
+    for (let k = 0; k < 400; k++) {
+      const x = ((k * 37) % 700) - 350, z = ((k * 91) % 700) - 350;
+      const s = terrainSurface(t, x, z);
+      assert.ok(s.rock >= 0 && s.pale >= 0 && s.wet >= 0 && s.rock + s.pale + s.wet <= 1 + 1e-9, `${biome}: weights ${s.rock} ${s.pale} ${s.wet}`);
+      assert.deepEqual(s.color, terrainColorAt(t, x, z), `${biome}: the colour is terrainColorAt's`);
+      rock += s.rock; pale += s.pale; count++;
+    }
+    assert.ok(Number.isFinite(rock) && Number.isFinite(pale) && count === 400);
+  }
+  // Steeper ground has more rock
+  const t = terrainFor({ seed: 6, biome: "volcanic", size: 800, n: 97, erosion: "none" });
+  let [flat, steep, nf, ns] = [0, 0, 0, 0];
+  for (let k = 0; k < 900; k++) {
+    const x = ((k * 53) % 760) - 380, z = ((k * 29) % 760) - 380;
+    const w = terrainSurface(t, x, z).rock;
+    if (terrainSlope(t, x, z) > 0.6) { steep += w; ns++; } else if (terrainSlope(t, x, z) < 0.2) { flat += w; nf++; }
+  }
+  assert.ok(ns > 5 && nf > 5, `${ns} steep and ${nf} flat samples`);
+  assert.ok(steep / ns > flat / nf, `rock on the steep (${steep / ns}) more than on the flat (${flat / nf})`);
 });

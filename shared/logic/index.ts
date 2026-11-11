@@ -29,7 +29,7 @@ export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
 import { terrainFor, terrainHeight, type Terrain } from "./terrain";
-export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
+export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, terrainNoise, levelDisc, levelRoad, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";

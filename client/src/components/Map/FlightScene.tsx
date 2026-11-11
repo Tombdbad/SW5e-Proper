@@ -6,12 +6,13 @@ import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
-  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, terrainColorAt,
+  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, terrainSurface,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
-import { Scatter, Sea, raceScenery, useQuality, type Placed } from "./siteAssets";
+import { Scatter, Sea, groundTexture, raceScenery, useQuality, type Placed } from "./siteAssets";
+import { useGroundMaterial } from "./terrain";
 import { WorldSky } from "./scenery";
 import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
 import type { Dogfight } from "@shared/logic/dogfight";
@@ -184,6 +185,8 @@ const SPARKS = 48;
 // a worn, feathered band of the course's own dust (2026-11-10, the user: a less defined road), its edge lost in the verge
 function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
   const lite = useQuality((q) => q.tier === "lite");
+  // The layers of the ground (terrain.tsx useGroundMaterial): the hue is the vertex colour below, the photographs lend their pattern and relief
+  const material = useGroundMaterial(track.land?.biome ?? "temperate", groundTexture(track.land?.biome ?? "temperate", "", look.ground)?.set ?? "dirt_floor", true);
   const geo = useMemo(() => {
     const half = track.extent + 220;
     const CH = 128;
@@ -194,6 +197,7 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     const c = new THREE.Color();
     const pos: number[] = [];
     const col: number[] = [];
+    const splat: number[] = [];
     const nor: number[] = [];
     const idx: number[] = [];
     const land = track.land;
@@ -219,11 +223,13 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             pos.push(x, y, z);
             nor.push(-dx / nl, 1 / nl, -dz / nl);
             const slope = Math.hypot(dx, dz);
+            let sp = [0, 0, 0];
             if (land) {
               const around = (hs[at + 1] + hs[at - 1] + hs[at + side] + hs[at - side]) / 4;
-              const [r, g, bl] = terrainColorAt(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope, curve: (around - y) / step });
-              c.setRGB(r, g, bl);
+              const surf = terrainSurface(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope, curve: (around - y) / step });
+              c.setRGB(surf.color[0], surf.color[1], surf.color[2]);
               c.lerp(a, 0.25);
+              sp = [surf.rock, surf.pale, surf.wet];
             } else c.copy(a).lerp(b, 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013));
             // The way: the dust of the course, worn most in the middle and gone into the verge past the edge, broken up a little
             const d = raceDistance(track, x, z);
@@ -234,6 +240,8 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             const water = track.rivers?.length ? raceWater(track, x, z) : null;
             if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
             col.push(c.r, c.g, c.b);
+            // (a river's bank is mud, the way itself soil: the layers' weights, with the water's wet laid over)
+            splat.push(sp[0], sp[1], Math.max(sp[2], water ? (water.inside ? 0.9 : 0.6) * (water.lava ? 0 : 1) : 0), 0);
           }
         }
         for (let j = 0; j < segs; j++) {
@@ -256,6 +264,7 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             pos.push(pos[v * 3], pos[v * 3 + 1] - 4, pos[v * 3 + 2]);
             nor.push(nor[v * 3], nor[v * 3 + 1], nor[v * 3 + 2]);
             col.push(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]);
+            splat.push(splat[v * 4], splat[v * 4 + 1], splat[v * 4 + 2], splat[v * 4 + 3]);
           }
           for (let k = 0; k < list.length - 1; k++) idx.push(list[k], down + k, list[k + 1], list[k + 1], down + k, down + k + 1);
         }
@@ -264,15 +273,12 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute("splat", new THREE.Float32BufferAttribute(splat, 4));
     g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
     g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
     return g;
   }, [track, look, lite]);
-  return (
-    <mesh geometry={geo} raycast={() => null} frustumCulled={false}>
-      <meshLambertMaterial vertexColors side={THREE.DoubleSide} />
-    </mesh>
-  );
+  return <mesh geometry={geo} material={material} raycast={() => null} frustumCulled={false} />;
 }
 
 // A flowing texture for a river or lava: streaks along it (water) or glowing cracks in a crust (lava), scrolled along the flow

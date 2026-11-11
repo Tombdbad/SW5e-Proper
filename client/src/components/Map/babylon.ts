@@ -273,6 +273,69 @@ class LimbPlugin extends MaterialPluginBase {
   }
 }
 
+// The ground layers' fragment code (see GroundLayers). Hooks: the albedo (the vertex colour is in by then), then the normal just before the lights.
+const GROUND_GLSL = `uniform sampler2D gSoil;
+uniform sampler2D gRock;
+uniform sampler2D gPale;
+uniform sampler2D gWet;
+uniform sampler2D gSoilN;
+uniform sampler2D gRockN;
+varying vec4 vSplat;
+vec3 gNd = vec3(0.0);
+float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float gNoise(vec2 p) {
+  vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(gHash(i), gHash(i + vec2(1.0, 0.0)), f.x), mix(gHash(i + vec2(0.0, 1.0)), gHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+const mat2 gTurn = mat2(0.344, 0.258, -0.258, 0.344);
+vec3 gTap(sampler2D s, vec2 p, vec2 dx, vec2 dy, float scale, bool twice) {
+  vec2 q = p * scale; vec2 qx = dx * scale; vec2 qy = dy * scale;
+  vec3 a = textureGrad(s, q, qx, qy).rgb;
+  if (!twice) return a;
+  vec3 b = textureGrad(s, gTurn * q + vec2(0.37, 0.11), gTurn * qx, gTurn * qy).rgb;
+  return mix(a, b, smoothstep(0.3, 0.7, gNoise(p * 0.021 + 3.1)));
+}
+`;
+const GROUND_ALBEDO = `{
+  vec2 gp = vPositionW.xz;
+  vec2 gdx = dFdx(gp); vec2 gdy = dFdy(gp);
+  bool lite = gMode.x > 0.5;
+  float wr = vSplat.x; float wp = lite ? 0.0 : vSplat.y; float ww = lite ? 0.0 : vSplat.z;
+  float ws = max(0.0, 1.0 - wr - wp - ww);
+  float macro = 0.82 + 0.36 * (0.6 * gNoise(gp * 0.03) + 0.4 * gNoise(gp * 0.11 + 7.0));
+  float near = 1.0 - smoothstep(90.0, 260.0, length(vPositionW - vEyePosition.xyz));
+  vec3 ds = vec3(1.0); vec3 dr = vec3(1.0); vec3 dp = vec3(1.0); vec3 dw = vec3(1.0);
+  float hs = 0.0; float hr = 0.0; float hp = 0.0; float hw = 0.0;
+  vec3 nrm = normalize(vNormalW);
+  vec3 nd = vec3(0.0);
+  if (ws > 0.02) {
+    ds = clamp(gTap(gSoil, gp, gdx, gdy, gTile.x, !lite) / gAvg0.rgb, 0.3, 2.0); hs = dot(ds, vec3(0.1667));
+    if (!lite && near > 0.0) { vec3 t = textureGrad(gSoilN, gp * gTile.x, gdx * gTile.x, gdy * gTile.x).xyz * 2.0 - 1.0; nd += (ws + wp + ww) * vec3(t.x, 0.0, t.y); }
+  }
+  if (wr > 0.02) {
+    vec3 bw = pow(abs(nrm), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
+    vec3 P = vPositionW * gTile.y;
+    vec3 rt = textureGrad(gRock, P.xz, gdx * gTile.y, gdy * gTile.y).rgb * bw.y;
+    rt += textureGrad(gRock, P.xy, dFdx(P.xy), dFdy(P.xy)).rgb * bw.z;
+    rt += textureGrad(gRock, P.zy, dFdx(P.zy), dFdy(P.zy)).rgb * bw.x;
+    dr = clamp(rt / gAvg1.rgb, 0.3, 2.0); hr = dot(dr, vec3(0.1667));
+    if (!lite && near > 0.0) {
+      vec3 ty = textureGrad(gRockN, P.xz, gdx * gTile.y, gdy * gTile.y).xyz * 2.0 - 1.0;
+      vec3 tz = textureGrad(gRockN, P.xy, dFdx(P.xy), dFdy(P.xy)).xyz * 2.0 - 1.0;
+      vec3 tx = textureGrad(gRockN, P.zy, dFdx(P.zy), dFdy(P.zy)).xyz * 2.0 - 1.0;
+      nd += wr * (bw.y * vec3(ty.x, 0.0, ty.y) + bw.z * vec3(tz.x, tz.y, 0.0) + bw.x * vec3(0.0, tx.y, tx.x));
+    }
+  }
+  if (wp > 0.02) { dp = clamp(gTap(gPale, gp, gdx, gdy, gTile.z, false) / gAvg2.rgb, 0.3, 2.0); hp = dot(dp, vec3(0.1667)); }
+  if (ww > 0.02) { dw = clamp(gTap(gWet, gp, gdx, gdy, gTile.w, false) / gAvg3.rgb, 0.3, 2.0); hw = dot(dw, vec3(0.1667)); }
+  float ma = max(max(ws + hs, wr + hr), max(wp + hp, ww + hw)) - 0.3;
+  float bs = max(ws + hs - ma, 0.0) * step(0.02, ws); float br = max(wr + hr - ma, 0.0) * step(0.02, wr);
+  float bp = max(wp + hp - ma, 0.0) * step(0.02, wp); float bq = max(ww + hw - ma, 0.0) * step(0.02, ww);
+  vec3 d = (bs * ds + br * dr + bp * dp + bq * dw) / max(bs + br + bp + bq, 0.001);
+  surfaceAlbedo *= mix(vec3(1.0), d * macro, gMode.y * (0.35 + 0.65 * near));
+  gNd = nd * near;
+}`;
+
 // ---- Three's other shader patches, told to the renderer by whoever makes the material -----------------------------------------------
 // (kept beside the material, not in its `userData`, which a copy clones as JSON; limbMaterial hands its base's patch to its copy)
 
@@ -285,7 +348,21 @@ export type ShaderPatch =
   // a hull's grime, scratches, rust and scorch (models.tsx hullMaterials), `level` its age and damage (0 to 1)
   | { kind: "wear"; wear: THREE.Texture; damage: THREE.Texture; level: [number, number] }
   // the sea's waves (siteAssets.tsx waterMaterial)
-  | { kind: "waves"; time: { value: number } };
+  | { kind: "waves"; time: { value: number } }
+  // the layered ground (terrain.tsx groundMaterial)
+  | { kind: "ground"; layers: GroundLayers };
+// The ground's layers (2026-11-11, ground material v2). The vertex colour is the hue (the palette: snow, sand, wet, the biome's own); the vertex attribute
+// `splat` (rock, pale, wet) says which layer each point is; the photographs lend only their pattern and relief (each divided by its own average colour),
+// blended by height at the seams, broken up by two octaves of world noise and a second, turned and scaled tap against the repeat; the rock is mapped
+// along all three axes (so a cliff is not a smear) and the soil's and the rock's normal maps light it. `lite`: soil and rock only, one tap, no normals.
+export interface GroundLayers {
+  soil: THREE.Texture; rock: THREE.Texture; pale: THREE.Texture | null; wet: THREE.Texture | null;
+  soilN: THREE.Texture | null; rockN: THREE.Texture | null;
+  // The average colour of each photograph (soil, rock, pale, wet), and the squares of ground in one repeat of it
+  avg: [number, number, number][]; tile: [number, number, number, number];
+  // How much of the pattern shows (0..1) and how steep the normal maps read
+  strength: number; normal: number; lite: boolean;
+}
 const PATCHES = new WeakMap<THREE.Material, ShaderPatch>();
 export function shaderPatch<T extends THREE.Material>(m: T, patch: ShaderPatch): T {
   PATCHES.set(m, patch);
@@ -298,6 +375,7 @@ interface PluginSpec {
   name: string;
   ubo: { name: string; size: number; type: string }[];
   samplers?: string[];
+  attributes?: string[];
   vertex?: Record<string, string>;
   fragment?: Record<string, string>;
   ready?: () => boolean;
@@ -327,6 +405,9 @@ class CodePlugin extends MaterialPluginBase {
   }
   getSamplers(samplers: string[]) {
     samplers.push(...(this.s.samplers ?? []));
+  }
+  getAttributes(attributes: string[]) {
+    attributes.push(...(this.s.attributes ?? []));
   }
   isReadyForSubMesh() {
     return this.s.ready?.() ?? true;
@@ -1218,6 +1299,34 @@ class Mirror {
           CUSTOM_VERTEX_UPDATE_NORMAL: "normalUpdated = normalize(vec3(-(waveH(wvP + vec2(0.06, 0.0)) - wvH) / 0.06, 1.0, -(waveH(wvP + vec2(0.0, 0.06)) - wvH) / 0.06));",
         },
         bind: (ubo) => ubo.updateFloat("uTime", patch.time.value),
+      });
+    } else if (patch.kind === "ground") {
+      const L = patch.layers;
+      const get = (t: THREE.Texture | null) => this.texture(t);
+      new CodePlugin(mat, {
+        name: "GroundLayers",
+        ubo: [{ name: "gTile", size: 4, type: "vec4" }, { name: "gAvg0", size: 4, type: "vec4" }, { name: "gAvg1", size: 4, type: "vec4" }, { name: "gAvg2", size: 4, type: "vec4" }, { name: "gAvg3", size: 4, type: "vec4" }, { name: "gMode", size: 4, type: "vec4" }],
+        samplers: ["gSoil", "gRock", "gPale", "gWet", "gSoilN", "gRockN"],
+        attributes: ["splat"],
+        vertex: { CUSTOM_VERTEX_DEFINITIONS: "attribute vec4 splat;\nvarying vec4 vSplat;", CUSTOM_VERTEX_MAIN_END: "vSplat = splat;" },
+        fragment: {
+          CUSTOM_FRAGMENT_DEFINITIONS: GROUND_GLSL,
+          CUSTOM_FRAGMENT_UPDATE_ALBEDO: GROUND_ALBEDO,
+          CUSTOM_FRAGMENT_BEFORE_LIGHTS: "normalW = normalize(normalW + gNd * gMode.z);",
+        },
+        ready: () => !!get(L.soil) && !!get(L.rock),
+        bind: (ubo) => {
+          const soil = get(L.soil)!;
+          ubo.setTexture("gSoil", soil);
+          ubo.setTexture("gRock", get(L.rock) ?? soil);
+          ubo.setTexture("gPale", get(L.pale) ?? soil);
+          ubo.setTexture("gWet", get(L.wet) ?? soil);
+          ubo.setTexture("gSoilN", get(L.soilN) ?? soil);
+          ubo.setTexture("gRockN", get(L.rockN) ?? soil);
+          ubo.updateFloat4("gTile", 1 / L.tile[0], 1 / L.tile[1], 1 / L.tile[2], 1 / L.tile[3]);
+          L.avg.forEach((a, i) => ubo.updateFloat4(`gAvg${i}`, a[0], a[1], a[2], 1));
+          ubo.updateFloat4("gMode", L.lite ? 1 : 0, L.strength, L.normal, 0);
+        },
       });
     }
   }

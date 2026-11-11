@@ -564,10 +564,22 @@ export function terrainSplat(t: Terrain, x: number, z: number, over: GroundOver 
 // The colour (0..1 each) of the ground at a point
 // (`over`: the height share and slope where the ground drawn is not the terrain's own, as a course's, flattened near its track)
 export function terrainColorAt(t: Terrain, x: number, z: number, over: GroundOver = {}): [number, number, number] {
+  return colourOf(t, x, z, over, terrainSplat(t, x, z, over));
+}
+// What a shader needs at a point (2026-11-11, ground material v2): the palette colour (hue, snow, sand, wet) and the weights of the ground's layers, so that
+// the photographs lend only their pattern and relief: rock (steep, convex, high), pale (sand, snow: the light ground) and wet (mud where water gathers); the
+// soil is what is left. One call finds the splat once.
+export interface TerrainSurface { color: [number, number, number]; rock: number; pale: number; wet: number }
+export function terrainSurface(t: Terrain, x: number, z: number, over: GroundOver = {}): TerrainSurface {
+  const s = terrainSplat(t, x, z, over);
+  const total = s.rock + s.sand + s.snow + s.wet;
+  const k = total > 1 ? 1 / total : 1;
+  return { color: colourOf(t, x, z, over, s), rock: s.rock * k, pale: clamp01(s.sand + s.snow) * k, wet: s.wet * k };
+}
+function colourOf(t: Terrain, x: number, z: number, over: GroundOver, s: ReturnType<typeof terrainSplat>): [number, number, number] {
   const st = terrainStyleOf(t.biome);
   const P = st.palette;
   const alt = over.alt ?? (terrainHeight(t, x, z) - t.min) / Math.max(1, t.max - t.min);
-  const s = terrainSplat(t, x, z, over);
   const [low, high, rock, sand, snow, wet] = [rgb(P.low), rgb(P.high), rgb(P.rock), rgb(P.sand), rgb(P.snow), rgb(P.wet)];
   // Grass or soil is greener low and drier with altitude
   const soil = [0, 1, 2].map((k) => lerp(low[k], high[k], smoothstep(0.1, 0.7, alt)));

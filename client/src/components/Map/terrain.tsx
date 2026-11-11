@@ -6,9 +6,53 @@
 import { useEffect, useMemo } from "react";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
-import { scatterOn, terrainColorAt, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainWater, type Terrain } from "@shared/logic";
+import { scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
 import { UNITS_PER_M } from "./models";
 import { useQuality } from "./siteAssets";
+import { shaderPatch, type GroundLayers } from "./babylon";
+
+// The layers of the ground (2026-11-11, ground material v2: see GroundLayers in babylon.ts). The soil is the place's own photograph (so that the land takes up
+// where the walkable ground ends); rock, pale ground (sand, snow) and wet ground (mud) are Poly Haven sets in public/textures. The hue is the biome's palette
+// (vertex colour); the photographs lend their pattern and relief only.
+const ROCK_SET = (biome: string) => (biome === "volcanic" ? "ground/dark_rock" : "stone/rock_face_03");
+const PALE_SET = (biome: string) => (biome === "ice" ? "ground/snow_02" : "ground/dense_sand");
+const WET_SET = (biome: string) => (biome === "ice" ? "ground/snow_02" : "ground/brown_mud_03");
+// The mean colour of a photograph as the shader sees it (stored values, not light): its pattern is the picture divided by this
+function meanOf(image: CanvasImageSource): [number, number, number] {
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    const g = c.getContext("2d")!;
+    g.imageSmoothingQuality = "high";
+    g.drawImage(image, 0, 0, 1, 1);
+    const [r, gr, b] = g.getImageData(0, 0, 1, 1).data;
+    return [Math.max(0.05, r / 255), Math.max(0.05, gr / 255), Math.max(0.05, b / 255)];
+  } catch {
+    return [0.5, 0.5, 0.5];
+  }
+}
+// The material of the layered ground for a biome and a soil set (shared by the relief round a place and the ground of a race)
+export function useGroundMaterial(biome: string, soilSet: string, double = false): THREE.Material {
+  const lite = useQuality((q) => q.tier === "lite");
+  const urls = [`/textures/ground/${soilSet}/diffuse.jpg`, `/textures/${ROCK_SET(biome)}/diffuse.jpg`, `/textures/${PALE_SET(biome)}/diffuse.jpg`, `/textures/${WET_SET(biome)}/diffuse.jpg`, `/textures/ground/${soilSet}/normal.jpg`, `/textures/${ROCK_SET(biome)}/normal.jpg`];
+  const maps = useTexture(urls) as THREE.Texture[];
+  const material = useMemo(() => {
+    for (const t of maps) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = 4;
+    }
+    const [soil, rock, pale, wet, soilN, rockN] = maps;
+    const layers: GroundLayers = {
+      soil, rock, pale: lite ? null : pale, wet: lite ? null : wet, soilN: lite ? null : soilN, rockN: lite ? null : rockN,
+      avg: [soil, rock, pale, wet].map((t) => meanOf(t.image as CanvasImageSource)),
+      tile: [9, 14, 10, 7], strength: 0.9, normal: 0.9, lite,
+    };
+    const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.96, metalness: 0, side: double ? THREE.DoubleSide : THREE.FrontSide });
+    return shaderPatch(m, { kind: "ground", layers });
+  }, [maps, lite, double]);
+  useEffect(() => () => material.dispose(), [material]);
+  return material;
+}
 
 const SIZE_M = 1500;
 // Where the land is the place's own flat ground, and how far past it the hills reach their height (units: one square)
@@ -37,6 +81,7 @@ const ROCKS: Record<string, number> = { desert: 0.1, volcanic: 0.22, barren: 0.2
 export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: string; seed: number; inner: number; at: [number, number, number]; set: string; tint: THREE.Color }) {
   const diffuse = useTexture(`/textures/ground/${set}/diffuse.jpg`);
   const lite = useQuality((q) => q.tier === "lite");
+  const material = useGroundMaterial(biome, set);
   const built = useMemo(() => {
     const st = terrainStyleOf(biome);
     const t: Terrain = terrainFor({ seed: (seed ^ 0x5bd1e995) | 0, biome, size: SIZE_M, n: lite ? 97 : 145, scale: 1, erosion: "light", basins: st.lakes });
@@ -52,6 +97,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     const n = lite ? 97 : 145;
     const pos = new Float32Array(n * n * 3);
     const col = new Float32Array(n * n * 3);
+    const splat = new Float32Array(n * n * 4);
     const c = new THREE.Color();
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
@@ -60,10 +106,13 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
         const k = (j * n + i) * 3;
         pos.set([xm * unit, y, zm * unit], k);
         const d = Math.max(Math.abs(xm), Math.abs(zm)) * unit;
-        const [r, g, b] = terrainColorAt(t, xm, zm, { alt: (terrainHeight(t, xm, zm) - t.min) / Math.max(1, t.max - t.min), slope: terrainSlope(t, xm, zm) * smooth(inner, inner + RISE, d) });
-        c.setRGB(r, g, b);
-        c.lerp(ground, 1 - smooth(inner, inner + 140, d));
+        const surf = terrainSurface(t, xm, zm, { alt: (terrainHeight(t, xm, zm) - t.min) / Math.max(1, t.max - t.min), slope: terrainSlope(t, xm, zm) * smooth(inner, inner + RISE, d) });
+        c.setRGB(surf.color[0], surf.color[1], surf.color[2]);
+        const away = smooth(inner, inner + 140, d);
+        c.lerp(ground, 1 - away);
         col.set([c.r, c.g, c.b], k);
+        // (the layers fade to the soil, the place's own photograph, where the walkable ground ends)
+        splat.set([surf.rock * away, surf.pale * away, surf.wet * away, 0], (j * n + i) * 4);
       }
     }
     const index = new Uint32Array((n - 1) * (n - 1) * 6);
@@ -78,6 +127,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("splat", new THREE.BufferAttribute(splat, 4));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
     // Dressing: where it stands, outside the place and its first foothills, on ground it can stand on
@@ -169,9 +219,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
   }, [built]);
   return (
     <group position={at}>
-      <mesh geometry={built.geo} raycast={() => null}>
-        <meshLambertMaterial vertexColors />
-      </mesh>
+      <mesh geometry={built.geo} material={material} raycast={() => null} />
       {built.lakes && (
         <mesh geometry={built.lakes} raycast={() => null}>
           <meshLambertMaterial color="#3f7fb0" transparent opacity={0.88} side={THREE.DoubleSide} />
