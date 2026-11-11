@@ -12,7 +12,7 @@ import {
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
 import { Scatter, Sea, groundTexture, raceScenery, useQuality, type Placed } from "./siteAssets";
-import { useGroundMaterial } from "./terrain";
+import { RacePackDress, useGroundMaterial } from "./terrain";
 import { WorldSky } from "./scenery";
 import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
 import type { Dogfight } from "@shared/logic/dogfight";
@@ -927,6 +927,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       ) : (
         <>
           <RaceGround track={track} look={look} />
+          <RacePackDress track={track} />
           <RaceRivers track={track} />
         </>
       )}

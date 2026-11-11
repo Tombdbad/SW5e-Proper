@@ -731,8 +731,8 @@ export const ECOLOGY: Record<string, { pack: string; thin: number; entries: EcoE
 };
 export interface EcoSpot { kind: string; tier: EcoEntry["tier"]; variant: number; x: number; z: number; yaw: number; scale: number; sink: number }
 // `within`: where anything may stand (not in water, not on the place); `cover`: where ground cover may (near the place only: far off a fern is a speck); `cap`: the most of
-// each tier
-export function ecologySpots(t: Terrain, biome: string, o: { within?: (x: number, z: number) => boolean; cover?: (x: number, z: number) => boolean; cap?: Partial<Record<EcoEntry["tier"], number>>; seed?: number } = {}): EcoSpot[] {
+// each tier; `focus`: how far a spot is from what matters (default: the distance from the origin, the place; a race course gives its distance from the track)
+export function ecologySpots(t: Terrain, biome: string, o: { within?: (x: number, z: number) => boolean; cover?: (x: number, z: number) => boolean; cap?: Partial<Record<EcoEntry["tier"], number>>; seed?: number; focus?: (x: number, z: number) => number } = {}): EcoSpot[] {
   const eco = ECOLOGY[biome];
   if (!eco) return [];
   const out: Record<string, EcoSpot[]> = { cover: [], mid: [], rock: [] };
@@ -748,7 +748,8 @@ export function ecologySpots(t: Terrain, biome: string, o: { within?: (x: number
   const spots: EcoSpot[] = [];
   for (const tier of ["rock", "mid", "cover"] as const) {
     const cap = o.cap?.[tier];
-    const list = out[tier].sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+    const far = o.focus ?? ((x: number, z: number) => Math.hypot(x, z));
+    const list = out[tier].sort((a, b) => far(a.x, a.z) - far(b.x, b.z));
     if (!cap || list.length <= cap) { spots.push(...list); continue; }
     const share = Math.ceil(cap / new Set(list.map((s) => s.kind)).size);
     const taken = new Map<string, number>();

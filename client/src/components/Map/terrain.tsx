@@ -8,7 +8,7 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { ECOLOGY, ecologySpots, kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
+import { ECOLOGY, ecologySpots, groundAt, raceDistance, raceWater, type RaceTrack, kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
 import { UNITS_PER_M } from "./models";
 import { useQuality } from "./siteAssets";
 import { shaderPatch, type GroundLayers } from "./babylon";
@@ -148,11 +148,18 @@ export function useMegascans(biome: string): MegaPack | null {
 // What the pack stands on the land (shared/logic ecologySpots): rocks and dead trees out to the horizon, ground cover near the place only, each piece an instanced
 // mesh by its variant, stood on the ground and sunk by its share, turned at random
 function PackDress({ pack, biome, built, lite }: { pack: MegaPack; biome: string; built: { t: Terrain; heightAt: (x: number, z: number) => number; away: (x: number, z: number) => boolean; unit: number; inner: number }; lite: boolean }) {
-  const meshes = useMemo(() => {
-    const { t, heightAt, away, unit, inner } = built;
+  const spots = useMemo(() => {
+    const { t, away, unit, inner } = built;
     // (ground cover, drawn within about 330 squares of the place: past that the fade of the ground's own detail has taken over)
     const near = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z)) * unit < inner + 330;
-    const spots = ecologySpots(t, biome, { within: away, cover: near, seed: 11, cap: lite ? { cover: 500, mid: 150, rock: 250 } : { cover: 1400, mid: 400, rock: 600 } });
+    return ecologySpots(t, biome, { within: away, cover: near, seed: 11, cap: lite ? { cover: 500, mid: 150, rock: 250 } : { cover: 1400, mid: 400, rock: 600 } });
+  }, [biome, built, lite]);
+  return <PackStand pack={pack} spots={spots} heightAt={built.heightAt} unit={built.unit} />;
+}
+
+// The spots stood as instanced meshes, a mesh to each piece and variant (`unit`: world units a metre, 1 on a race course)
+function PackStand({ pack, spots, heightAt, unit }: { pack: MegaPack; spots: EcoSpotLike[]; heightAt: (x: number, z: number) => number; unit: number }) {
+  const meshes = useMemo(() => {
     const groups = new Map<string, EcoSpotLike[]>();
     for (const s of spots) {
       const key = s.kind + "__" + "ABC"[s.variant];
@@ -175,10 +182,36 @@ function PackDress({ pack, biome, built, lite }: { pack: MegaPack; biome: string
       out.push(mesh);
     }
     return out;
-  }, [pack, biome, built, lite]);
+  }, [pack, spots, heightAt, unit]);
   return <>{meshes.map((m) => <primitive key={m.uuid} object={m} />)}</>;
 }
 type EcoSpotLike = ReturnType<typeof ecologySpots>[number];
+
+// The pack on a race course (2026-11-11, the user: "dress racecourses too"): the land's own biome, on `groundAt` (the land with the course cut into it). Ground cover from just
+// past the way's verge out to 160 m; rocks and dead trees clear of the way (a speeder is not stopped by them: they must not stand where it runs), none in a river or on
+// the sea; the spots nearest the track kept when the cap is reached
+export function RacePackDress({ track }: { track: RaceTrack }) {
+  const biome = track.land?.biome ?? "";
+  const pack = useMegascans(track.sea ? "" : biome);
+  const lite = useQuality((q) => q.tier === "lite");
+  const w2 = track.width / 2;
+  const spots = useMemo(() => {
+    if (!track.land || track.sea || !ECOLOGY[biome]) return [];
+    const dry = (x: number, z: number) => !track.rivers?.length || !raceWater(track, x, z);
+    const focus = (x: number, z: number) => raceDistance(track, x, z);
+    return ecologySpots(track.land, biome, {
+      within: (x, z) => { const d = raceDistance(track, x, z); return d > w2 + 5 && d < 420 && dry(x, z); },
+      cover: (x, z) => raceDistance(track, x, z) < 160,
+      // (rocks and dead trees at least 16 m from the way's edge: the cover is allowed nearer)
+      focus,
+      seed: 17,
+      cap: lite ? { cover: 400, mid: 60, rock: 120 } : { cover: 1300, mid: 160, rock: 320 },
+    }).filter((s) => s.tier === "cover" || raceDistance(track, s.x, s.z) > w2 + 16);
+  }, [track, biome, w2, lite]);
+  const heightAt = useMemo(() => (x: number, z: number) => groundAt(track, x, z, true), [track]);
+  if (!pack || !spots.length) return null;
+  return <PackStand pack={pack} spots={spots} heightAt={heightAt} unit={1} />;
+}
 
 export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: string; seed: number; inner: number; at: [number, number, number]; set: string; tint: THREE.Color }) {
   const diffuse = useTexture(`/textures/ground/${set}/diffuse.jpg`);
