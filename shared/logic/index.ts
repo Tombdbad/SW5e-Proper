@@ -29,7 +29,7 @@ export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
 import { terrainFor, terrainHeight, type Terrain } from "./terrain";
-export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
+export { TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainNoise, levelDisc, levelRoad, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -354,8 +354,6 @@ const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
   outpost: { buildings: ["landing pad*", "command post", "garrison", "warehouse", "workshop?"], street: ["Perimeter path", "Covered walkway"] },
   station: { buildings: ["docking ring*", "promenade", "operations center", "engineering", "habitat ring", "cargo bay?"], street: ["Ring corridor", "Turbolift", "Maintenance shaft"] },
   "cave system": { buildings: ["trailhead*", "cave", "cave?"], street: ["Trail", "Scree slope"] },
-  // The works under a city planet's streets (2026-10-20): built tunnels, not caves
-  "sewer system": { buildings: ["sewer access*", "sewer", "sewer?"], street: ["Gantry", "Service ladder", "Drain tunnel"] },
   ruins: { buildings: ["trailhead*", "ruin", "ruin?", "cave?"], street: ["Overgrown path", "Broken causeway"] },
   "crash site": { buildings: ["trailhead*", "wreck", "camp?"], street: ["Debris trail", "Gully"] },
   "raider camp": { buildings: ["trailhead*", "camp", "camp?", "cave?"], street: ["Trail", "Dry wash"] },
@@ -405,7 +403,7 @@ const WILD_SITES: Record<string, string[]> = {
   desert: ["raider camp", "cave system", "ruins", "crash site"], ice: ["cave system", "crash site", "ruins"],
   forest: ["ruins", "cave system", "raider camp"], jungle: ["ruins", "cave system", "crash site"],
   swamp: ["ruins", "cave system"], ocean: ["crash site", "ruins"], volcanic: ["cave system", "ruins"],
-  urban: ["sewer system", "ruins", "raider camp"], temperate: ["raider camp", "ruins", "cave system"],
+  urban: ["ruins", "raider camp"], temperate: ["raider camp", "ruins", "cave system"],
   barren: ["crash site", "cave system"], "gas giant": ["crash site"],
 };
 
@@ -485,9 +483,6 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   cave: { hostile: "wild", rooms: ["Cave mouth|N:plant", "Winding tunnel|w N:ore", "Den|w L:remains", "Deep chamber|w L:stash H N:crystal @1"] },
   ruin: { hostile: "horror", rooms: ["Broken gate|N:plant", "Collapsed hall|w N:crystal", "Inner sanctum|h L:relic K", "Crypt|h L:relic H N:crystal"] },
   wreck: { hostile: "wild", rooms: ["Hull breach|N:salvage", "Cargo hold|w L:cargo N:ore", "Bridge|L:intel K @0", "Engine room|d L:workshop N:salvage @1"] },
-  // Under a city planet's streets: the way down, and the channels with their junctions and a few larger chambers (straight, built passages)
-  "sewer access": { rooms: ["Access hatch|N:salvage", "Maintenance room|s d L:workshop @0"] },
-  sewer: { hostile: "wild", rooms: ["Outfall|N:salvage", "Main channel|w N:ore", "Junction|w", "Side channel|w L:remains @2", "Pump chamber|d L:workshop K @2", "Cistern|w L:stash H @4"] },
   // A landing place for speeders on the roofs of a city planet, where its districts meet
   "speeder platform": { rooms: ["Landing platform|S s d berths:2", "Platform office|s L:coin @0"] },
   // The fighting arena (2026-11-02; the user: "Pit fighting and betting should take place in a physical arena (its own district), with a very
@@ -1578,6 +1573,17 @@ function detailBuilding(ctx: Context, building: Area) {
   const open = rooms.filter((_, index) => !specs[index]?.codes.some((c) => c === "K" || c === "H"));
   if (open.length >= 4 && building.type !== "arena" && r.chance(0.5)) addPath(world, open[1], open[open.length - 1], "Side passage", `${Math.max(10, Math.round(distance(open[1], open[open.length - 1]) * 5))} ft.`);
   rooms.forEach((room) => populateRoom(ctx, room));
+  // The way down to the drains, if this building has one: a hidden hatch off its deepest ordinary ground room (see markDrains). It is made with ids of its own
+  // (the building's, with a letter) and no dice of the world's, so that adding the drains moves nothing else: the ids and the dice of every other room, shop and
+  // fight in the world stay as they were
+  if (building.tags.includes("drain")) {
+    // (a room on the ground that is not itself down, up, or a bay: a hatch off a detention block or a hangar would be joined to the drain by the floors' own ways)
+    const surface = open.filter((room) => !UNDERGROUND.test(room.name) && !/roof|gallery|hangar|bay|dock|cell|holding|armory|upper/i.test(room.name));
+    const host = surface[surface.length - 1] ?? open[0] ?? rooms[0];
+    const join: Area = { id: `${building.id}x`, kind: "room", parentId: building.id, name: "Sewer junction", type: "sewer junction", description: "", tags: ["code:w", "code:H"], position: { x: host.position.x + 4, y: 0, z: host.position.z + 3 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction };
+    world.areas[join.id] = join;
+    world.paths.push({ id: `${join.id}h`, from: host.id, to: join.id, kind: "door", label: "Hidden hatch", travel: "10 ft.", hidden: true });
+  }
   placeVehicles(ctx, building);
   planBuilding(world, building.id);
   furnishLevels(ctx, building);
@@ -1627,6 +1633,48 @@ function makeSatellites(ctx: Context, settlement: Area, anchor: Area, adopt: Are
   return out;
 }
 
+// The drains (2026-11-10; the user: "settlement sewers have been generated under a misunderstanding: they should be accessed through hidden entrances in
+// EXISTING settlement districts (not given a dedicated district), and connect to districts for covert methods to move around hostile settlements").
+// A city has up to four buildings, a town two, chosen as far from each other as the settlement allows (so that they stand in different districts), that
+// have a way down: a hidden hatch (found by searching) off their deepest open room to a sewer junction under the building, a room of the building itself.
+// The junctions are joined by drain tunnels, in a ring (a way between rooms of two buildings of one settlement, as a catwalk is: `validateWorld`). The way
+// is under the streets: nobody on them, nobody watching them.
+const DRAIN_LABELS = ["Drain tunnel", "Storm channel", "Culvert"];
+const DRAIN_HOSTS = ["cantina", "market", "workshop", "warehouse", "tenements", "junkyard", "residences", "hideout", "garrison", "medcenter", "archive", "droid dealer", "vehicle dealer"];
+function markDrains(r: Random, settlement: Area, buildings: Area[]) {
+  const candidates = buildings.filter((b) => !b.gateway && DRAIN_HOSTS.includes(b.type));
+  const wanted = Math.min(candidates.length, settlement.type === "city" ? 4 : 2);
+  if (wanted < 2) return;
+  const chosen = [r.pick(candidates)];
+  while (chosen.length < wanted) {
+    const rest = candidates.filter((c) => !chosen.includes(c));
+    // (the one farthest from all those already chosen)
+    rest.sort((a, b) => Math.min(...chosen.map((c) => distance(b, c))) - Math.min(...chosen.map((c) => distance(a, c))));
+    chosen.push(rest[0]);
+  }
+  for (const b of chosen) b.tags.push("drain");
+}
+function linkDrains(ctx: Context, settlement: Area) {
+  const { world } = ctx;
+  const r = createRandom(Number(settlement.id.replace(/\D/g, "")) * 1009 + 29);
+  const nodes = childrenOf(world, settlement.id).filter((b) => b.tags.includes("drain"));
+  const junction = (b: Area) => childrenOf(world, b.id).find((a) => a.name === "Sewer junction");
+  const [first, ...rest] = nodes;
+  if (!first || !rest.length) return;
+  // A ring by the nearest next, closed when there are three or more
+  const ring = [first];
+  while (rest.length) {
+    const last = ring[ring.length - 1];
+    rest.sort((a, b) => distance(a, last) - distance(b, last));
+    ring.push(rest.shift()!);
+  }
+  const pairs = ring.length > 2 ? ring.map((b, i) => [b, ring[(i + 1) % ring.length]]) : [[ring[0], ring[1]]];
+  for (const [a, b] of pairs) {
+    const [ja, jb] = [junction(a), junction(b)];
+    if (ja && jb && !linked(world, ja.id, jb.id)) world.paths.push({ id: `${ja.id}d${jb.id}`, from: ja.id, to: jb.id, kind: "door", label: r.pick(DRAIN_LABELS), travel: `${Math.max(60, Math.round(distance(a, b) * 40))} m` });
+  }
+}
+
 function detailSettlement(ctx: Context, settlement: Area) {
   const { world, random: r } = ctx;
   const template = SETTLEMENTS[settlement.type];
@@ -1661,9 +1709,11 @@ function detailSettlement(ctx: Context, settlement: Area) {
     });
   });
   connectGroup(ctx, buildings, (a, b) => ({ label: r.pick(template.street), travel: `${Math.max(20, Math.round(distance(a, b) * 40))} m` }), 0.35);
+  if (sited && (settlement.type === "city" || settlement.type === "town")) markDrains(createRandom(Number(settlement.id.replace(/\D/g, "")) * 977 + 13), settlement, buildings);
   // The buildings that stand round each of the listed ones, on its local map
   const satellites = sited ? buildings.flatMap((anchor) => makeSatellites(ctx, settlement, anchor)) : [];
   buildings.concat(satellites).forEach((b) => detailBuilding(ctx, b));
+  linkDrains(ctx, settlement);
   planDistricts(ctx, settlement.id);
   linkTransit(ctx, settlement);
   settleRoutines(world, settlement, r);
@@ -1678,8 +1728,8 @@ function detailPlanet(ctx: Context, planet: Area) {
   const mainType = biome === "gas giant" ? "station" : biome === "urban" || r.chance(0.5) ? "city" : "town";
   // A second place that has a name is somewhere people live; otherwise it may be an outpost
   const secondType = biome === "gas giant" || biome === "barren" ? "outpost" : known.length > 1 ? "town" : r.pick(["town", "outpost"]);
-  // (a city planet is covered in city: under it are sewers, never caves; and a ruin or a camp at most)
-  const wild = biome === "urban" ? ["sewer system", ...r.shuffle(["ruins", "raider camp"]).slice(0, r.int(0, 1))] : r.shuffle(WILD_SITES[biome] ?? WILD_SITES.temperate).slice(0, r.int(1, 2));
+  // (a city planet is covered in city: no caves; and a ruin or a camp at most. Its sewers are under its own districts: see markDrains)
+  const wild = biome === "urban" ? r.shuffle(["ruins", "raider camp"]).slice(0, r.int(0, 1)) : r.shuffle(WILD_SITES[biome] ?? WILD_SITES.temperate).slice(0, r.int(1, 2));
   const sites = [mainType, secondType, ...wild];
   const settlements = sites.map((type, index) => {
     const wild = !["city", "town", "outpost", "station"].includes(type);
@@ -3685,7 +3735,7 @@ function linkFloors(world: World, building: Area, seed: number) {
   if (real.length < 5) return;
   const levels = levelsOf(building, real);
   const tall = (a: Area) => a.tags.includes("tall") || TALL_ROOMS.test(a.name);
-  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a) && !tall(a));
+  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|sewer|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a) && !tall(a));
   const partnerOf = (room: Area) => world.paths
     .filter((p) => p.kind === "door" && (p.from === room.id || p.to === room.id))
     .map((p) => world.areas[p.from === room.id ? p.to : p.from])
@@ -7390,7 +7440,7 @@ export function validateWorld(world: World, catalog?: WorldCatalog): string[] {
     const to = world.areas[path.to];
     if (!from || !to) problems.push(`A ${path.label} leads to an area that does not exist.`);
     else if (from.kind !== to.kind || PATH_KIND[from.kind] !== path.kind) problems.push(`The ${path.label} between ${from.name} and ${to.name} joins areas it cannot join.`);
-    else if (from.kind !== "system" && from.parentId !== to.parentId && !((path.label === "Catwalk" || path.label === ROPE_BRIDGE || path.label === SKYBRIDGE) && from.kind === "room" && ancestor(world, from.id, "settlement")?.id === ancestor(world, to.id, "settlement")?.id) && !(path.label === "Transit line" && from.kind === "building" && ancestor(world, from.id, "planet")?.id === ancestor(world, to.id, "planet")?.id)) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
+    else if (from.kind !== "system" && from.parentId !== to.parentId && !((path.label === "Catwalk" || path.label === ROPE_BRIDGE || path.label === SKYBRIDGE || (DRAIN_LABELS.includes(path.label) && /^Sewer /.test(from.name))) && from.kind === "room" && ancestor(world, from.id, "settlement")?.id === ancestor(world, to.id, "settlement")?.id) && !(path.label === "Transit line" && from.kind === "building" && ancestor(world, from.id, "planet")?.id === ancestor(world, to.id, "planet")?.id)) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
     const key = [path.from, path.to].sort().join("|");
     if (path.from === path.to || seenPaths.has(key)) problems.push(`Duplicate or looping ${path.label} at ${from?.name}.`);
     seenPaths.add(key);
@@ -8013,7 +8063,7 @@ export function enhancedConsumableUse(row: { name: string; text?: string; consum
 // an ice world and the heat of a desert by day or a volcanic world out of doors, no air at the open sites of a barren world, sewer gas
 // and volcanic fumes underground, the dark of caves, sewers and ruins (and of the wilds at night), radiation by a reactor, the gravity of a
 // gas giant's platforms, and the water over a sunken wreck or ruin of an ocean world
-const WILD_PLACES = ["cave system", "ruins", "crash site", "raider camp", "sewer system"];
+const WILD_PLACES = ["cave system", "ruins", "crash site", "raider camp"];
 export function hazardsAt(world: World, areaId: string, minute: number): { hazard: EnvHazard; why: string }[] {
   const area = world.areas[areaId];
   if (!area) return [];
@@ -8031,9 +8081,9 @@ export function hazardsAt(world: World, areaId: string, minute: number): { hazar
   if (outdoors && ((land === "desert" && hour >= 10 && hour < 18) || land === "volcanic")) out.push({ hazard: "heat", why: `the heat of ${planet.name}${land === "desert" ? " by day" : ""}` });
   if (outdoors && wild && land === "barren") out.push({ hazard: "vacuum", why: `the thin, airless open of ${planet.name}` });
   if (outdoors && land === "gas giant") out.push({ hazard: "gravity", why: `the pull of ${planet.name}` });
-  if (building && /^(sewer|sewer access)$/.test(building.type) && area.kind === "room") out.push({ hazard: "toxic", why: "sewer gas" });
+  if (area.kind === "room" && ((building && /^(sewer|sewer access)$/.test(building.type)) || /^Sewer /.test(area.name))) out.push({ hazard: "toxic", why: "sewer gas" });
   if (building?.type === "cave" && land === "volcanic" && area.kind === "room") out.push({ hazard: "toxic", why: "volcanic fumes" });
-  if (area.kind === "room" && ((building && /^(cave|sewer|ruin)$/.test(building.type)) || /crypt|cellar|tunnel/i.test(area.name)) && !openAir(area)) out.push({ hazard: "dark", why: `the dark of ${area.name}` });
+  if (area.kind === "room" && ((building && /^(cave|sewer|ruin)$/.test(building.type)) || /crypt|cellar|tunnel|^Sewer /i.test(area.name)) && !openAir(area)) out.push({ hazard: "dark", why: `the dark of ${area.name}` });
   else if (outdoors && wild && night) out.push({ hazard: "dark", why: "the night in the wilds" });
   if (area.kind === "room" && /reactor/i.test(area.name)) out.push({ hazard: "radiation", why: `the ${area.name.toLowerCase()}` });
   if (area.kind === "room" && wild && land === "ocean" && building && /^(wreck|ruin)$/.test(building.type) && !/hull breach|broken gate/i.test(area.name)) out.push({ hazard: "underwater", why: `${building.name} lies under the sea` });
@@ -10379,7 +10429,7 @@ const SITE_NAMES: Record<string, string> = {
   garrison: "Garrison", medcenter: "Medical Quarter", workshop: "Workshop Row", archive: "Archive Square", hideout: "Back Alleys",
   "city gate": "City Gate", "town gate": "Town Gate", "droid dealer": "Droid Dealers' Row", "vehicle dealer": "Speeder Lots",
 };
-const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp", "sewer system"];
+const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp"];
 export const DISTRICT_MAX = 6;
 
 // A number in [0, 1) from a key: the same key always gives the same number

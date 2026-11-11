@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower,
+  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
   raceCourse, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
@@ -161,4 +161,27 @@ test("a course is twice as long, a speeder is not slowed off the track, a gorge 
       assert.ok(top - floor > CROSSING.gorgeDepth * 0.7, `${biome}: the gorge's wall is ${(top - floor).toFixed(1)} m of ${CROSSING.gorgeDepth}`);
     }
   }
+});
+
+test("water: lakes stand in the hollows of a wet land (flat, shallow, few), a dry land has none, rivers run from the drainage down to the edge or a lake", () => {
+  const wet = makeTerrain({ seed: 3, biome: "forest", size: 2000, n: 129, basins: 3 });
+  const water = terrainWater(wet);
+  assert.ok(water.lakes.length >= 1 && water.lakes.length <= TERRAIN_STYLES.forest.lakes, `${water.lakes.length} lakes`);
+  for (const lake of water.lakes) {
+    assert.ok(lake.depth <= 12 && lake.depth >= 1 && lake.cells >= 12, JSON.stringify(lake));
+    // flat: every wet vertex of it at the lake's level
+    const level = Array.from(water.surface).filter((v, i) => !Number.isNaN(v) && Math.abs(v - lake.level) < 1e-3 && wet.h[i] < lake.level).length;
+    assert.ok(level >= lake.cells * 0.9, "a lake is level");
+  }
+  assert.ok(water.rivers.length >= 3 && water.rivers.every((r) => r.line.length >= 10 && r.flow >= 0.68), `${water.rivers.length} rivers`);
+  // a river ends at the edge of the map or in a lake or on a line already made, and runs downhill overall
+  for (const r of water.rivers.slice(0, 10)) {
+    const [a, b] = [r.line[0], r.line[r.line.length - 1]];
+    assert.ok(terrainHeight(wet, b[0], b[1]) <= terrainHeight(wet, a[0], a[1]) + 1, "downhill overall");
+  }
+  // The same spec gives the same water; a desert's land is dry
+  assert.deepEqual(terrainWater(makeTerrain({ seed: 3, biome: "forest", size: 2000, n: 129, basins: 3 })).lakes, water.lakes);
+  const dry = terrainWater(makeTerrain({ seed: 3, biome: "desert", size: 2000, n: 129, basins: 0 }));
+  assert.equal(dry.lakes.length, 0);
+  assert.equal(dry.rivers.length, 0);
 });

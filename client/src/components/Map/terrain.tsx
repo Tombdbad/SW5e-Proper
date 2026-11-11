@@ -6,7 +6,7 @@
 import { useEffect, useMemo } from "react";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
-import { scatterOn, terrainColorAt, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, type Terrain } from "@shared/logic";
+import { scatterOn, terrainColorAt, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainWater, type Terrain } from "@shared/logic";
 import { UNITS_PER_M } from "./models";
 import { useQuality } from "./siteAssets";
 
@@ -39,7 +39,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
   const lite = useQuality((q) => q.tier === "lite");
   const built = useMemo(() => {
     const st = terrainStyleOf(biome);
-    const t: Terrain = terrainFor({ seed: (seed ^ 0x5bd1e995) | 0, biome, size: SIZE_M, n: lite ? 97 : 145, scale: 1, erosion: "light" });
+    const t: Terrain = terrainFor({ seed: (seed ^ 0x5bd1e995) | 0, biome, size: SIZE_M, n: lite ? 97 : 145, scale: 1, erosion: "light", basins: st.lakes });
     const unit = UNITS_PER_M;
     const half = (SIZE_M / 2) * unit;
     // The ground's own colour where the textured ground ends, the land's colour from there out
@@ -81,7 +81,10 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
     // Dressing: where it stands, outside the place and its first foothills, on ground it can stand on
-    const away = (xm: number, zm: number) => Math.max(Math.abs(xm), Math.abs(zm)) * unit > inner + 40 && Math.max(Math.abs(xm), Math.abs(zm)) * unit < half - 20;
+    // The water first, so that nothing is planted in it
+    const wet = terrainWater(t);
+    const dry = (xm: number, zm: number) => [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([i, j]) => Number.isNaN(wet.surface[Math.max(0, Math.min(t.n - 1, Math.round((zm - t.z0) / t.cell) + j)) * t.n + Math.max(0, Math.min(t.n - 1, Math.round((xm - t.x0) / t.cell) + i))]));
+    const away = (xm: number, zm: number) => Math.max(Math.abs(xm), Math.abs(zm)) * unit > inner + 40 && Math.max(Math.abs(xm), Math.abs(zm)) * unit < half - 20 && dry(xm, zm);
     const dress = (rule: Parameters<typeof scatterOn>[1], cap: number) => scatterOn(t, rule, away).slice(0, cap);
     const trees = TREES[biome] ? dress({ spacing: lite ? 34 : 24, density: TREES[biome], maxSlope: 0.5, maxAlt: 0.8, seed: 3 }, lite ? 900 : 2600) : [];
     const rocks = ROCKS[biome] ? dress({ spacing: 40, density: ROCKS[biome] * 2.5, maxSlope: 0.9, seed: 5 }, 600) : [];
@@ -105,10 +108,62 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     const jitter = (i: number) => 0.8 + 0.4 * ((i * 2654435761) % 1000) / 1000;
     const treeMesh = place(trees, (i) => [2.4 * jitter(i) + 1, 7 * jitter(i * 3) + 2.5, 2.4 * jitter(i) + 1], (i) => new THREE.Color(P.low).multiplyScalar(0.5 * jitter(i * 7)), new THREE.ConeGeometry(1, 2, 6), 1);
     const rockMesh = place(rocks, (i) => [1.5 * jitter(i * 5) + 1, 1.1 * jitter(i * 11) + 0.6, 1.5 * jitter(i * 13) + 1], (i) => new THREE.Color(P.rock).multiplyScalar(0.8 * jitter(i * 17)), new THREE.DodecahedronGeometry(1, 0), 0.4);
-    return { geo, treeMesh, rockMesh };
+    // The water drawn (shared/logic/terrain.ts terrainWater): lakes where the ground is a bowl, rivers where the drainage gathers, away from the place
+    const level = (xm: number, zm: number, y: number) => Math.max(0, y - floor) * unit * smooth(inner, inner + RISE, Math.max(Math.abs(xm), Math.abs(zm)) * unit) + 0.08;
+    const lakePos: number[] = [];
+    const lakeIdx: number[] = [];
+    for (let j = 0; j < n - 1; j++) {
+      for (let i = 0; i < n - 1; i++) {
+        const corners = [j * n + i, j * n + i + 1, (j + 1) * n + i, (j + 1) * n + i + 1];
+        const vals = corners.map((c) => wet.surface[c]);
+        if (vals.some((v) => Number.isNaN(v))) continue;
+        const [xm, zm] = [t.x0 + (i + 0.5) * t.cell, t.z0 + (j + 0.5) * t.cell];
+        if (Math.max(Math.abs(xm), Math.abs(zm)) * unit < inner + 50) continue;
+        const base = lakePos.length / 3;
+        for (const [k, c] of corners.entries()) lakePos.push((t.x0 + ((c % n)) * t.cell) * unit, level(xm, zm, vals[k]), (t.z0 + Math.floor(c / n) * t.cell) * unit);
+        lakeIdx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
+    }
+    let lakes: THREE.BufferGeometry | null = null;
+    if (lakeIdx.length) {
+      lakes = new THREE.BufferGeometry();
+      lakes.setAttribute("position", new THREE.Float32BufferAttribute(lakePos, 3));
+      lakes.setIndex(lakeIdx);
+      lakes.computeVertexNormals();
+    }
+    const ribbonPos: number[] = [];
+    const ribbonIdx: number[] = [];
+    for (const river of wet.rivers) {
+      // (only the part of the line away from the place, a ribbon of two vertices a step, as wide as the river is big)
+      const line = river.line.filter(([xm, zm]) => Math.max(Math.abs(xm), Math.abs(zm)) * unit >= inner + 50);
+      if (line.length < 2) continue;
+      const first = ribbonPos.length / 3;
+      line.forEach(([xm, zm], i) => {
+        const [p, q] = [line[Math.max(0, i - 1)], line[Math.min(line.length - 1, i + 1)]];
+        const yaw = Math.atan2(q[1] - p[1], q[0] - p[0]);
+        const w = (3 + 12 * river.flow) * 0.5;
+        const [nx, nz] = [-Math.sin(yaw) * w, Math.cos(yaw) * w];
+        const y = level(xm, zm, terrainHeight(t, xm, zm)) + 0.12;
+        ribbonPos.push((xm - nx) * unit, y, (zm - nz) * unit, (xm + nx) * unit, y, (zm + nz) * unit);
+        if (i) {
+          const v = first + i * 2;
+          ribbonIdx.push(v - 2, v - 1, v, v - 1, v + 1, v);
+        }
+      });
+    }
+    let rivers: THREE.BufferGeometry | null = null;
+    if (ribbonIdx.length) {
+      rivers = new THREE.BufferGeometry();
+      rivers.setAttribute("position", new THREE.Float32BufferAttribute(ribbonPos, 3));
+      rivers.setIndex(ribbonIdx);
+      rivers.computeVertexNormals();
+    }
+    return { geo, treeMesh, rockMesh, lakes, rivers };
   }, [biome, seed, inner, lite, diffuse, tint]);
   useEffect(() => () => {
     built.geo.dispose();
+    built.lakes?.dispose();
+    built.rivers?.dispose();
     built.treeMesh?.geometry.dispose();
     built.rockMesh?.geometry.dispose();
   }, [built]);
@@ -117,6 +172,16 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
       <mesh geometry={built.geo} raycast={() => null}>
         <meshLambertMaterial vertexColors />
       </mesh>
+      {built.lakes && (
+        <mesh geometry={built.lakes} raycast={() => null}>
+          <meshLambertMaterial color="#3f7fb0" transparent opacity={0.88} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      {built.rivers && (
+        <mesh geometry={built.rivers} raycast={() => null}>
+          <meshLambertMaterial color="#3f7fb0" transparent opacity={0.88} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        </mesh>
+      )}
       {built.treeMesh && <primitive object={built.treeMesh} />}
       {built.rockMesh && <primitive object={built.rockMesh} />}
     </group>

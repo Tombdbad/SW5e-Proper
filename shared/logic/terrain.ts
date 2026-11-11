@@ -23,19 +23,19 @@ export interface TerrainPalette { low: string; high: string; rock: string; sand:
 // range; `power` the shape of the heights (1 even, 2 mostly low and flat with sharp tops); `terrace` the number of mesa steps (0 none);
 // `dunes` the share of dune crests; `craters` how many on the map; `stream`, `droplets`, `thermal` the erosion (0 none); `talus` the angle
 // of repose in degrees; `snow` the share of the height above which snow lies (2 never); `sandy` the share of the flats that is sand
-export interface TerrainStyle { relief: number; wave: number; octaves: number; warp: number; ridges: number; power: number; terrace: number; dunes: number; craters: number; stream: number; droplets: number; thermal: number; talus: number; snow: number; sandy: number; palette: TerrainPalette }
+export interface TerrainStyle { relief: number; wave: number; octaves: number; warp: number; ridges: number; power: number; terrace: number; dunes: number; craters: number; stream: number; droplets: number; thermal: number; talus: number; snow: number; sandy: number; lakes: number; palette: TerrainPalette }
 export const TERRAIN_STYLES: Record<string, TerrainStyle> = {
-  temperate: { relief: 150, wave: 0.45, octaves: 6, warp: 0.55, ridges: 0.35, power: 1.5, terrace: 0, dunes: 0, craters: 0, stream: 14, droplets: 1, thermal: 8, talus: 34, snow: 0.93, sandy: 0.04, palette: { low: "#4d7c3c", high: "#82915a", rock: "#7d766b", sand: "#cdbb8a", snow: "#f2f5f8", wet: "#3b5a30" } },
-  forest: { relief: 190, wave: 0.4, octaves: 6, warp: 0.6, ridges: 0.4, power: 1.4, terrace: 0, dunes: 0, craters: 0, stream: 14, droplets: 1, thermal: 8, talus: 34, snow: 0.9, sandy: 0.02, palette: { low: "#2f5e2e", high: "#4e6c3a", rock: "#6f695f", sand: "#a8a070", snow: "#eef2f5", wet: "#27472a" } },
-  jungle: { relief: 230, wave: 0.3, octaves: 6, warp: 0.75, ridges: 0.3, power: 1.3, terrace: 0, dunes: 0, craters: 0, stream: 18, droplets: 1.2, thermal: 8, talus: 38, snow: 2, sandy: 0.02, palette: { low: "#2a7a33", high: "#3d8a3c", rock: "#5e6a4c", sand: "#b9a874", snow: "#e6efe6", wet: "#1f5a2c" } },
-  swamp: { relief: 34, wave: 0.5, octaves: 5, warp: 0.4, ridges: 0, power: 2.2, terrace: 0, dunes: 0, craters: 0, stream: 5, droplets: 0.3, thermal: 6, talus: 28, snow: 2, sandy: 0.03, palette: { low: "#4b5e38", high: "#5d6a42", rock: "#5e5a4a", sand: "#6a6a48", snow: "#dfe4dc", wet: "#2f4a3c" } },
-  ocean: { relief: 110, wave: 0.5, octaves: 5, warp: 0.5, ridges: 0.15, power: 1.8, terrace: 0, dunes: 0, craters: 0, stream: 10, droplets: 0.6, thermal: 8, talus: 32, snow: 2, sandy: 0.25, palette: { low: "#4d8a52", high: "#62804c", rock: "#706b61", sand: "#e0d0a0", snow: "#f2f6f8", wet: "#3c6a48" } },
-  desert: { relief: 130, wave: 0.4, octaves: 5, warp: 0.7, ridges: 0.2, power: 1.2, terrace: 5, dunes: 0.5, craters: 0, stream: 4, droplets: 0.3, thermal: 14, talus: 33, snow: 2, sandy: 0.7, palette: { low: "#d4ad6c", high: "#c4945a", rock: "#9a7550", sand: "#e0bf7e", snow: "#efe2c8", wet: "#a8844f" } },
-  ice: { relief: 230, wave: 0.38, octaves: 6, warp: 0.5, ridges: 0.6, power: 1.2, terrace: 0, dunes: 0, craters: 0, stream: 8, droplets: 0.6, thermal: 10, talus: 36, snow: 0.3, sandy: 0, palette: { low: "#dfe8ee", high: "#cfdce6", rock: "#7f8b97", sand: "#c8dfee", snow: "#ffffff", wet: "#9fc2dc" } },
-  volcanic: { relief: 270, wave: 0.35, octaves: 6, warp: 0.5, ridges: 0.6, power: 1.1, terrace: 0, dunes: 0, craters: 5, stream: 5, droplets: 0.2, thermal: 12, talus: 38, snow: 2, sandy: 0.05, palette: { low: "#4a3c36", high: "#5e4e45", rock: "#6e5e54", sand: "#3a2c26", snow: "#8a7a70", wet: "#2a1a18" } },
-  urban: { relief: 28, wave: 0.5, octaves: 4, warp: 0.3, ridges: 0, power: 2.4, terrace: 0, dunes: 0, craters: 0, stream: 0, droplets: 0, thermal: 4, talus: 30, snow: 2, sandy: 0, palette: { low: "#6a707a", high: "#7a808a", rock: "#5a6068", sand: "#8a8a88", snow: "#e8ecf0", wet: "#4a5058" } },
-  barren: { relief: 160, wave: 0.4, octaves: 6, warp: 0.55, ridges: 0.4, power: 1.3, terrace: 0, dunes: 0, craters: 14, stream: 3, droplets: 0.2, thermal: 14, talus: 34, snow: 2, sandy: 0.12, palette: { low: "#8f8573", high: "#a0957f", rock: "#6f675b", sand: "#a39879", snow: "#d8d2c6", wet: "#6a6156" } },
-  "gas giant": { relief: 0, wave: 0.5, octaves: 3, warp: 0, ridges: 0, power: 1, terrace: 0, dunes: 0, craters: 0, stream: 0, droplets: 0, thermal: 0, talus: 30, snow: 2, sandy: 0, palette: { low: "#c98a52", high: "#d9a36a", rock: "#a8683a", sand: "#e8c99a", snow: "#f6ead8", wet: "#a8683a" } },
+  temperate: { relief: 150, wave: 0.45, octaves: 6, warp: 0.55, ridges: 0.35, power: 1.5, terrace: 0, dunes: 0, craters: 0, stream: 14, droplets: 1, thermal: 8, talus: 34, snow: 0.93, sandy: 0.04, lakes: 2, palette: { low: "#4d7c3c", high: "#82915a", rock: "#7d766b", sand: "#cdbb8a", snow: "#f2f5f8", wet: "#3b5a30" } },
+  forest: { relief: 190, wave: 0.4, octaves: 6, warp: 0.6, ridges: 0.4, power: 1.4, terrace: 0, dunes: 0, craters: 0, stream: 14, droplets: 1, thermal: 8, talus: 34, snow: 0.9, sandy: 0.02, lakes: 3, palette: { low: "#2f5e2e", high: "#4e6c3a", rock: "#6f695f", sand: "#a8a070", snow: "#eef2f5", wet: "#27472a" } },
+  jungle: { relief: 230, wave: 0.3, octaves: 6, warp: 0.75, ridges: 0.3, power: 1.3, terrace: 0, dunes: 0, craters: 0, stream: 18, droplets: 1.2, thermal: 8, talus: 38, snow: 2, sandy: 0.02, lakes: 2, palette: { low: "#2a7a33", high: "#3d8a3c", rock: "#5e6a4c", sand: "#b9a874", snow: "#e6efe6", wet: "#1f5a2c" } },
+  swamp: { relief: 34, wave: 0.5, octaves: 5, warp: 0.4, ridges: 0, power: 2.2, terrace: 0, dunes: 0, craters: 0, stream: 5, droplets: 0.3, thermal: 6, talus: 28, snow: 2, sandy: 0.03, lakes: 4, palette: { low: "#4b5e38", high: "#5d6a42", rock: "#5e5a4a", sand: "#6a6a48", snow: "#dfe4dc", wet: "#2f4a3c" } },
+  ocean: { relief: 110, wave: 0.5, octaves: 5, warp: 0.5, ridges: 0.15, power: 1.8, terrace: 0, dunes: 0, craters: 0, stream: 10, droplets: 0.6, thermal: 8, talus: 32, snow: 2, sandy: 0.25, lakes: 3, palette: { low: "#4d8a52", high: "#62804c", rock: "#706b61", sand: "#e0d0a0", snow: "#f2f6f8", wet: "#3c6a48" } },
+  desert: { relief: 130, wave: 0.4, octaves: 5, warp: 0.7, ridges: 0.2, power: 1.2, terrace: 5, dunes: 0.5, craters: 0, stream: 4, droplets: 0.3, thermal: 14, talus: 33, snow: 2, sandy: 0.7, lakes: 0, palette: { low: "#d4ad6c", high: "#c4945a", rock: "#9a7550", sand: "#e0bf7e", snow: "#efe2c8", wet: "#a8844f" } },
+  ice: { relief: 230, wave: 0.38, octaves: 6, warp: 0.5, ridges: 0.6, power: 1.2, terrace: 0, dunes: 0, craters: 0, stream: 8, droplets: 0.6, thermal: 10, talus: 36, snow: 0.3, sandy: 0, lakes: 2, palette: { low: "#dfe8ee", high: "#cfdce6", rock: "#7f8b97", sand: "#c8dfee", snow: "#ffffff", wet: "#9fc2dc" } },
+  volcanic: { relief: 270, wave: 0.35, octaves: 6, warp: 0.5, ridges: 0.6, power: 1.1, terrace: 0, dunes: 0, craters: 5, stream: 5, droplets: 0.2, thermal: 12, talus: 38, snow: 2, sandy: 0.05, lakes: 0, palette: { low: "#4a3c36", high: "#5e4e45", rock: "#6e5e54", sand: "#3a2c26", snow: "#8a7a70", wet: "#2a1a18" } },
+  urban: { relief: 28, wave: 0.5, octaves: 4, warp: 0.3, ridges: 0, power: 2.4, terrace: 0, dunes: 0, craters: 0, stream: 0, droplets: 0, thermal: 4, talus: 30, snow: 2, sandy: 0, lakes: 1, palette: { low: "#6a707a", high: "#7a808a", rock: "#5a6068", sand: "#8a8a88", snow: "#e8ecf0", wet: "#4a5058" } },
+  barren: { relief: 160, wave: 0.4, octaves: 6, warp: 0.55, ridges: 0.4, power: 1.3, terrace: 0, dunes: 0, craters: 14, stream: 3, droplets: 0.2, thermal: 14, talus: 34, snow: 2, sandy: 0.12, lakes: 0, palette: { low: "#8f8573", high: "#a0957f", rock: "#6f675b", sand: "#a39879", snow: "#d8d2c6", wet: "#6a6156" } },
+  "gas giant": { relief: 0, wave: 0.5, octaves: 3, warp: 0, ridges: 0, power: 1, terrace: 0, dunes: 0, craters: 0, stream: 0, droplets: 0, thermal: 0, talus: 30, snow: 2, sandy: 0, lakes: 0, palette: { low: "#c98a52", high: "#d9a36a", rock: "#a8683a", sand: "#e8c99a", snow: "#f6ead8", wet: "#a8683a" } },
 };
 export const terrainStyleOf = (biome: string): TerrainStyle => TERRAIN_STYLES[biome] ?? TERRAIN_STYLES.temperate;
 
@@ -48,6 +48,8 @@ export interface TerrainSpec {
   // Where the ground is brought down to `edge` (a share of the relief) at the rim of the map, so that a flat skirt joins it: the width of the
   // fall as a share of the map's side (0 none)
   rim?: number;
+  // Bowls dug on the flat, wet ground for lakes to stand in (see `carveBasins`)
+  basins?: number;
 }
 export interface Terrain {
   seed: number; biome: string; n: number; size: number; cell: number;
@@ -440,6 +442,7 @@ export function makeTerrain(spec: TerrainSpec): Terrain {
   let top = 1;
   for (let i = 0; i < flow.length; i++) if (flow[i] > top) top = flow[i];
   for (let i = 0; i < flow.length; i++) t.flow[i] = Math.log(flow[i]) / Math.log(top || 1);
+  if (spec.basins) carveBasins(t, spec.basins, spec.seed);
   // The rim: brought down to a flat skirt, so that the plain that goes on to the horizon joins it
   if (spec.rim) {
     for (let j = 0; j < n; j++) {
@@ -605,4 +608,222 @@ export function scatterOn(t: Terrain, rule: ScatterRule, within?: (x: number, z:
     }
   }
   return out;
+}
+
+// ---- Water (2026-11-10; the user: "lakes where drainage pools, a river network on the local map"). Where the ground is a bowl the water stands in it (priority-flood
+// fill, Barnes 2014: the level of each hollow is the lowest point of its rim), and where a great deal of rain has come down the water runs: the vertices
+// of the stream pass with the most drainage (`flow`) are the rivers, followed down to the edge or a lake. `carveBasins` digs a few bowls on the flat, wet
+// ground first (noise-made land has few closed hollows of its own), so that a land has lakes where the water would gather.
+export interface TerrainWater {
+  // The water's surface at each vertex, or NaN where it is dry: a lake's flat level, a river's level a little over its bed
+  surface: Float32Array;
+  lakes: { cells: number; level: number; x: number; z: number; depth: number }[];
+  // The rivers as lines downstream (metres), each with the largest `flow` (0..1) along it, for the width
+  rivers: { line: [number, number][]; flow: number }[];
+}
+// Dig `count` bowls on the flattest, wettest ground (a few metres deep, 60 to 160 m across), so that water will stand in them
+export function carveBasins(t: Terrain, count: number, seed: number): void {
+  const rand = rng(seed * 7 + t.seed);
+  const picks: { i: number; j: number; score: number }[] = [];
+  const margin = 8;
+  for (let j = margin; j < t.n - margin; j += 2) {
+    for (let i = margin; i < t.n - margin; i += 2) {
+      const at = j * t.n + i;
+      const slope = Math.hypot(t.h[at + 1] - t.h[at - 1], t.h[at + t.n] - t.h[at - t.n]) / (2 * t.cell);
+      picks.push({ i, j, score: t.flow[at] * 1.2 - slope * 3 + rand() * 0.25 - ((t.h[at] - t.min) / Math.max(1, t.max - t.min)) * 0.8 });
+    }
+  }
+  picks.sort((a, b) => b.score - a.score);
+  const made: { i: number; j: number }[] = [];
+  for (const p of picks) {
+    if (made.length >= count) break;
+    if (made.some((m) => Math.hypot(m.i - p.i, m.j - p.j) * t.cell < 500)) continue;
+    made.push(p);
+    const radius = 60 + rand() * 100;
+    const depth = Math.min(8, 3 + rand() * 4);
+    const reach = Math.ceil(radius / t.cell) + 2;
+    for (let j = p.j - reach; j <= p.j + reach; j++) {
+      for (let i = p.i - reach; i <= p.i + reach; i++) {
+        if (i < 1 || j < 1 || i >= t.n - 1 || j >= t.n - 1) continue;
+        const d = Math.hypot(i - p.i, j - p.j) * t.cell;
+        // A bowl: its bottom `depth` under the rim's own height, the sides eased
+        if (d < radius * 1.4) t.h[j * t.n + i] -= depth * (1 - smoothstep(radius * 0.3, radius * 1.4, d));
+      }
+    }
+  }
+  refresh(t);
+}
+// The filled surface of a grid: each vertex's height raised to the lowest rim that holds it (a binary heap flooding in from the edge, lowest first)
+function filled(t: Terrain): Float32Array {
+  const { n, h } = t;
+  const out = Float32Array.from(h);
+  const done = new Uint8Array(n * n);
+  const heap: number[] = [];
+  const push = (i: number) => {
+    heap.push(i);
+    let k = heap.length - 1;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (out[heap[p]] <= out[heap[k]]) break;
+      [heap[p], heap[k]] = [heap[k], heap[p]];
+      k = p;
+    }
+  };
+  const pop = (): number => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      let k = 0;
+      for (;;) {
+        const [l, r] = [2 * k + 1, 2 * k + 2];
+        let m = k;
+        if (l < heap.length && out[heap[l]] < out[heap[m]]) m = l;
+        if (r < heap.length && out[heap[r]] < out[heap[m]]) m = r;
+        if (m === k) break;
+        [heap[m], heap[k]] = [heap[k], heap[m]];
+        k = m;
+      }
+    }
+    return top;
+  };
+  for (let i = 0; i < n; i++) {
+    for (const at of [i, (n - 1) * n + i, i * n, i * n + n - 1]) {
+      if (!done[at]) {
+        done[at] = 1;
+        push(at);
+      }
+    }
+  }
+  while (heap.length) {
+    const at = pop();
+    const [x, z] = [at % n, Math.floor(at / n)];
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const [nx, nz] = [x + dx, z + dz];
+      if (nx < 0 || nz < 0 || nx >= n || nz >= n) continue;
+      const o = nz * n + nx;
+      if (done[o]) continue;
+      done[o] = 1;
+      out[o] = Math.max(out[o], out[at]);
+      push(o);
+    }
+  }
+  return out;
+}
+// The water of a land: lakes where the filled surface stands over the ground by at least `minDepth`, rivers where the flow passes `riverFlow`
+// (`maxLakes` of the broadest, none deeper than `maxDepth`: a land of eroded noise has many pits, and most of them are dry hollows)
+export function terrainWater(t: Terrain, o: { minDepth?: number; minCells?: number; riverFlow?: number; maxLakes?: number; maxDepth?: number } = {}): TerrainWater {
+  const { n } = t;
+  const [minDepth, minCells, riverFlow, maxLakes, maxDepth] = [o.minDepth ?? 1, o.minCells ?? 12, o.riverFlow ?? 0.68, o.maxLakes ?? terrainStyleOf(t.biome).lakes, o.maxDepth ?? 12];
+  const top = filled(t);
+  const surface = new Float32Array(n * n).fill(NaN);
+  // Lakes: the vertices under the filled surface, grouped by flood (4-connected) with their level
+  const seen = new Uint8Array(n * n);
+  const lakes: TerrainWater["lakes"] = [];
+  const found: { cells: number[]; at: number; deep: number }[] = [];
+  for (let at = 0; at < n * n; at++) {
+    if (seen[at] || top[at] - t.h[at] < minDepth) continue;
+    const cells: number[] = [];
+    const stack = [at];
+    seen[at] = 1;
+    while (stack.length) {
+      const q = stack.pop()!;
+      cells.push(q);
+      const [x, z] = [q % n, Math.floor(q / n)];
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const [nx, nz] = [x + dx, z + dz];
+        if (nx < 0 || nz < 0 || nx >= n || nz >= n) continue;
+        const p = nz * n + nx;
+        if (!seen[p] && top[p] - t.h[p] >= minDepth * 0.5 && Math.abs(top[p] - top[at]) < 0.01) {
+          seen[p] = 1;
+          stack.push(p);
+        }
+      }
+    }
+    if (cells.length < minCells) continue;
+    found.push({ cells, at, deep: cells.reduce((m, c) => Math.max(m, top[c] - t.h[c]), 0) });
+  }
+  for (const lake of found.filter((l) => l.deep <= maxDepth).sort((a, b) => b.cells.length - a.cells.length).slice(0, maxLakes)) {
+    let [sx, sz] = [0, 0];
+    for (const c of lake.cells) {
+      surface[c] = top[c];
+      sx += t.x0 + (c % n) * t.cell;
+      sz += t.z0 + Math.floor(c / n) * t.cell;
+    }
+    lakes.push({ cells: lake.cells.length, level: top[lake.at], x: sx / lake.cells.length, z: sz / lake.cells.length, depth: lake.deep });
+  }
+  // Rivers: from every vertex whose flow passes the line and which nothing upstream of it feeds, down the steepest way over the filled surface to the edge
+  // or into a lake, smoothed
+  const down = (at: number): number => {
+    const [x, z] = [at % n, Math.floor(at / n)];
+    let best = -1;
+    let drop = 0;
+    for (const [dx, dz, len] of NB) {
+      const [nx, nz] = [x + dx, z + dz];
+      if (nx < 0 || nz < 0 || nx >= n || nz >= n) continue;
+      const s = (top[at] - top[nz * n + nx]) / len;
+      if (s > drop) {
+        best = nz * n + nx;
+        drop = s;
+      }
+    }
+    return best;
+  };
+  // The drainage over the filled surface (the stream pass's own was made before the later passes changed the ground): the area gathered from the top down
+  const order = new Float64Array(n * n);
+  for (let i = 0; i < n * n; i++) order[i] = Math.round(top[i] * 256) * 1048576 + i;
+  order.sort();
+  const area = new Float32Array(n * n).fill(1);
+  for (let q = n * n - 1; q >= 0; q--) {
+    const at = order[q] % 1048576;
+    const d = down(at);
+    if (d >= 0) area[d] += area[at];
+  }
+  let most = 1;
+  for (let i = 0; i < area.length; i++) if (area[i] > most) most = area[i];
+  const flowOf = (at: number) => Math.log(area[at]) / Math.log(most);
+  const isRiver = (at: number) => flowOf(at) >= riverFlow;
+  const fed = new Uint8Array(n * n);
+  for (let at = 0; at < n * n; at++) {
+    if (!isRiver(at)) continue;
+    const d = down(at);
+    if (d >= 0 && isRiver(d)) fed[d] = 1;
+  }
+  const rivers: TerrainWater["rivers"] = [];
+  const used = new Uint8Array(n * n);
+  const where = (q: number): [number, number] => [t.x0 + (q % n) * t.cell, t.z0 + Math.floor(q / n) * t.cell];
+  for (let at = 0; at < n * n; at++) {
+    if (!isRiver(at) || fed[at] || used[at]) continue;
+    const line: [number, number][] = [];
+    const cells: number[] = [];
+    let q = at;
+    let peak = 0;
+    for (let guard = 0; q >= 0 && guard < n * 4; guard++) {
+      used[q] = 1;
+      cells.push(q);
+      line.push(where(q));
+      peak = Math.max(peak, flowOf(q));
+      if (!Number.isNaN(surface[q]) || !isRiver(q)) break;
+      q = down(q);
+      if (q >= 0 && used[q]) {
+        line.push(where(q));
+        break;
+      }
+    }
+    if (line.length < 10 || (maxLakes === 0 && o.riverFlow === undefined)) continue;
+    // (a moving average over a few points: the line of cells is staircase-shaped)
+    const soft = line.map((_, i) => {
+      let [sx, sz] = [0, 0];
+      for (let k = -2; k <= 2; k++) {
+        const p = line[Math.max(0, Math.min(line.length - 1, i + k))];
+        sx += p[0];
+        sz += p[1];
+      }
+      return [sx / 5, sz / 5] as [number, number];
+    });
+    rivers.push({ line: soft, flow: peak });
+    // The surface of the river: a little over its bed
+    for (const c of cells) if (Number.isNaN(surface[c])) surface[c] = t.h[c] + 0.15 + 0.35 * flowOf(c);
+  }
+  return { surface, lakes, rivers };
 }

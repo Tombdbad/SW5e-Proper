@@ -21,7 +21,7 @@ test("each land brings its hazards, out of doors", () => {
   assert.deepEqual(kinds(worldOf("desert"), "s", 12 * 60), ["heat"]);
   assert.deepEqual(kinds(worldOf("desert"), "s", 22 * 60), [], "a desert night is not hot");
   assert.deepEqual(kinds(worldOf("barren", "crash site", "wreck", "Hull breach"), "s"), ["vacuum"]);
-  assert.deepEqual(kinds(worldOf("urban", "sewer system", "sewer", "Main channel"), "r"), ["dark", "toxic"]);
+  assert.deepEqual(kinds(worldOf("urban", "city", "cantina", "Sewer junction"), "r"), ["dark", "toxic"]);
   assert.deepEqual(kinds(worldOf("volcanic", "cave system", "cave", "Winding tunnel"), "r"), ["dark", "toxic"]);
   assert.deepEqual(kinds(worldOf("temperate", "city", "engineering", "Reactor room"), "r"), ["radiation"]);
   assert.deepEqual(kinds(worldOf("ocean", "crash site", "wreck", "Cargo hold"), "r"), ["dark", "underwater"].filter((k) => k !== "dark"));

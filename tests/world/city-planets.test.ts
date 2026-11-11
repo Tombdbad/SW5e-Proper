@@ -3,37 +3,19 @@ import assert from "node:assert/strict";
 import { generateWorld, childrenOf, ancestor, kindLabel, type Area } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
-// A city planet (2026-10-20): covered in city, so the places under it are sewers and never caves; its districts meet at speeder platforms on
+// A city planet (2026-10-20): covered in city, so it has no caves (its sewers are under its own buildings: 2026-11-10); its districts meet at speeder platforms on
 // the roofs and not at gates in a wall; its buildings are towers of stacked rooms more than other worlds'; and what the game calls a
 // settlement is, there, a district.
 const catalog = await getWorldCatalog();
 const worlds = [1, 2, 3, 4, 5, 6, 7, 8].map((seed) => generateWorld({ seed, partyLevel: 5, detail: "all" }, catalog));
 const onUrban = (w: (typeof worlds)[number], a: Area) => ancestor(w, a.id, "planet")?.type === "urban";
 
-test("a city planet has sewers where other worlds have caves, and no caves", () => {
-  let sewers = 0;
+test("a city planet has no caves and no sewer district: its sewers are under its own buildings (tests/world/sewers.test.ts)", () => {
   for (const w of worlds) for (const a of Object.values(w.areas)) {
     if (a.kind !== "settlement" || !onUrban(w, a)) continue;
     assert.notEqual(a.type, "cave system", `${a.name}: caves on a city planet`);
-    if (a.type === "sewer system") sewers++;
+    assert.notEqual(a.type, "sewer system", `${a.name}: a sewer district`);
   }
-  assert.ok(sewers > 0, "no sewer system on any city planet");
-});
-
-test("the sewers are built: narrow channels, a few larger chambers, straight walls", () => {
-  let channels = 0;
-  let chambers = 0;
-  for (const w of worlds) for (const b of Object.values(w.areas)) {
-    if (b.kind !== "building" || b.type !== "sewer") continue;
-    for (const r of childrenOf(w, b.id)) {
-      if (!r.layout || r.tags.some((t) => t.startsWith("form:"))) continue;
-      assert.equal(r.layout.mask, undefined, `${r.name}: a sewer room is not organic`);
-      const narrow = Math.min(r.layout.width, r.layout.height);
-      if (/channel|outfall/i.test(r.name)) { channels++; assert.ok(narrow >= 2 && narrow <= 6, `${r.name} is ${narrow} squares wide`); }
-      if (/junction|pump|cistern/i.test(r.name)) { chambers++; assert.ok(narrow >= 5, `${r.name} is only ${narrow} wide`); }
-    }
-  }
-  assert.ok(channels > 0 && chambers > 0, `${channels} channels, ${chambers} chambers`);
 });
 
 test("the districts of a city planet meet at speeder platforms, not gates", () => {
