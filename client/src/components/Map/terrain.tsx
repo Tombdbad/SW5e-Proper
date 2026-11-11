@@ -97,6 +97,8 @@ function useTerrainKit(): Record<string, THREE.BufferGeometry> {
 // The Megascans pack of a biome (public/megascans/<pack>.glb, tools/blender/build-megascans-pack.py): pieces named <piece>__<variant>. The files are NOT in the
 // repository (the Fab Standard License, a public repo): where they are missing the loader fails quietly and the kit and the cones are what is drawn. Loaded once
 // a pack, shared; null while loading or when there is none.
+// How much bigger than life the pack's pieces are stood (the user, 2026-11-11: they read too small beside the figures and buildings, "at least 100%"): a fern 2.8 m across, a boulder 2.5 m
+export const PACK_SCALE = 2;
 export interface PackPiece { geometry: THREE.BufferGeometry; material: THREE.Material }
 export type MegaPack = Map<string, PackPiece>;
 const PACKS = new Map<string, Promise<MegaPack | null>>();
@@ -163,7 +165,7 @@ function PackDress({ pack, biome, built, lite }: { pack: MegaPack; biome: string
       if (!piece) continue;
       const mesh = new THREE.InstancedMesh(piece.geometry, piece.material, list.length);
       list.forEach((s, i) => {
-        const size = s.scale * unit;
+        const size = s.scale * unit * PACK_SCALE;
         m.compose(new THREE.Vector3(s.x * unit, heightAt(s.x, s.z) - s.sink * size, s.z * unit), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw), new THREE.Vector3(size, size, size));
         mesh.setMatrixAt(i, m);
       });
