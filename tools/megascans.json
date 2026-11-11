@@ -1,0 +1,34 @@
+{
+  "_": "Quixel Megascans on Fab (Standard License; the repo is public, so no file made from them is committed: tools/refs/megascans/ and client/public/megascans/ are git-ignored). This file is the record: where each piece comes from and how tools/blender/build-megascans-pack.py makes it. Every piece is the LOW tier of its listing, downloaded 2026-11-11 by the user's go-ahead.",
+  "listing": "https://www.fab.com/listings/",
+  "pieces": {
+    "forest_boulder": { "id": "f8597ba8-291d-4a41-9452-0fb1598736ec", "kind": "rock", "glb": "forest_boulder/forest_boulder_wgosajs_low.glb", "budget": 700, "size": 512 },
+    "mossy_forest_boulder": { "id": "8cf6b5fa-fc74-4e00-aa37-8cb239bf9782", "kind": "rock", "glb": "mossy_forest_boulder/mossy_forest_boulder_wfstcdnaw_low.glb", "budget": 800, "size": 512 },
+    "canyon_sandstone_boulder": { "id": "366026f1-13b7-42e8-b0e1-6d64f6363440", "kind": "rock", "glb": "canyon_sandstone_boulder/canyon_sandstone_boulder_ulmtabz_low.glb", "budget": 700, "size": 512 },
+    "desert_western_pile_rock_small_01": { "id": "fd3e0024-57f5-485f-aab3-ec5fb96a34f6", "kind": "rock", "glb": "desert_western_pile_rock_small_01/desert_western_pile_rock_small_01_ul4lehiga_low.glb", "budget": 800, "size": 512 },
+    "icelandic_boulder": { "id": "9feea5ee-39bc-4f6f-b670-243793934b24", "kind": "rock", "glb": "icelandic_boulder/icelandic_boulder_tblxe_low.glb", "budget": 800, "size": 512 },
+    "volcanic_dolerite_rocks": { "id": "cf620093-32aa-490d-93b1-0854081ad17f", "kind": "rock", "glb": "volcanic_dolerite_rocks/volcanic_dolerite_rocks_qjmvt_low.glb", "budget": 700, "size": 512 },
+    "limestone_rocks": { "id": "def04cd0-311d-4d3e-a61a-5a420c7de44b", "kind": "rock", "glb": "limestone_rocks/limestone_rocks_ubqxai2da_low.glb", "budget": 800, "size": 512 },
+    "snow_pile": { "id": "8e55612b-1f02-4262-aad4-f1a00dfa7c62", "kind": "rock", "glb": "snow_pile/snow_pile_xgxhcjxqx_low.glb", "budget": 800, "size": 512 },
+    "dead_tree": { "id": "c0c4ec3a-8773-4175-9136-4e505acc5140", "kind": "rock", "glb": "dead_tree/dead_tree_qletl_low.glb", "budget": 1500, "size": 512 },
+    "tropical_palm": { "id": "a14792bb-cc06-4bfc-b657-ea85cca903d7", "kind": "plant", "dir": "tropical_palm/x", "stem": "Tropical_Palm_rkqjj_Low", "lod": 1, "budget": 900, "size": 512 },
+    "alexandra_palm": { "id": "de222652-2e7f-45e0-9710-0bbed55a753e", "kind": "plant", "dir": "alexandra_palm/x", "stem": "Alexandra_Palm_ukgkcilia_Low", "lod": 2, "budget": 1000, "size": 512 },
+    "chinese_fan_palm": { "id": "baaece72-6e2b-4fef-a8b9-de5c0f244a43", "kind": "plant", "dir": "chinese_fan_palm/x", "stem": "Chinese_Fan_Palm_ud4geejja_Low", "lod": 2, "budget": 600, "size": 512 },
+    "bracken_fern": { "id": "b4bf4ef7-f341-48ee-b851-c3297909485d", "kind": "plant", "dir": "bracken_fern/x", "stem": "Bracken_Fern_seEoW_Low", "lod": 0, "budget": 200, "size": 256 },
+    "grass_clumps": { "id": "d22b2fc3-9389-4d39-894c-5369a7e49ddf", "kind": "plant", "dir": "grass_clumps/x", "stem": "Grass_Clumps_rbdoo_Low", "lod": 1, "budget": 500, "size": 256 },
+    "swamp_grass": { "id": "528ba6d3-d7af-4287-804c-41a03664cd11", "kind": "plant", "dir": "swamp_grass/x", "stem": "Swamp_Grass_tefocd1r_Low", "lod": 1, "budget": 600, "size": 256 },
+    "giant_reed": { "id": "7df9d5b8-6567-4a4d-9b37-53d63e7e6cd8", "kind": "plant", "dir": "giant_reed/x", "stem": "Giant_Reed_sjllX_Low", "lod": 1, "budget": 700, "size": 256 },
+    "rhazya": { "id": "6ba3da12-699d-431f-bd09-963bcd784962", "kind": "plant", "dir": "rhazya/x", "stem": "Rhazya_xdjmfeqqx_Low", "lod": 1, "budget": 250, "size": 256 },
+    "dead_shrubs": { "id": "d8fbec55-5d03-41ba-bce3-1c7ee42512a4", "kind": "plant", "dir": "dead_shrubs/x", "stem": "Dead_Shrubs_vdknafgha_Low", "lod": 1, "budget": 250, "size": 256 },
+    "xeric_grass": { "id": "5f33480b-6701-40e5-8bb6-5fe77504225c", "kind": "plant", "dir": "xeric_grass/x", "stem": "Xeric_Grass_xjfgdhaqx_Low", "lod": 0, "budget": 250, "size": 256 }
+  },
+  "packs": {
+    "forest": ["forest_boulder", "mossy_forest_boulder", "dead_tree", "bracken_fern", "grass_clumps"],
+    "jungle": ["mossy_forest_boulder", "tropical_palm", "alexandra_palm", "chinese_fan_palm", "bracken_fern", "grass_clumps"],
+    "swamp": ["mossy_forest_boulder", "dead_tree", "swamp_grass", "giant_reed"],
+    "desert": ["canyon_sandstone_boulder", "desert_western_pile_rock_small_01", "xeric_grass", "rhazya", "dead_shrubs"],
+    "ice": ["icelandic_boulder", "snow_pile", "dead_tree"],
+    "volcanic": ["volcanic_dolerite_rocks", "icelandic_boulder", "dead_shrubs"],
+    "barren": ["limestone_rocks", "icelandic_boulder", "desert_western_pile_rock_small_01", "dead_shrubs"]
+  }
+}

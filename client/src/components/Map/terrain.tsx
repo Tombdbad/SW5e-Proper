@@ -3,11 +3,12 @@
 // ridges and valleys (shared/logic/terrain.ts: weathered height field, coloured by slope and by where the water went), flat under the place and
 // rising away from it, dressed with trees or rocks where they can stand. The same seed makes the same land every visit; the horizon's mountains
 // (scenery.tsx WorldSky) stand behind it.
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF, useTexture } from "@react-three/drei";
 import * as THREE from "three";
-import { kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { ECOLOGY, ecologySpots, kitSpots, scatterOn, terrainFor, terrainHeight, terrainSlope, terrainStyleOf, terrainSurface, terrainWater, type Terrain } from "@shared/logic";
 import { UNITS_PER_M } from "./models";
 import { useQuality } from "./siteAssets";
 import { shaderPatch, type GroundLayers } from "./babylon";
@@ -93,12 +94,97 @@ function useTerrainKit(): Record<string, THREE.BufferGeometry> {
   }, [gltf]);
 }
 
+// The Megascans pack of a biome (public/megascans/<pack>.glb, tools/blender/build-megascans-pack.py): pieces named <piece>__<variant>. The files are NOT in the
+// repository (the Fab Standard License, a public repo): where they are missing the loader fails quietly and the kit and the cones are what is drawn. Loaded once
+// a pack, shared; null while loading or when there is none.
+export interface PackPiece { geometry: THREE.BufferGeometry; material: THREE.Material }
+export type MegaPack = Map<string, PackPiece>;
+const PACKS = new Map<string, Promise<MegaPack | null>>();
+function loadPack(name: string): Promise<MegaPack | null> {
+  let p = PACKS.get(name);
+  if (!p) {
+    p = new Promise((done) => {
+      new GLTFLoader().load(
+        `/megascans/${name}.glb`,
+        (g) => {
+          const pack: MegaPack = new Map();
+          const lifted = new Set<THREE.Material>();
+          g.scene.traverse((o) => {
+            const m = o as THREE.Mesh;
+            if (m.isMesh && m.name) {
+              const mat = m.material as THREE.MeshStandardMaterial;
+              // (a scan's albedo is a real leaf's or rock's, dark: the sun of the scan's own scenes is stronger than ours: lifted, as the leaf textures are, surfaces.tsx)
+              if (!lifted.has(mat)) {
+                lifted.add(mat);
+                mat.color.multiplyScalar(mat.alphaTest > 0 ? 3 : 1.5);
+              }
+              pack.set(m.name, { geometry: m.geometry, material: mat });
+            }
+          });
+          done(pack);
+        },
+        undefined,
+        () => done(null),
+      );
+    });
+    PACKS.set(name, p);
+  }
+  return p;
+}
+export function useMegascans(biome: string): MegaPack | null {
+  const name = ECOLOGY[biome]?.pack;
+  const [pack, setPack] = useState<MegaPack | null>(null);
+  useEffect(() => {
+    let live = true;
+    setPack(null);
+    if (name) loadPack(name).then((p) => live && setPack(p));
+    return () => { live = false; };
+  }, [name]);
+  return pack;
+}
+
+// What the pack stands on the land (shared/logic ecologySpots): rocks and dead trees out to the horizon, ground cover near the place only, each piece an instanced
+// mesh by its variant, stood on the ground and sunk by its share, turned at random
+function PackDress({ pack, biome, built, lite }: { pack: MegaPack; biome: string; built: { t: Terrain; heightAt: (x: number, z: number) => number; away: (x: number, z: number) => boolean; unit: number; inner: number }; lite: boolean }) {
+  const meshes = useMemo(() => {
+    const { t, heightAt, away, unit, inner } = built;
+    // (ground cover, drawn within about 330 squares of the place: past that the fade of the ground's own detail has taken over)
+    const near = (x: number, z: number) => Math.max(Math.abs(x), Math.abs(z)) * unit < inner + 330;
+    const spots = ecologySpots(t, biome, { within: away, cover: near, seed: 11, cap: lite ? { cover: 500, mid: 150, rock: 250 } : { cover: 1400, mid: 400, rock: 600 } });
+    const groups = new Map<string, EcoSpotLike[]>();
+    for (const s of spots) {
+      const key = s.kind + "__" + "ABC"[s.variant];
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(s);
+    }
+    const out: THREE.InstancedMesh[] = [];
+    const m = new THREE.Matrix4();
+    for (const [key, list] of groups) {
+      const piece = pack.get(key);
+      if (!piece) continue;
+      const mesh = new THREE.InstancedMesh(piece.geometry, piece.material, list.length);
+      list.forEach((s, i) => {
+        const size = s.scale * unit;
+        m.compose(new THREE.Vector3(s.x * unit, heightAt(s.x, s.z) - s.sink * size, s.z * unit), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw), new THREE.Vector3(size, size, size));
+        mesh.setMatrixAt(i, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.frustumCulled = false;
+      mesh.raycast = () => null;
+      out.push(mesh);
+    }
+    return out;
+  }, [pack, biome, built, lite]);
+  return <>{meshes.map((m) => <primitive key={m.uuid} object={m} />)}</>;
+}
+type EcoSpotLike = ReturnType<typeof ecologySpots>[number];
+
 export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: string; seed: number; inner: number; at: [number, number, number]; set: string; tint: THREE.Color }) {
   const diffuse = useTexture(`/textures/ground/${set}/diffuse.jpg`);
   const lite = useQuality((q) => q.tier === "lite");
   const material = useGroundMaterial(biome, set);
   const water = useWaterMaterial(biome);
   const kit = useTerrainKit();
+  const pack = useMegascans(biome);
   const built = useMemo(() => {
     const st = terrainStyleOf(biome);
     const t: Terrain = terrainFor({ seed: (seed ^ 0x5bd1e995) | 0, biome, size: SIZE_M, n: lite ? 97 : 145, scale: 1, erosion: "light", basins: st.lakes });
@@ -174,28 +260,6 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     const P = st.palette;
     const jitter = (i: number) => 0.8 + 0.4 * ((i * 2654435761) % 1000) / 1000;
     const treeMesh = place(trees, (i) => [2.4 * jitter(i) + 1, 7 * jitter(i * 3) + 2.5, 2.4 * jitter(i) + 1], (i) => new THREE.Color(P.low).multiplyScalar(0.5 * jitter(i * 7)), new THREE.ConeGeometry(1, 2, 6), 1);
-    // The kit: boulders on the ground that is not flat, scree at the foot of a steep slope, overhanging ledges on the cliffs (shared/logic kitSpots)
-    const dryAway = (xm: number, zm: number) => away(xm, zm);
-    const spots = kitSpots(t, { boulders: (ROCKS[biome] ?? 0.04) * 2.5, scree: (ROCKS[biome] ?? 0.04) * 3, ledges: st.ridges >= 0.35 ? 0.35 : 0.1, seed: 5, within: dryAway, cap: lite ? 500 : 1400 });
-    const kitMeshes: THREE.InstancedMesh[] = [];
-    const rockTone = new THREE.Color(P.rock).multiplyScalar(4.2); // (the kit's vertex colours are the rock's tone in light, about 0.2: the biome's own rock colour over it)
-    for (const kind of ["boulder_a", "boulder_b", "boulder_c", "scree", "ledge_a", "ledge_b"]) {
-      const list = spots.filter((s) => s.kind === kind);
-      const geometry = kit[kind];
-      if (!list.length || !geometry) continue;
-      const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, color: rockTone, roughness: 0.95, metalness: 0 }), list.length);
-      const m = new THREE.Matrix4();
-      list.forEach((s, i) => {
-        const size = s.scale * unit * 1.4;
-        // (stood on the land, sunk by its share of its height, the cliff's ledges with their backs in the slope)
-        m.compose(new THREE.Vector3(s.x * unit, heightAt(s.x, s.z) - s.sink * size * (kind.startsWith("ledge") ? 1.2 : 1), s.z * unit), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw), new THREE.Vector3(size, size, size));
-        mesh.setMatrixAt(i, m);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.frustumCulled = false;
-      mesh.raycast = () => null;
-      kitMeshes.push(mesh);
-    }
     // The water drawn (shared/logic/terrain.ts terrainWater): lakes where the ground is a bowl, rivers where the drainage gathers, away from the place
     const level = (xm: number, zm: number, y: number) => Math.max(0, y - floor) * unit * smooth(inner, inner + RISE, Math.max(Math.abs(xm), Math.abs(zm)) * unit) + 0.08;
     const lakePos: number[] = [];
@@ -258,15 +322,41 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
       rivers.setIndex(ribbonIdx);
       rivers.computeVertexNormals();
     }
-    return { geo, treeMesh, kitMeshes, lakes, rivers };
-  }, [biome, seed, inner, lite, diffuse, tint, kit]);
+    return { geo, treeMesh, lakes, rivers, t, heightAt, away, unit, inner, palette: P, ridges: st.ridges };
+  }, [biome, seed, inner, lite, diffuse, tint]);
+  // The kit: boulders on the ground that is not flat (unless the Megascans pack stands the rocks), scree at the foot of a steep slope, overhanging ledges on the cliffs (shared/logic kitSpots)
+  const kitMeshes = useMemo(() => {
+    const { t, heightAt, away, unit, palette, ridges } = built;
+    const rocks = pack ? 0 : (ROCKS[biome] ?? 0.04) * 2.5;
+    const spots = kitSpots(t, { boulders: rocks, scree: (ROCKS[biome] ?? 0.04) * 3, ledges: ridges >= 0.35 ? 0.35 : 0.1, seed: 5, within: away, cap: lite ? 500 : 1400 });
+    const out: THREE.InstancedMesh[] = [];
+    const rockTone = new THREE.Color(palette.rock).multiplyScalar(4.2); // (the kit's vertex colours are the rock's tone in light, about 0.2: the biome's own rock colour over it)
+    for (const kind of ["boulder_a", "boulder_b", "boulder_c", "scree", "ledge_a", "ledge_b"]) {
+      const list = spots.filter((s) => s.kind === kind);
+      const geometry = kit[kind];
+      if (!list.length || !geometry) continue;
+      const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, color: rockTone, roughness: 0.95, metalness: 0 }), list.length);
+      const m = new THREE.Matrix4();
+      list.forEach((s, i) => {
+        const size = s.scale * unit * 1.4;
+        // (stood on the land, sunk by its share of its height, the cliff's ledges with their backs in the slope)
+        m.compose(new THREE.Vector3(s.x * unit, heightAt(s.x, s.z) - s.sink * size * (kind.startsWith("ledge") ? 1.2 : 1), s.z * unit), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), s.yaw), new THREE.Vector3(size, size, size));
+        mesh.setMatrixAt(i, m);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.frustumCulled = false;
+      mesh.raycast = () => null;
+      out.push(mesh);
+    }
+    return out;
+  }, [built, kit, pack, biome, lite]);
   useEffect(() => () => {
     built.geo.dispose();
     built.lakes?.dispose();
     built.rivers?.dispose();
     built.treeMesh?.geometry.dispose();
-    built.kitMeshes.forEach((m) => (m.material as THREE.Material).dispose());
   }, [built]);
+  useEffect(() => () => kitMeshes.forEach((m) => (m.material as THREE.Material).dispose()), [kitMeshes]);
   return (
     <group position={at}>
       <mesh geometry={built.geo} material={material} raycast={() => null} />
@@ -277,7 +367,8 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
         <mesh geometry={built.rivers} material={water} raycast={() => null} renderOrder={2} />
       )}
       {built.treeMesh && <primitive object={built.treeMesh} />}
-      {built.kitMeshes.map((m) => <primitive key={m.uuid} object={m} />)}
+      {kitMeshes.map((m) => <primitive key={m.uuid} object={m} />)}
+      {pack && <PackDress pack={pack} biome={biome} built={built} lite={lite} />}
     </group>
   );
 }

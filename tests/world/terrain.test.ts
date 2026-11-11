@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, kitSpots, terrainGradient, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
+  TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, kitSpots, terrainGradient, ecologySpots, ECOLOGY, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
   raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
@@ -248,4 +248,30 @@ test("kit places boulders, scree and ledges by the ground's slope, ledges facing
   assert.ok(kitSpots(t, { ...o, cap: 7 }).length <= 7, "capped");
   const nowhere = kitSpots(t, { ...o, within: () => false });
   assert.equal(nowhere.length, 0, "nothing where it may not stand");
+});
+
+test("ecology (the Megascans packs): the same spots each time, only where allowed, every kind of a tier has its share, nearest the place first (2026-11-11)", () => {
+  for (const biome of ["forest", "jungle", "swamp", "desert", "ice", "volcanic", "barren"]) {
+    const t = terrainFor({ seed: 9, biome, size: 1500, n: 97, erosion: "none" });
+    const near = (x: number, z: number) => Math.hypot(x, z) < 400;
+    const within = (x: number, z: number) => Math.hypot(x, z) > 60;
+    const o = { within, cover: near, seed: 3, cap: { cover: 300, mid: 100, rock: 150 } };
+    const spots = ecologySpots(t, biome, o);
+    assert.deepEqual(spots, ecologySpots(t, biome, o), `${biome}: deterministic`);
+    assert.ok(spots.length > 20, `${biome}: ${spots.length} spots`);
+    const kinds = new Set(ECOLOGY[biome].entries.map((e) => e.kind));
+    for (const s of spots) {
+      assert.ok(kinds.has(s.kind), `${biome}: ${s.kind} is in the table`);
+      assert.ok(within(s.x, s.z), `${biome}: ${s.kind} stands where it may`);
+      if (s.tier === "cover") assert.ok(near(s.x, s.z), `${biome}: cover is near`);
+      assert.ok(s.variant >= 0 && s.variant < 3 && Number.isFinite(s.yaw) && s.scale > 0.5);
+    }
+    for (const tier of ["cover", "mid", "rock"] as const) assert.ok(spots.filter((s) => s.tier === tier).length <= (o.cap[tier] ?? 1e9), `${biome}: ${tier} capped`);
+    // Of a tier with several kinds, more than one is there (the first does not take the cap)
+    for (const tier of ["cover", "rock"] as const) {
+      const want = new Set(ECOLOGY[biome].entries.filter((e) => e.tier === tier).map((e) => e.kind));
+      if (want.size > 1) assert.ok(new Set(spots.filter((s) => s.tier === tier).map((s) => s.kind)).size > 1, `${biome}: more than one kind of ${tier}`);
+    }
+  }
+  assert.deepEqual(ecologySpots(terrainFor({ seed: 1, biome: "urban", size: 1000, n: 65, erosion: "none" }), "urban"), [], "a city's ground has none");
 });

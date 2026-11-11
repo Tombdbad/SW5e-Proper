@@ -654,6 +654,116 @@ export function kitSpots(t: Terrain, o: { boulders: number; scree?: number; ledg
   return o.cap ? out.slice(0, o.cap) : out;
 }
 
+// ---- The ecology (2026-11-11, the Megascans packs: tools/megascans.json, tools/blender/build-megascans-pack.py): what grows or lies where, by what each needs,
+// not by noise. Each entry names a piece of its biome's pack, its tier (ground cover is drawn near the place only; mid is palms and dead trees; rock) and what it
+// needs of the ground: slope, height share, wetness (the flow). `ecologySpots` is pure and seeded: the same land, the same spots, on the server and in every browser.
+export interface EcoEntry { kind: string; tier: "cover" | "mid" | "rock"; spacing: number; density: number; slope?: [number, number]; alt?: [number, number]; flow?: [number, number]; scale: [number, number]; variants: number; sink?: number }
+const E = (kind: string, tier: EcoEntry["tier"], spacing: number, density: number, scale: [number, number], o: Partial<EcoEntry> = {}): EcoEntry => ({ kind, tier, spacing, density, scale, variants: tier === "rock" ? 1 : 3, ...o });
+const FOREST_ECO: EcoEntry[] = [
+  E("bracken_fern", "cover", 6, 0.7, [0.8, 1.4], { slope: [0, 0.5], alt: [0, 0.8] }),
+  E("grass_clumps", "cover", 4, 0.6, [0.8, 1.6], { slope: [0, 0.45] }),
+  E("forest_boulder", "rock", 22, 0.5, [0.8, 1.8], { slope: [0.08, 0.9], sink: 0.2 }),
+  E("mossy_forest_boulder", "rock", 34, 0.5, [0.8, 1.5], { slope: [0.05, 0.8], flow: [0.15, 1], sink: 0.2 }),
+  E("dead_tree", "mid", 70, 0.3, [0.9, 1.3], { slope: [0, 0.5], alt: [0, 0.8] }),
+];
+// Per biome: the pack's name (public/megascans/<pack>.glb), a thinning factor and the entries; a biome with no pack has none here
+export const ECOLOGY: Record<string, { pack: string; thin: number; entries: EcoEntry[] }> = {
+  forest: { pack: "forest", thin: 1, entries: FOREST_ECO },
+  temperate: { pack: "forest", thin: 0.6, entries: FOREST_ECO },
+  ocean: { pack: "forest", thin: 0.4, entries: FOREST_ECO },
+  jungle: {
+    pack: "jungle", thin: 1,
+    entries: [
+      E("tropical_palm", "mid", 12, 0.7, [0.9, 1.5], { slope: [0, 0.55], alt: [0, 0.75] }),
+      E("alexandra_palm", "mid", 20, 0.5, [1.2, 2.2], { slope: [0, 0.5], alt: [0, 0.75] }),
+      E("chinese_fan_palm", "mid", 16, 0.5, [0.9, 1.5], { slope: [0, 0.5], alt: [0, 0.75] }),
+      E("bracken_fern", "cover", 5, 0.8, [0.8, 1.5], { slope: [0, 0.5] }),
+      E("grass_clumps", "cover", 5, 0.5, [0.8, 1.6], { slope: [0, 0.45] }),
+      E("mossy_forest_boulder", "rock", 34, 0.5, [0.8, 1.6], { slope: [0.05, 0.8], sink: 0.2 }),
+    ],
+  },
+  swamp: {
+    pack: "swamp", thin: 1,
+    entries: [
+      E("swamp_grass", "cover", 3.5, 0.8, [0.8, 1.6], { slope: [0, 0.25] }),
+      E("giant_reed", "cover", 8, 0.7, [0.9, 1.5], { slope: [0, 0.2], flow: [0.3, 1] }),
+      E("mossy_forest_boulder", "rock", 40, 0.4, [0.8, 1.5], { slope: [0.03, 0.6], sink: 0.2 }),
+      E("dead_tree", "mid", 55, 0.3, [0.9, 1.3], { slope: [0, 0.3] }),
+    ],
+  },
+  desert: {
+    pack: "desert", thin: 1,
+    entries: [
+      // (the wadis, where the water goes, are the green of a desert)
+      E("xeric_grass", "cover", 7, 0.5, [0.8, 1.4], { slope: [0, 0.35], flow: [0.2, 1] }),
+      E("xeric_grass", "cover", 12, 0.15, [0.7, 1.2], { slope: [0, 0.35], flow: [0, 0.2] }),
+      E("rhazya", "cover", 11, 0.4, [0.8, 1.5], { slope: [0, 0.4] }),
+      E("dead_shrubs", "cover", 9, 0.35, [0.8, 1.5], { slope: [0, 0.4] }),
+      E("canyon_sandstone_boulder", "rock", 24, 0.6, [0.8, 2.0], { slope: [0.1, 0.9], sink: 0.2 }),
+      E("desert_western_pile_rock_small_01", "rock", 55, 0.5, [0.8, 1.4], { slope: [0.05, 0.6], sink: 0.1 }),
+    ],
+  },
+  ice: {
+    pack: "ice", thin: 1,
+    entries: [
+      E("icelandic_boulder", "rock", 28, 0.6, [0.8, 1.6], { slope: [0.1, 0.95], sink: 0.25 }),
+      E("snow_pile", "rock", 70, 0.5, [0.8, 1.6], { slope: [0, 0.45], sink: 0.15 }),
+      E("dead_tree", "mid", 120, 0.2, [0.8, 1.2], { slope: [0, 0.4], alt: [0, 0.5] }),
+    ],
+  },
+  volcanic: {
+    pack: "volcanic", thin: 1,
+    entries: [
+      E("volcanic_dolerite_rocks", "rock", 14, 0.8, [0.8, 1.8], { slope: [0.05, 0.95], sink: 0.2 }),
+      E("icelandic_boulder", "rock", 34, 0.5, [0.8, 1.6], { slope: [0.1, 0.95], sink: 0.25 }),
+      E("dead_shrubs", "cover", 18, 0.25, [0.8, 1.4], { slope: [0, 0.4] }),
+    ],
+  },
+  barren: {
+    pack: "barren", thin: 1,
+    entries: [
+      E("limestone_rocks", "rock", 28, 0.5, [0.8, 1.6], { slope: [0.05, 0.8], sink: 0.05 }),
+      E("icelandic_boulder", "rock", 40, 0.4, [0.8, 1.6], { slope: [0.1, 0.95], sink: 0.25 }),
+      E("desert_western_pile_rock_small_01", "rock", 60, 0.4, [0.8, 1.4], { slope: [0.05, 0.6], sink: 0.1 }),
+      E("dead_shrubs", "cover", 16, 0.3, [0.8, 1.4], { slope: [0, 0.4] }),
+    ],
+  },
+};
+export interface EcoSpot { kind: string; tier: EcoEntry["tier"]; variant: number; x: number; z: number; yaw: number; scale: number; sink: number }
+// `within`: where anything may stand (not in water, not on the place); `cover`: where ground cover may (near the place only: far off a fern is a speck); `cap`: the most of
+// each tier
+export function ecologySpots(t: Terrain, biome: string, o: { within?: (x: number, z: number) => boolean; cover?: (x: number, z: number) => boolean; cap?: Partial<Record<EcoEntry["tier"], number>>; seed?: number } = {}): EcoSpot[] {
+  const eco = ECOLOGY[biome];
+  if (!eco) return [];
+  const out: Record<string, EcoSpot[]> = { cover: [], mid: [], rock: [] };
+  eco.entries.forEach((e, idx) => {
+    const rand = rng((o.seed ?? 1) * 977 + t.seed + idx * 131);
+    const ok = (x: number, z: number) => (!o.within || o.within(x, z)) && (e.tier !== "cover" || !o.cover || o.cover(x, z));
+    const rule: ScatterRule = { spacing: e.spacing, density: e.density * eco.thin, minSlope: e.slope?.[0], maxSlope: e.slope?.[1], minAlt: e.alt?.[0], maxAlt: e.alt?.[1], minFlow: e.flow?.[0], maxFlow: e.flow?.[1], seed: 20 + idx };
+    for (const [x, z] of scatterOn(t, rule, ok)) {
+      out[e.tier].push({ kind: e.kind, tier: e.tier, variant: Math.floor(rand() * e.variants), x, z, yaw: rand() * Math.PI * 2, scale: e.scale[0] + rand() * (e.scale[1] - e.scale[0]), sink: e.sink ?? 0 });
+    }
+  });
+  // The cap: nearest the place first (the origin: what the party sees), each kind of a tier taking its fair share (the first kind would else take it all)
+  const spots: EcoSpot[] = [];
+  for (const tier of ["rock", "mid", "cover"] as const) {
+    const cap = o.cap?.[tier];
+    const list = out[tier].sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+    if (!cap || list.length <= cap) { spots.push(...list); continue; }
+    const share = Math.ceil(cap / new Set(list.map((s) => s.kind)).size);
+    const taken = new Map<string, number>();
+    const picked: EcoSpot[] = [];
+    for (const s of list) {
+      const n = taken.get(s.kind) ?? 0;
+      if (n >= share) continue;
+      taken.set(s.kind, n + 1);
+      picked.push(s);
+    }
+    spots.push(...picked.slice(0, cap));
+  }
+  return spots;
+}
+
 // ---- Water (2026-11-10; the user: "lakes where drainage pools, a river network on the local map"). Where the ground is a bowl the water stands in it (priority-flood
 // fill, Barnes 2014: the level of each hollow is the lowest point of its rim), and where a great deal of rain has come down the water runs: the vertices
 // of the stream pass with the most drainage (`flow`) are the rivers, followed down to the edge or a lake. `carveBasins` digs a few bowls on the flat, wet
