@@ -45,6 +45,8 @@ export interface TerrainSpec {
   size: number; n: number;
   // `relief` replaces the style's, `scale` multiplies it; `erosion` how much of the weathering is done (the cost: "none" 0, "light" about a quarter, "full")
   relief?: number; scale?: number; erosion?: "none" | "light" | "full";
+  // `wave` replaces the style's broadest swell (a share of the map across: a district's ground wants swells of a few tens of metres)
+  wave?: number;
   // Where the ground is brought down to `edge` (a share of the relief) at the rim of the map, so that a flat skirt joins it: the width of the
   // fall as a share of the map's side (0 none)
   rim?: number;
@@ -366,7 +368,7 @@ export function makeTerrain(spec: TerrainSpec): Terrain {
   const relief = (spec.relief ?? st.relief) * (spec.scale ?? 1);
   const seed = ((spec.seed | 0) * 2654435761) >>> 0;
   const s0 = seed & 0xffff;
-  const freq = 1 / st.wave;
+  const freq = 1 / (spec.wave ?? st.wave);
   const h = new Float32Array(n * n);
   const t: Terrain = { seed: spec.seed, biome: spec.biome, n, size, cell, x0: -size / 2, z0: -size / 2, h, min: 0, max: 0, flow: new Float32Array(n * n) };
   if (relief <= 0) return t;
@@ -490,6 +492,20 @@ export function levelDisc(t: Terrain, x: number, z: number, r: number, blend: nu
     }
   }
   return target;
+}
+// A box of ground (a building's pad, a paved way between buildings: an axis-aligned rectangle from x, z, `w` by `d`) made level at `h` out to `r`
+// past its sides, blended back into the land over `blend` more: `levelDisc` for what is built square
+export function levelBox(t: Terrain, x: number, z: number, w: number, d: number, r: number, blend: number, h: number): void {
+  const reach = r + blend;
+  const [i0, i1, j0, j1] = [Math.max(0, Math.floor((x - reach - t.x0) / t.cell)), Math.min(t.n - 1, Math.ceil((x + w + reach - t.x0) / t.cell)), Math.max(0, Math.floor((z - reach - t.z0) / t.cell)), Math.min(t.n - 1, Math.ceil((z + d + reach - t.z0) / t.cell))];
+  for (let j = j0; j <= j1; j++) {
+    for (let i = i0; i <= i1; i++) {
+      const [px, pz] = [t.x0 + i * t.cell, t.z0 + j * t.cell];
+      const out = Math.hypot(Math.max(x - px, 0, px - (x + w)), Math.max(z - pz, 0, pz - (z + d)));
+      const k = 1 - smoothstep(r, reach, out);
+      if (k > 0) t.h[j * t.n + i] = lerp(t.h[j * t.n + i], h, k);
+    }
+  }
 }
 // A road laid over the land following its contour: the heights along the line are smoothed (a long moving average), and the ground within half the
 // width of it is brought to that height, blended back into the land over `blend`. Cuts and fills are as deep as the smoothing makes them.
@@ -999,4 +1015,87 @@ export function terrainWater(t: Terrain, o: { minDepth?: number; minCells?: numb
     for (const c of cells) if (Number.isNaN(surface[c])) surface[c] = t.h[c] + 0.15 + 0.35 * flowOf(c);
   }
   return { surface, lakes, rivers };
+}
+
+// ---- The ground of a settlement's district (2026-11-11; the user: "realistic terrain undulation WITHIN settlement districts")
+// The open ground between the buildings rises and falls as the biome's land does; what is built stays where every room, door and way in of the game
+// already is, at the street's level (y 0): each building's box is a level pad (`levelBox`, a square past its walls, blended back over five), the paved
+// ways between them are graded to the same level with shoulders of three, a site's gardens, stalls and curtain wall stand on pads of their own, and the
+// ground eases back to that level at the rim of the map, where the relief round the place (client terrain.tsx `ReliefGround`) takes over.
+// The land is the terrain module's own (sculpt, stream power, droplets, thermal, polish: a 97-vertex field at the style's relief with swells of about
+// 47 m, scaled down to a few metres so that its valleys still branch), sampled onto a grid of one square, levelled, and put so that the pads are at 0.
+// Measured on the 22 districts of a test world (temperate): the open squares of the walkable ground are a median 0.05-0.3 squares off the street's
+// level, a tenth of them 0.5-0.8, the most about 1.3 (1.8 m); the steepest 0.25-0.37 (a pad's shoulder). With the old blend of ten squares and swells
+// as broad as the district the median was 0: the land must change within the gaps between the buildings or it is not seen.
+// Distances in the spec and from `at` are squares (1.4 m); the Terrain inside is metres, like every other, so that its slope and splat read it.
+export const SQUARE_M = 1.4;
+// How many metres the open ground of a district rises and falls by (the style's relief, much reduced: a district is a few hundred metres across and
+// is built on the gentlest ground about); a paved city and a gas giant's platforms have none
+export const districtRelief = (biome: string): number => (biome === "urban" || biome === "gas giant" ? 0 : Math.max(0.6, Math.min(5, terrainStyleOf(biome).relief * 0.033)));
+export interface DistrictRect { x: number; y: number; width: number; height: number }
+export interface DistrictGroundSpec {
+  seed: number; biome: string;
+  // The middle of the map and the squares across it (the ground mesh is `size` squares square, centred there)
+  cx: number; cz: number; size: number;
+  // Level pads (buildings, rooms, gardens, stalls, a curtain wall) and graded ways (avenues, alleys)
+  pads: DistrictRect[]; ways: DistrictRect[];
+}
+export interface DistrictGround {
+  // The field in metres (pads at 0); `cx`, `cz` the middle in squares
+  t: Terrain; cx: number; cz: number;
+  // How high the ground is at a point of the district's grid (squares, continuous: a square's middle is x + 0.5), in squares
+  at: (x: number, z: number) => number;
+  // The rise over run at a point
+  slope: (x: number, z: number) => number;
+  // The lowest and highest ground, in squares
+  lowest: number; highest: number;
+}
+// (squares; the swell as a share of a 336 m map: 47 m)
+const PAD_FLAT = 1, PAD_BLEND = 5, WAY_FLAT = 0.5, WAY_BLEND = 3, RIM_FLAT = 10, RIM_BLEND = 20, DISTRICT_WAVE = 0.14;
+const GROUNDS = new Map<string, DistrictGround>();
+export function districtGround(spec: DistrictGroundSpec): DistrictGround | null {
+  const relief = districtRelief(spec.biome);
+  if (relief <= 0 || spec.size < 8) return null;
+  const key = JSON.stringify(spec);
+  const have = GROUNDS.get(key);
+  if (have) return have;
+  const size = Math.round(spec.size);
+  const sizeM = size * SQUARE_M;
+  // The land: the style's own at its full relief (so that the erosion has slopes to work on), its heights then scaled to the district's
+  const land = terrainFor({ seed: (spec.seed ^ 0x2c1b3c6d) | 0, biome: spec.biome, size: sizeM, n: 97, erosion: "light", wave: (DISTRICT_WAVE * 336) / sizeM });
+  const k = relief / Math.max(1e-6, land.max - land.min);
+  const n = size + 1;
+  const t: Terrain = { seed: land.seed, biome: spec.biome, n, size: sizeM, cell: SQUARE_M, x0: -sizeM / 2, z0: -sizeM / 2, h: new Float32Array(n * n), min: 0, max: 0, flow: new Float32Array(n * n) };
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const [x, z] = [t.x0 + i * t.cell, t.z0 + j * t.cell];
+      t.h[j * n + i] = (terrainHeight(land, x, z) - land.min) * k;
+      t.flow[j * n + i] = terrainFlow(land, x, z);
+    }
+  }
+  // (rects from the district's squares to the field's metres)
+  const toM = (r: DistrictRect) => [(r.x - spec.cx) * SQUARE_M, (r.y - spec.cz) * SQUARE_M, r.width * SQUARE_M, r.height * SQUARE_M] as const;
+  // The level of the pads: the mean of the land under them (so that as much is cut as filled)
+  let [sum, count] = [0, 0];
+  for (const p of spec.pads) {
+    const [x, z, w, d] = toM(p);
+    for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) { sum += terrainHeight(t, x + (w * a) / 4, z + (d * b) / 4); count++; }
+  }
+  const base = count ? sum / count : (land.max - land.min) * k * 0.5;
+  for (const p of spec.pads) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, PAD_FLAT * SQUARE_M, PAD_BLEND * SQUARE_M, base); }
+  for (const p of spec.ways) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, WAY_FLAT * SQUARE_M, WAY_BLEND * SQUARE_M, base); }
+  // The rim: back to the pads' level, so that the relief round the place meets it
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const edge = Math.min(i, j, n - 1 - i, n - 1 - j);
+      t.h[j * n + i] = lerp(base, t.h[j * n + i], smoothstep(RIM_FLAT, RIM_FLAT + RIM_BLEND, edge)) - base;
+    }
+  }
+  refresh(t);
+  const at = (x: number, z: number) => terrainHeight(t, (x - spec.cx) * SQUARE_M, (z - spec.cz) * SQUARE_M) / SQUARE_M;
+  const slope = (x: number, z: number) => terrainSlope(t, (x - spec.cx) * SQUARE_M, (z - spec.cz) * SQUARE_M);
+  const out: DistrictGround = { t, cx: spec.cx, cz: spec.cz, at, slope, lowest: t.min / SQUARE_M, highest: t.max / SQUARE_M };
+  if (GROUNDS.size >= 4) GROUNDS.delete(GROUNDS.keys().next().value as string);
+  GROUNDS.set(key, out);
+  return out;
 }

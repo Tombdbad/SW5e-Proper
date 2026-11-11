@@ -4,6 +4,7 @@
 // two; domes, drums and columns round their own axis), a per-vertex occlusion and a region per vertex (as architecture.glb: 0 body, 1 trim, 2 glow, 3 dark, 4 timber,
 // 5 cloth/green, 6 canvas/metal). Which pack a building takes, what stands on its roof, what shades its doors, and how each region is drawn (the texture set, the colour)
 // are decided here. Pure: tests/interiors/modular.test.ts. Drawn by models.tsx `ModPiece`.
+import { outline, outlineAt, type Radii } from "@shared/logic/footprint";
 import { baysFor, bayFit, type Family } from "./architecture";
 
 export type ExtPack = "desert" | "classical" | "deco" | "industrial" | "hull" | "frontier";
@@ -77,6 +78,35 @@ export const corniceOf = (pack: ExtPack): string | null => (pack === "classical"
 export function runOf(length: number, piece = 2): { count: number; stretch: number } {
   const count = Math.max(1, Math.round(length / piece));
   return { count, stretch: length / (count * piece) };
+}
+
+// The pieces of a cornice or parapet round a roof (2026-11-11; the user: roof parapets follow the radii of the building they are attached to): the roof's own wall line
+// (`outline`, the straight sides and a quarter circle at each rounded corner: a round drum is four arcs) cut into runs of about two squares, each a piece stood at the middle of
+// its chord, facing out, stretched to the chord. On a square corner the east and west runs stop `out` short of it, where the north and south runs' ends stand, as the
+// four straight runs always did. Squares from the roof's north-west corner, x east and z south; `turn` is the yaw that takes the piece's front (+z) to the way out.
+export interface EdgeRun { at: [number, number]; turn: number; stretch: number }
+export function roofEdgeRuns(w: number, d: number, radii: Radii = [0, 0, 0, 0], out = 0.3): EdgeRun[] {
+  const runs: EdgeRun[] = [];
+  const o = outline(w, d, radii);
+  for (const piece of o.pieces) {
+    let [from, to] = [piece.start, piece.start + piece.length];
+    // (a straight east or west side stops short of a corner that is square)
+    if (piece.kind === "line" && (piece.side === "e" || piece.side === "w")) {
+      const [first, last] = piece.side === "e" ? [radii[1], radii[2]] : [radii[3], radii[0]];
+      if (first <= 1e-9) from += out;
+      if (last <= 1e-9) to -= out;
+    }
+    if (to - from < 1e-6) continue;
+    const { count } = runOf(to - from);
+    for (let i = 0; i < count; i++) {
+      const [a, b] = [outlineAt(o, from + ((to - from) * i) / count).p, outlineAt(o, from + ((to - from) * (i + 1)) / count).p];
+      const chord = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      // (clockwise round the room, the way out is to the left of the way the path goes: the chord turned a quarter to -z)
+      const [tx, tz] = [(b[0] - a[0]) / chord, (b[1] - a[1]) / chord];
+      runs.push({ at: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], turn: Math.atan2(tz, -tx), stretch: chord / 2 });
+    }
+  }
+  return runs;
 }
 
 // ---- Wall runs -------------------------------------------------------------------------------------------------------------------

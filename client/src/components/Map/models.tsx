@@ -19,7 +19,7 @@ import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
-import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, INTERIOR_LOOK, runOf, type ExtPack, type Skin, type BayPlace, type InteriorStyle } from "./interiors/modular";
+import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, INTERIOR_LOOK, runOf, roofEdgeRuns, type ExtPack, type Skin, type BayPlace, type InteriorStyle } from "./interiors/modular";
 import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import shipKitJson from "@shared/art/shipKit.json";
@@ -2011,23 +2011,16 @@ export function ModIntPiece({ name, style, wall, position, rotation, scale }: { 
   );
 }
 
-// A run of one piece of the modular kit along the four edges of a roof (a cornice, a parapet), at height `y`: as many two-square pieces as make each side, each stretched a
-// little to fill it, turned to face out (the piece is built with its front along +z). The sides east and west stop short of the corners, where the north and south runs' ends stand.
-export function RoofEdge({ w, d, y, piece, pack, wall, out = 0.3 }: { w: number; d: number; y: number; piece: string; pack: ExtPack; wall: string; out?: number }) {
-  const sides = [
-    { length: w, at: (t: number): V3 => [t, y, 0], turn: Math.PI },
-    { length: w, at: (t: number): V3 => [t, y, d], turn: 0 },
-    { length: d - 2 * out, at: (t: number): V3 => [w, y, out + t], turn: Math.PI / 2 },
-    { length: d - 2 * out, at: (t: number): V3 => [0, y, out + t], turn: -Math.PI / 2 },
-  ];
+// A run of one piece of the modular kit along the edge of a roof (a cornice, a parapet), at height `y`: as many two-square pieces as make the edge, each stretched a little to fill it,
+// turned to face out (the piece is built with its front along +z). The edge is the roof's own outline (interiors/modular.ts `roofEdgeRuns`): straight sides, and an arc of pieces at each
+// rounded corner, so that the cornice of a round or a rounded building follows its wall instead of squaring it (2026-11-11, the user).
+export function RoofEdge({ w, d, y, piece, pack, wall, radii, out = 0.3 }: { w: number; d: number; y: number; piece: string; pack: ExtPack; wall: string; radii?: [number, number, number, number]; out?: number }) {
+  const runs = useMemo(() => roofEdgeRuns(w, d, radii, out), [w, d, radii?.join(","), out]);
   return (
     <>
-      {sides.flatMap((side, s) => {
-        const { count, stretch } = runOf(side.length);
-        return Array.from({ length: count }, (_, i) => (
-          <ModPiece key={`${s}:${i}`} name={piece} pack={pack} wall={wall} position={side.at((i + 0.5) * (side.length / count))} rotation={[0, side.turn, 0]} scale={[stretch, 1, 1]} />
-        ));
-      })}
+      {runs.map((run, i) => (
+        <ModPiece key={i} name={piece} pack={pack} wall={wall} position={[run.at[0], y, run.at[1]]} rotation={[0, run.turn, 0]} scale={[run.stretch, 1, 1]} />
+      ))}
     </>
   );
 }

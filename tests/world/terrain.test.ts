@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, kitSpots, terrainGradient, ecologySpots, ECOLOGY, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
-  raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
+  raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain, districtGround, districtRelief, levelBox,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
 import { bombFall } from "../../shared/logic/dogfightSim";
@@ -274,4 +274,39 @@ test("ecology (the Megascans packs): the same spots each time, only where allowe
     }
   }
   assert.deepEqual(ecologySpots(terrainFor({ seed: 1, biome: "urban", size: 1000, n: 65, erosion: "none" }), "urban"), [], "a city's ground has none");
+});
+
+test("a district's open ground rolls, and its pads, ways and rim are level at the street's height", () => {
+  const pads = [{ x: 10, y: 10, width: 12, height: 8 }, { x: 35, y: 30, width: 9, height: 11 }];
+  const ways = [{ x: 0, y: 20, width: 60, height: 6 }];
+  const spec = { seed: 7, biome: "temperate", cx: 30, cz: 25, size: 240, pads, ways };
+  const g = districtGround(spec)!;
+  assert.ok(g, "a green world has rolling ground");
+  assert.equal(districtGround(spec), g, "made once");
+  // Every square of a pad and a square past it, and every square of a way, is at 0 (where every room and door is drawn)
+  for (const [r, m] of [...pads.map((r) => [r, 1] as const), ...ways.map((r) => [r, 0] as const)]) for (let y = r.y - m; y < r.y + r.height + m; y++) for (let x = r.x - m; x < r.x + r.width + m; x++) {
+    // (the square past a pad's corner is a hair off: its far corner is already in the blend)
+    const corner = (x < r.x || x >= r.x + r.width) && (y < r.y || y >= r.y + r.height);
+    assert.ok(Math.abs(g.at(x + 0.5, y + 0.5)) < (corner ? 0.03 : 1e-6), `level at ${x},${y}`);
+  }
+  // The rim, where the relief round the place takes over
+  for (const k of [-119, 0, 119]) { assert.ok(Math.abs(g.at(30 + k, 25 - 119)) < 1e-6); assert.ok(Math.abs(g.at(30 - 119, 25 + k)) < 1e-6); }
+  // The open ground: up and down by a few metres (squares of 1.4 m), gentle enough to walk
+  let [lo, hi, steep] = [Infinity, -Infinity, 0];
+  for (let z = -80; z < 130; z += 2) for (let x = -80; x < 140; x += 2) { const h = g.at(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); steep = Math.max(steep, g.slope(x, z)); }
+  assert.ok(hi - lo > 1 && (hi - lo) * 1.4 <= districtRelief("temperate") + 1e-6, `rises and falls: ${lo.toFixed(2)} .. ${hi.toFixed(2)}`);
+  assert.ok(steep < 0.35, `walkable: steepest ${steep.toFixed(3)}`);
+  assert.ok(g.lowest <= lo + 1e-6 && g.highest >= hi - 1e-6);
+  // The same for the same spec, and none for a paved city
+  assert.equal(districtGround({ ...spec, pads: [...pads] })!.at(-40, 70), g.at(-40, 70));
+  assert.equal(districtGround({ ...spec, biome: "urban" }), null);
+  assert.equal(districtRelief("gas giant"), 0);
+});
+
+test("levelBox makes a rectangle level and leaves the land beyond its blend alone", () => {
+  const t = makeTerrain({ seed: 3, biome: "forest", size: 400, n: 81, erosion: "none" });
+  const before = terrainHeight(t, 150, 150);
+  levelBox(t, -40, -20, 60, 30, 5, 20, 12);
+  for (const [x, z] of [[-40, -20], [20, 10], [0, 0], [-38, -18], [-45, -20]]) assert.ok(Math.abs(terrainHeight(t, x, z) - 12) < 1e-4, `level at ${x},${z}`);
+  assert.equal(terrainHeight(t, 150, 150), before);
 });

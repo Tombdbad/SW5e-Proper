@@ -13,7 +13,7 @@ import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRA
 import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
-import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
+import { biomeSky, createRandom, unitOf, packedness, SQUARE_M, terrainSurface, type DistrictGround, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
 // The asset library of the sites (2026-10-18). A site's open ground is laid out by the shared logic
@@ -1301,36 +1301,88 @@ export function groundTexture(biome: string, buildingType: string, base: string)
 // (2026-11-11, ground material v2) The ground underfoot is drawn by the layered shader (babylon.ts GroundLayers) with the one photograph as its soil: the
 // pattern is the photograph divided by its own mean colour, over the mean colour times the site's tint, so the look is the photograph's; but it is mapped in
 // world coordinates, broken up by two octaves of noise and a second, turned tap (the repeat no longer shows), lit by its normal map and shifted toward the eye
-// by its height map (offset parallax, as before). The plane is flat for now: a ground with slopes and roads comes with the walkable street map.
-export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+// by its height map (offset parallax, as before).
+// (2026-11-11) Where the place has a `relief` (shared/logic districtGround: the open ground between the buildings rising and falling, the pads and the ways
+// level at 0), the plane is a grid of one square (two on the lite tier) stood on it, coloured by its slope and by where the water went: bare rock showing
+// on the steepest banks, mud in the wettest hollows (the relief's own rock and mud photographs), the hollows a little darker and the crests a little lighter
+// (the vertex colour, over the photograph's).
+export interface GroundRelief { ground: DistrictGround; rock: string; wet: string }
+export function GroundSurface({ set, tint, parallax, w, h, at, onTap, relief }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void; relief?: GroundRelief | null }) {
   const lite = useQuality((q) => q.tier === "lite");
   // (the tint is made anew by each caller's render: it is the material's key by its colour)
   const tintKey = tint.getHexString();
-  const [diffuse, normal, height] = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`]);
+  const maps = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`, ...(relief ? [`/textures/${relief.rock}/diffuse.jpg`, `/textures/${relief.wet}/diffuse.jpg`] : [])]) as THREE.Texture[];
+  const [diffuse, normal, height, rockMap, wetMap] = maps;
+  const ground = relief?.ground ?? null;
   const geo = useMemo(() => {
-    const g = new THREE.PlaneGeometry(w, h);
-    // (the layered shader's attributes: all soil, no way)
-    g.setAttribute("splat", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
-    g.setAttribute("way", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
+    if (!ground) {
+      const g = new THREE.PlaneGeometry(w, h);
+      // (the layered shader's attributes: all soil, no way)
+      g.setAttribute("splat", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
+      g.setAttribute("way", new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 4), 4));
+      g.rotateX(-Math.PI / 2);
+      return g;
+    }
+    const cell = lite ? 2 : 1;
+    const [nx, nz] = [Math.max(2, Math.round(w / cell) + 1), Math.max(2, Math.round(h / cell) + 1)];
+    const [sx, sz] = [w / (nx - 1), h / (nz - 1)];
+    const pos = new Float32Array(nx * nz * 3);
+    const col = new Float32Array(nx * nz * 3);
+    const splat = new Float32Array(nx * nz * 4);
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const [x, z] = [-w / 2 + i * sx, -h / 2 + j * sz];
+        const [gx, gz] = [at[0] + x, at[2] + z];
+        const y = ground.at(gx, gz);
+        const v = j * nx + i;
+        pos.set([x, y, z], v * 3);
+        // (the slope read steeper than it is: a district's ground is gentle, and its banks are where the bare ground shows; the curve over three squares)
+        const [xm, zm] = [(gx - ground.cx) * SQUARE_M, (gz - ground.cz) * SQUARE_M];
+        const curve = (ground.at(gx + 3, gz) + ground.at(gx - 3, gz) + ground.at(gx, gz + 3) + ground.at(gx, gz - 3)) / 4 - y;
+        const surf = terrainSurface(ground.t, xm, zm, { slope: ground.slope(gx, gz) * 2.2, curve: curve * 0.6 });
+        splat.set([surf.rock, 0, surf.wet * 0.8, 0], v * 4);
+        const shade = 1 - Math.min(0.18, Math.max(0, curve) * 0.5) + Math.min(0.05, Math.max(0, -curve) * 0.2);
+        col.set([shade, shade, shade], v * 3);
+      }
+    }
+    const index = new Uint32Array((nx - 1) * (nz - 1) * 6);
+    let q = 0;
+    for (let j = 0; j < nz - 1; j++) {
+      for (let i = 0; i < nx - 1; i++) {
+        const v = j * nx + i;
+        index.set([v, v + nx, v + 1, v + 1, v + nx, v + nx + 1], q);
+        q += 6;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setAttribute("splat", new THREE.BufferAttribute(splat, 4));
+    g.setAttribute("way", new THREE.BufferAttribute(new Float32Array(nx * nz * 4), 4));
+    g.setIndex(new THREE.BufferAttribute(index, 1));
+    g.computeVertexNormals();
+    g.computeBoundingSphere();
     return g;
-  }, [w, h]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w, h, ground, lite, at[0], at[2]]);
+  useEffect(() => () => geo.dispose(), [geo]);
   const material = useMemo(() => {
-    for (const t of [diffuse, normal, height]) {
+    for (const t of maps) {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.anisotropy = 4;
     }
     const avg = meanOf(diffuse.image as CanvasImageSource);
     const layers: GroundLayers = {
-      soil: diffuse, rock: diffuse, pale: null, wet: null, soilN: lite ? null : normal, rockN: null, soilH: lite ? null : height, parallax,
-      avg: [avg, avg, avg, avg], tile: [GROUND_TILE, GROUND_TILE, GROUND_TILE, GROUND_TILE], strength: 1, normal: NORMAL_SCALE.x * 0.85, lite,
+      soil: diffuse, rock: rockMap ?? diffuse, pale: null, wet: wetMap && !lite ? wetMap : null, soilN: lite ? null : normal, rockN: null, soilH: lite ? null : height, parallax,
+      avg: [avg, rockMap ? meanOf(rockMap.image as CanvasImageSource) : avg, avg, wetMap ? meanOf(wetMap.image as CanvasImageSource) : avg], tile: [GROUND_TILE, rockMap ? 10 : GROUND_TILE, GROUND_TILE, rockMap ? 6 : GROUND_TILE], strength: 1, normal: NORMAL_SCALE.x * 0.85, lite,
     };
     // (the mean colour of the photograph, in light, times the site's tint: what the texture map times the colour was)
     const base = new THREE.Color().setRGB(avg[0], avg[1], avg[2], THREE.SRGBColorSpace).multiply(tint);
-    return shaderPatch(new THREE.MeshStandardMaterial({ color: base, roughness: 1, metalness: 0 }), { kind: "ground", layers });
+    return shaderPatch(new THREE.MeshStandardMaterial({ color: base, roughness: 1, metalness: 0, vertexColors: !!ground }), { kind: "ground", layers });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [diffuse, normal, height, tintKey, parallax, lite]);
+  }, [maps.map((m) => m.uuid).join(), tintKey, parallax, lite, !!ground]);
   useEffect(() => () => material.dispose(), [material]);
-  return <mesh geometry={geo} material={material} rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap} />;
+  return <mesh geometry={geo} material={material} position={at} receiveShadow onClick={onTap} />;
 }
 
 // The ground beyond the walkable ground, out to the horizon under an open sky (2026-10-26, scenery.tsx WorldSky): the same photograph and

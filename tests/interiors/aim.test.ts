@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { AIM, aimAt, lookDirection, poseOf, rightOf, EYE } from "../../client/src/components/Map/interiors/aim";
+import { AIM, aimAt, aimFrom, lookDirection, poseOf, rightOf, EYE } from "../../client/src/components/Map/interiors/aim";
 
 const box = (at: [number, number, number], size: [number, number, number], aim?: { label: string; onTap: () => void }) => {
   const m = new THREE.Mesh(new THREE.BoxGeometry(...size), new THREE.MeshBasicMaterial());
@@ -98,4 +98,19 @@ test("a target's own plan (in a fight, the rules' word on reach and cover) comes
   const aimed = aimAt(cameraFor(pose), 0, undefined, [foe], []);
   assert.equal(aimed.kind, "target");
   assert.deepEqual(aimed.plan?.(), { ok: false, text: "out of range", feet: 120 });
+});
+
+test("on rolling ground (a district's open ground: a height at each point) the aim stops where the ray meets the ground, not at a level floor", () => {
+  // A rise ahead: the ground climbs one in four along +z from z = 2
+  const ground = (_x: number, z: number) => Math.max(0, (z - 2) * 0.25);
+  const from = new THREE.Vector3(0, 1, 0);
+  const level = aimFrom(from, new THREE.Vector3(0, -0.1, 1), 0, undefined, [], []);
+  const rolling = aimFrom(from, new THREE.Vector3(0, -0.1, 1), ground, undefined, [], []);
+  assert.equal(rolling.kind, "ground");
+  assert.ok(Math.abs(level.point.z - 10) < 1e-6, "the level floor is met ten ahead");
+  // (1 - 0.1 z = 0.25 (z - 2): z = 1.5 / 0.35)
+  assert.ok(Math.abs(rolling.point.z - 1.5 / 0.35) < 0.02, `the rise is met first: ${rolling.point.z}`);
+  assert.ok(Math.abs(rolling.point.y - ground(0, rolling.point.z)) < 0.01);
+  // Looking up and away, the ground is never met
+  assert.equal(aimFrom(from, new THREE.Vector3(0, 0.3, 1), ground, undefined, [], []).kind, "none");
 });

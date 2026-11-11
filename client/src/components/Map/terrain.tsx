@@ -21,6 +21,8 @@ import { meanOf } from "./surfaces";
 const ROCK_SET = (biome: string) => (biome === "volcanic" ? "ground/dark_rock" : "stone/rock_face_03");
 const PALE_SET = (biome: string) => (biome === "ice" ? "ground/snow_02" : "ground/dense_sand");
 const WET_SET = (biome: string) => (biome === "ice" ? "ground/snow_02" : "ground/brown_mud_03");
+// (the same rock and mud for the open ground of a district: siteAssets GroundSurface `relief`)
+export const reliefSets = (biome: string) => ({ rock: ROCK_SET(biome), wet: WET_SET(biome) });
 // The water's material (see the "water" patch in babylon.ts): its depth tint and foam are the shader's, its geometry carries `shore` (the depth in metres)
 const WATER_COLOURS: Record<string, [string, string]> = { default: ["#2f6f95", "#0e3a58"], swamp: ["#5b7a4a", "#2a3d26"], ice: ["#9cc8e0", "#2c6d96"], jungle: ["#3f8a78", "#124a45"], desert: ["#4d93a8", "#14506a"] };
 export function useWaterMaterial(biome: string): THREE.Material {
@@ -161,7 +163,9 @@ export function RacePackDress({ track }: { track: RaceTrack }) {
   return <PackStand pack={pack} spots={spots} heightAt={heightAt} unit={1} />;
 }
 
-export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: string; seed: number; inner: number; at: [number, number, number]; set: string; tint: THREE.Color }) {
+// (`dip`: how far the land under the place is let down, in squares, where the place's own ground has hollows of its own: shared/logic districtGround; the
+// land comes back up to its level over the last ten squares of `inner`, where that ground is level again)
+export function ReliefGround({ biome, seed, inner, at, set, tint, dip = 0 }: { biome: string; seed: number; inner: number; at: [number, number, number]; set: string; tint: THREE.Color; dip?: number }) {
   const diffuse = useTexture(`/textures/ground/${set}/diffuse.jpg`);
   const lite = useQuality((q) => q.tier === "lite");
   const material = useGroundMaterial(biome, set);
@@ -178,7 +182,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     const floor = t.min + (t.max - t.min) * 0.2;
     const heightAt = (xm: number, zm: number) => {
       const d = Math.max(Math.abs(xm), Math.abs(zm)) * unit;
-      return Math.max(0, terrainHeight(t, xm, zm) - floor) * unit * smooth(inner, inner + RISE, d);
+      return Math.max(0, terrainHeight(t, xm, zm) - floor) * unit * smooth(inner, inner + RISE, d) - (dip ? dip * (1 - smooth(inner - 10, inner, d)) : 0);
     };
     const n = lite ? 97 : 145;
     const pos = new Float32Array(n * n * 3);
@@ -306,7 +310,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
       rivers.computeVertexNormals();
     }
     return { geo, treeMesh, lakes, rivers, t, heightAt, away, unit, inner, palette: P, ridges: st.ridges };
-  }, [biome, seed, inner, lite, diffuse, tint]);
+  }, [biome, seed, inner, lite, diffuse, tint, dip]);
   // The kit: boulders on the ground that is not flat (unless the Megascans pack stands the rocks), scree at the foot of a steep slope, overhanging ledges on the cliffs (shared/logic kitSpots)
   const kitMeshes = useMemo(() => {
     // (the kit's own boulders, scree and ledges only where there is no Megascans pack: with one, Megascans rocks stand in their places, `rockSpots` below: 2026-11-11, the user: "remove

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, awningOf, corniceOf, extPackOf, propScale, roofPropOf, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
+import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, awningOf, corniceOf, extPackOf, propScale, roofEdgeRuns, roofPropOf, runOf, type ExtPack } from "../../client/src/components/Map/interiors/modular";
 import { familyOf } from "../../client/src/components/Map/interiors/architecture";
 
 const kit = JSON.parse(fs.readFileSync("shared/art/modularKit.json", "utf8")) as Record<string, { file: string; box: number[]; tris: number; regions: number[] }>;
@@ -106,4 +106,35 @@ test("the timber villages' kit is drawn in planks on its body, trim and timbers,
     assert.ok(MOD_TEXTURED.has(TIMBER_REGIONS[region].finish), "a finish that takes the piece's own coordinates");
   }
   for (const region of [2, 3, 5, 6]) assert.equal(TIMBER_REGIONS[region], undefined, `region ${region} keeps the kit's own look (glow, glass, leaf, thatch)`);
+});
+
+test("a cornice follows the roof's radii: the four straight runs of a square roof, a ring of pieces on a round drum's circle, facing out", () => {
+  // A square roof: north and south runs full width, east and west stopping 0.3 short of each corner, as the straight runs always were
+  const square = roofEdgeRuns(7, 5);
+  assert.equal(square.length, 4 + 4 + 2 + 2, "two squares a piece: 4 across the top and bottom, 2 down each side (4.4 long)");
+  const north = square.filter((r) => Math.abs(r.at[1]) < 1e-9);
+  assert.deepEqual(north.map((r) => +r.at[0].toFixed(3)), [0.875, 2.625, 4.375, 6.125]);
+  assert.ok(north.every((r) => Math.abs(Math.abs(r.turn) - Math.PI) < 1e-9), "north faces -z");
+  assert.ok(square.filter((r) => Math.abs(r.at[1] - 5) < 1e-9).every((r) => Math.abs(r.turn) < 1e-9), "south faces +z");
+  assert.ok(square.filter((r) => Math.abs(r.at[0] - 7) < 1e-9).every((r) => Math.abs(r.turn - Math.PI / 2) < 1e-9), "east faces +x");
+  assert.ok(square.filter((r) => Math.abs(r.at[0]) < 1e-9).every((r) => Math.abs(r.turn + Math.PI / 2) < 1e-9), "west faces -x");
+  const eastWest = square.filter((r) => Math.abs(r.at[0] - 7) < 1e-9).map((r) => r.at[1]);
+  assert.ok(Math.min(...eastWest) > 0.3 && Math.max(...eastWest) < 5 - 0.3, "the east run stops short of the corners");
+  // A round drum of radius 4: every piece stands on the circle (within the chord's sag), faces straight out from the middle, and they close the ring
+  const drum = roofEdgeRuns(8, 8, [4, 4, 4, 4]);
+  assert.ok(drum.length >= 12, `a ring of pieces: ${drum.length}`);
+  for (const r of drum) {
+    const [dx, dz] = [r.at[0] - 4, r.at[1] - 4];
+    const radius = Math.hypot(dx, dz);
+    assert.ok(radius > 3.8 && radius <= 4 + 1e-9, `on the circle: ${radius}`);
+    const away = Math.atan2(dx, dz);
+    assert.ok(Math.abs(Math.atan2(Math.sin(r.turn - away), Math.cos(r.turn - away))) < 1e-6, "faces out from the middle");
+  }
+  const around = drum.reduce((a, r) => a + r.stretch * 2, 0);
+  assert.ok(Math.abs(around - 2 * 4 * Math.sin(Math.PI / drum.length * 1) * drum.length) < 0.8 && around > 24 && around < 2 * Math.PI * 4 + 1e-9, `the chords make up the circle: ${around.toFixed(2)} of ${(2 * Math.PI * 4).toFixed(2)}`);
+  // Mixed radii: one rounded corner has an arc of pieces, the three square ones do not
+  const mixed = roofEdgeRuns(9, 6, [2.5, 0, 0, 0]);
+  const corner = mixed.filter((r) => r.at[0] < 2.5 && r.at[1] < 2.5);
+  assert.ok(corner.length >= 2 && corner.every((r) => Math.hypot(r.at[0] - 2.5, r.at[1] - 2.5) > 1.9), "the north-west corner is an arc, not the square one");
+  assert.ok(!mixed.some((r) => r.at[0] < 0.5 && r.at[1] < 0.5), "no piece at the square-cut corner");
 });

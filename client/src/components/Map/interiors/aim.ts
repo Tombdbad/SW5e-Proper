@@ -113,25 +113,49 @@ export interface Aimed {
 }
 
 const RANGE = 40;
+// The floor under the aim: a level floor's height, or the height of the ground at a point (x, z in the scene's frame: the open ground of a district,
+// shared/logic districtGround), which the ray is marched over
+export type FloorY = number | ((x: number, z: number) => number);
+// Where a ray first meets the ground (how far along it), or Infinity: steps of a quarter square, then halved down to a hundredth
+function groundHit(ray: THREE.Ray, floor: (x: number, z: number) => number, far: number): number {
+  const p = new THREE.Vector3();
+  const above = (t: number) => (ray.at(t, p), p.y - floor(p.x, p.z));
+  if (above(0) < 0) return Infinity;
+  let [lo, prev] = [0, 0];
+  for (let t = 0.25; t <= far + 0.25; t += 0.25) {
+    if (above(t) < 0) {
+      let hi = t;
+      lo = prev;
+      for (let k = 0; k < 6; k++) {
+        const mid = (lo + hi) / 2;
+        if (above(mid) < 0) hi = mid;
+        else lo = mid;
+      }
+      return hi;
+    }
+    prev = t;
+  }
+  return Infinity;
+}
 // What is under the crosshair of `camera`. `floorY` is the height of the floor being walked; `muzzle` (over the shoulder) is where
 // a shot leaves from, and a wall between it and the aimed point marks the aim blocked. Matrices are as of the last frame
 // (`ndc`: where on the screen it is asked, the middle by default; the overhead view's mouse is aimed with its own)
-export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids, ndc = new THREE.Vector2(0, 0)): Aimed {
+export function aimAt(camera: THREE.Camera, floorY: FloorY, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids, ndc = new THREE.Vector2(0, 0)): Aimed {
   camera.updateMatrixWorld();
   const ray = new THREE.Raycaster();
   ray.setFromCamera(ndc, camera);
   return castAim(ray, floorY, muzzle, targets, solids);
 }
 // What is along a ray from a point, as a crosshair would say (the hook's shot with nothing on the screen to aim by: straight ahead of the figure)
-export function aimFrom(origin: THREE.Vector3, direction: THREE.Vector3, floorY: number, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids): Aimed {
+export function aimFrom(origin: THREE.Vector3, direction: THREE.Vector3, floorY: FloorY, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids): Aimed {
   return castAim(new THREE.Raycaster(origin, direction.clone().normalize()), floorY, muzzle, targets, solids);
 }
-function castAim(ray: THREE.Raycaster, floorY: number, muzzle: THREE.Vector3 | undefined, targets: Iterable<THREE.Object3D>, solids: Iterable<THREE.Object3D>): Aimed {
+function castAim(ray: THREE.Raycaster, floorY: FloorY, muzzle: THREE.Vector3 | undefined, targets: Iterable<THREE.Object3D>, solids: Iterable<THREE.Object3D>): Aimed {
   ray.far = RANGE;
   const nearest = (list: Iterable<THREE.Object3D>, deep: boolean) => ray.intersectObjects([...list], deep)[0];
   const [target, wall] = [nearest(targets, false), nearest(solids, true)];
-  const floor = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -floorY), new THREE.Vector3());
-  const floorAt = floor ? floor.distanceTo(ray.ray.origin) : Infinity;
+  const floor = typeof floorY === "number" ? ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -floorY), new THREE.Vector3()) : null;
+  const floorAt = typeof floorY === "number" ? (floor ? floor.distanceTo(ray.ray.origin) : Infinity) : groundHit(ray.ray, floorY, RANGE);
   const stops: [number, Aimed["kind"], THREE.Object3D?][] = [[floorAt, "ground"], [wall?.distance ?? Infinity, "wall"], [target?.distance ?? Infinity, "target", target?.object]];
   const [distance, kind, object] = stops.reduce((best, s) => (s[0] < best[0] ? s : best));
   if (!isFinite(distance) || distance > RANGE) return { kind: "none", point: ray.ray.at(RANGE, new THREE.Vector3()), distance: RANGE };
