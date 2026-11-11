@@ -15,7 +15,7 @@ import { ITEM_MODELS } from "@/components/Map/interiors/items";
 import { CaveDressing, CaveMound, RockArch, RockWall } from "@/components/Map/interiors/CaveRoom";
 import { moodOf } from "@/components/Map/interiors/atmosphere";
 import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
-import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UnderSea, type StallState } from "@/components/Map/siteAssets";
+import { CanopyDeck, CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UnderSea, type StallState } from "@/components/Map/siteAssets";
 import { RoomShell } from "@/components/Map/LocalMap";
 import { useModels } from "@/components/Map/interiors/assets";
 import { OWN, packOf } from "@/components/Map/interiors/packs";
@@ -920,6 +920,8 @@ export default function ModelGallery() {
         )}
         {/* ?section=leaf (2026-11-11): every library piece drawn with the leaf texture (the cut-out of forest_leaves_02), one a cell, in the forest's colours; add &oldtrees=1 to see the library's own trees and hedges instead of the Megascans-built ones */}
         {section === "leaf" && <Rows z={0} items={LEAF_PIECES} per={8} gap={5} name={(key) => key} draw={(key) => <Scatter placed={[{ key, x: 0, y: 0, rot: 0, scale: 1, v: 1 }]} biome="forest" />} />}
+        {/* ?section=village (2026-11-11): a tree village's deck on its post with the great tree beside it, a broadleaf (jungle) and a conifer (forest); &oldtrees=1 for the kit's own */}
+        {section === "village" && ["jungle", "forest"].map((biome, i) => <group key={biome} position={[i * 22, 4, 0]}><CanopyDeck w={6} d={6} round={false} aloft={4} kind="tree" biome={biome} seed={i + 1} /></group>)}
         {section === "rounds" && <Rounds />}
         {section === "caves" && <Caves />}
         {section === "water" && <Water />}

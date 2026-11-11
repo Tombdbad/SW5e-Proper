@@ -325,6 +325,13 @@ def build():
     for ob in (alder, birch):
         stand_up(ob.data, 2); decimate(ob, 160)
     stand_up(aspen.data, 0); decimate(aspen, 60)
+    # the great trees' trunks and limbs are these scans blown up: a finer cut of them and the bark at its full 1024
+    agr, g_img = import_scan(os.path.join(REF, "alder_tree_trunk", "alder_tree_trunk_tkkobfdfa_low.glb"))
+    stand_up(agr.data, 2); decimate(agr, 480)
+    asp_big, _pi = import_scan(os.path.join(REF, "aspen_branch", "aspen_branch_thrrfblda_low.glb"))
+    stand_up(asp_big.data, 0); decimate(asp_big, 90)
+    garr = pixels(g_img).copy(); garr[:, :, 3] = 1.0
+    m_great = image_material("bark_great", garr, False)
     pieces = []  # [(object, ...)]
     parts = []   # every object that is exported
 
@@ -603,10 +610,56 @@ def build():
                     part.quad(base - sv * (w / 2), base + sv * (w / 2), tip + sv * (w * 0.12), tip - sv * (w * 0.12), (u0, v0, u1, v1), unit(Vector((c, -s_, 0)) * 0.5 + Vector((0, 0, 0.85))))
         return [part.object("greatneedles__%s__needle" % variant, m_needle)]
 
+    # ---- the great trees' trunks (2026-11-11, the user: the tree village trunks from the Megascans pack, scaled to fit): the Alder trunk scan blown up to the kit's
+    # girth (a radius of 1.2 m at the town's levels) and stretched to the kit's height (15 m; the conifer's 24), narrowing; limbs and buttress roots are the Aspen limb
+    # scan. Kit units, the foot at the origin. Replace the kit's `tree_great` (limbs and roots with it) and `tree_great_conifer` (its branches are bare under the
+    # needle cards and left out)
+    def limb_on(src, base, elev_deg, az, length, thick, name="limb"):
+        limb = copy_object(src, name, m_aspen)
+        k = length / 4.41
+        limb.data.transform(Matrix.Scale(k, 4) @ Matrix.Diagonal((thick, thick, 1.0, 1.0)))
+        el = math.radians(elev_deg)
+        d = Vector((math.cos(az) * math.cos(el), math.sin(az) * math.cos(el), math.sin(el)))
+        limb.data.transform(Matrix.Translation(base) @ Vector((0, 0, 1)).rotation_difference(d).to_matrix().to_4x4())
+        return limb
+
+    def greattrunk(variant, seed):
+        r = random.Random(seed)
+        trunk = copy_object(agr, "greattrunk__%s__bark" % variant, m_great)
+        shape_trunk(trunk.data, 15.0, 4.0 + 0.2 * r.random(), 0.5)
+        trunk.data.transform(Matrix.Rotation(r.random() * 6.28, 4, "Z"))
+        limbs = []
+        for i in range(5):
+            az = 2 * math.pi * i / 5 + 0.4
+            limbs.append(limb_on(asp_big, Vector((0.3 * math.cos(az), 0.3 * math.sin(az), 12.0 + 0.4 * i)), 33 + 3 * (i % 2), az, 5.0 + 0.4 * r.random(), 0.9))
+        for i in range(6):
+            az = 2 * math.pi * (i + 0.3) / 6
+            limbs.append(limb_on(asp_big, Vector((0.9 * math.cos(az), 0.9 * math.sin(az), 1.9)), -42, az, 3.6, 1.0))
+        return [trunk, join(limbs, "greattrunk__%s__limb" % variant)]
+
+    def greatconifer(variant, seed):
+        r = random.Random(seed)
+        trunk = copy_object(agr, "greatconifer__%s__bark" % variant, m_great)
+        shape_trunk(trunk.data, 24.0, 4.4 + 0.2 * r.random(), 0.85)
+        trunk.data.transform(Matrix.Rotation(r.random() * 6.28, 4, "Z"))
+        roots = [limb_on(asp_big, Vector((0.9 * math.cos(2 * math.pi * (i + 0.5) / 5), 0.9 * math.sin(2 * math.pi * (i + 0.5) / 5), 1.7)), -40, 2 * math.pi * (i + 0.5) / 5, 3.2, 0.9) for i in range(5)]
+        return [trunk, join(roots, "greatconifer__%s__limb" % variant)]
+
+    # the post under a hut's deck (siteAssets.tsx `CanopyDeck`: `<Cyl>` of the village's tree): one unit high, one unit in radius at its middle, centred; the game scales it
+    def deckpost(variant, seed):
+        r = random.Random(seed)
+        trunk = copy_object(agr, "deckpost__%s__bark" % variant, m_great)
+        shape_trunk(trunk.data, 1.0, 2.9, 0.16)
+        trunk.data.transform(Matrix.Rotation(r.random() * 6.28, 4, "Z") @ Matrix.Translation((0, 0, -0.5)))
+        return [trunk]
+
     out = []
     for v, seed in (("A", 41), ("B", 42), ("C", 43)):
         out += greatcrown(v, seed)
         out += greatneedles(v, seed + 10)
+        out += greattrunk(v, seed + 20)
+        out += greatconifer(v, seed + 30)
+        out += deckpost(v, seed + 40)
     out += from_pack("jungle", "tropical_palm", "palm", 1.8)
     out += from_pack("forest", "bracken_fern", "fern", 0.6)
     for v, seed in (("A", 5), ("B", 6), ("C", 7)):
@@ -621,7 +674,7 @@ def build():
         out += broadleaf(v, seed + 2, src, mat)
         out += hedge(v, seed + 3)
     # the originals are not exported
-    for o in (alder, birch, aspen):
+    for o in (alder, birch, aspen, agr, asp_big):
         bpy.data.objects.remove(o, do_unlink=True)
     return out
 

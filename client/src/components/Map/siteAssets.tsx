@@ -7,7 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
-import { GreatCrown, TREE_SWAP, TreeStand, hasGreatCrown, useTreePack } from "./treePack";
+import { GreatCrown, GreatPiece, TREE_SWAP, TreeStand, hasGreat, hasGreatCrown, useTreePack } from "./treePack";
 import { groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
@@ -1730,6 +1730,7 @@ function Beam({ from, to, thick, color }: { from: V3; to: V3; thick: number; col
 // (`seed`, from the room: which corner of its square the great tree stands at)
 export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0, clear }: { w: number; d: number; round: boolean; aloft: number; kind: CanopyKind; biome: string; seed?: number; clear?: Clear[] }) {
   const bark = paletteOf(biome).bark;
+  const trees = useTreePack();
   const cx = w / 2;
   const cz = d / 2;
   const rx = w / 2 + 0.35;
@@ -1749,7 +1750,9 @@ export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0, clear }:
       <group>
         {deck}
         <GreatTree w={w} d={d} aloft={aloft} biome={biome} seed={seed} clear={clear} />
-        <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={r * 1.12} r1={r * 0.92} h={aloft} color={bark} seg={12} />
+        {hasGreat(trees, "deckpost")
+          ? <group position={[cx, -aloft / 2 - 0.2, cz]}><GreatPiece pack={trees} name="deckpost" variant={"ABC"[Math.abs(seed) % 3]} scale={[r, aloft, r]} /></group>
+          : <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={r * 1.12} r1={r * 0.92} h={aloft} color={bark} seg={12} />}
         {/* the roots splaying into the ground */}
         <Cyl at={[cx, -aloft + 0.35, cz]} r0={r * 2.1} r1={r * 1.1} h={0.7} color={bark} seg={12} />
         {/* the struts from the trunk to the deck's rim */}
@@ -1796,7 +1799,7 @@ export function GreatTree({ w, d, aloft, biome, seed, clear }: { w: number; d: n
   return (
     <group>
       <group position={[tx, -aloft, tz]} scale={s} rotation={[0, seed * 1.3, 0]}>
-        <ArchPiece name={conifer ? "tree_great_conifer" : "tree_great"} wall={bark} thatch />
+        {hasGreat(trees, conifer ? "greatconifer" : "greattrunk") ? <GreatPiece pack={trees} name={conifer ? "greatconifer" : "greattrunk"} variant={"ABC"[Math.abs(seed) % 3]} /> : <ArchPiece name={conifer ? "tree_great_conifer" : "tree_great"} wall={bark} thatch />}
         {hasGreatCrown(trees, conifer) ? <GreatCrown pack={trees} conifer={conifer} variant={"ABC"[Math.abs(seed) % 3]} /> : <ArchPiece name={conifer ? "tree_great_conifer_needles" : "tree_great_canopy"} wall={bark} thatch />}
       </group>
       {/* (two beams from the trunk to the deck's rim, under the planks) */}

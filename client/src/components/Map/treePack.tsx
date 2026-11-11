@@ -69,11 +69,17 @@ export const TREE_SWAP: Record<string, { piece: keyof typeof HEIGHT; h: number; 
 // The crown of a tree village's great tree (siteAssets.tsx `GreatTree`: the kit's trunk and limbs stand there, tools/blender/build-architecture.py): in cards, in the kit's own
 // units, the great tree's foot at the origin; `conifer` the needles of a great conifer, else the broadleaf's leaves. Null where the file lacks it (the kit's own crown is drawn then)
 export function GreatCrown({ pack, conifer, variant }: { pack: TreePack; conifer: boolean; variant: string }) {
-  const parts = pack.get(`${conifer ? "greatneedles" : "greatcrown"}__${variant}`);
-  if (!parts) return null;
-  return <>{parts.map((p, i) => <mesh key={i} geometry={p.geometry} material={p.material} castShadow receiveShadow />)}</>;
+  return <GreatPiece pack={pack} name={conifer ? "greatneedles" : "greatcrown"} variant={variant} />;
 }
-export const hasGreatCrown = (pack: TreePack | null | undefined, conifer: boolean): pack is TreePack => !!pack?.has(`${conifer ? "greatneedles" : "greatcrown"}__A`);
+export const hasGreatCrown = (pack: TreePack | null | undefined, conifer: boolean): pack is TreePack => hasGreat(pack, conifer ? "greatneedles" : "greatcrown");
+// Any of the village pieces by name: `greatcrown`, `greatneedles`, `greattrunk` (the broadleaf great tree's trunk, limbs and roots), `greatconifer` (the conifer's trunk and roots)
+// and `deckpost` (the post under a hut's deck, one unit high and wide, centred)
+export function GreatPiece({ pack, name, variant, scale }: { pack: TreePack; name: string; variant: string; scale?: [number, number, number] }) {
+  const parts = pack.get(`${name}__${variant}`);
+  if (!parts) return null;
+  return <>{parts.map((p, i) => <mesh key={i} geometry={p.geometry} material={p.material} scale={scale} castShadow receiveShadow />)}</>;
+}
+export const hasGreat = (pack: TreePack | null | undefined, name: string): pack is TreePack => !!pack?.has(`${name}__A`);
 
 interface Spot { x: number; y: number; rot: number; scale: number; h?: number }
 // The copies of one piece and variant, a mesh to each part drawn in one go (x, y are the district's squares as `Scatter` has them, h the ground's height)
