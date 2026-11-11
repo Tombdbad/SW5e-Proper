@@ -13689,6 +13689,25 @@ function fieldAt(track: RaceTrack, x: number, z: number): number {
 }
 // How far a point is from the nearest centre line, track or trail (from the grid; for scenery and the look of the ground)
 export const raceDistance = (track: RaceTrack, x: number, z: number) => fieldAt(track, x, z);
+// Where a point lies across the main track (2026-11-11, the ground's wheel ruts): how far to the side of the centre line (metres, signed: the left of the
+// heading is positive), the unit vector that points that way, and how far round the lap. Null where the track is not near (past 14 m) or a trail is nearer.
+export function raceWay(track: RaceTrack, x: number, z: number): { lat: number; nx: number; nz: number; s: number } | null {
+  if (fieldAt(track, x, z) > 14) return null;
+  const s = fieldS(track, x, z);
+  if (s < 0) return null;
+  const n = track.points.length;
+  const at = Math.round(s / track.step);
+  let best = -1;
+  let bestD = Infinity;
+  for (let k = -3; k <= 3; k++) {
+    const i = (((at + k) % n) + n) % n;
+    const d = (track.points[i][0] - x) ** 2 + (track.points[i][2] - z) ** 2;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  const yaw = track.yaws[best];
+  const [nx, nz] = [-Math.sin(yaw), Math.cos(yaw)];
+  return { lat: (x - track.points[best][0]) * nx + (z - track.points[best][2]) * nz, nx, nz, s: best * track.step };
+}
 
 // How far round the lap the nearest point of the main track is (from the grid: blended between its cells, or the nearest cell's where
 // they disagree, by the start line or between two stretches of track), -1 where a trail is nearer

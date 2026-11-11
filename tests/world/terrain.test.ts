@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
-  raceCourse, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
+  raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
 import { bombFall } from "../../shared/logic/dogfightSim";
@@ -209,4 +209,23 @@ test("terrainSurface: the palette colour and the layers' weights (2026-11-11, gr
   }
   assert.ok(ns > 5 && nf > 5, `${ns} steep and ${nf} flat samples`);
   assert.ok(steep / ns > flat / nf, `rock on the steep (${steep / ns}) more than on the flat (${flat / nf})`);
+});
+
+test("raceWay: the signed side of the centre line (the ground's wheel ruts lie by it), none far from the track", () => {
+  const track = raceCourse(7, { ...scenery("desert"), crossings: [] });
+  let checked = 0;
+  for (let i = 5; i < track.points.length - 5; i += 11) {
+    const [px, , pz] = track.points[i];
+    const yaw = track.yaws[i];
+    const [nx, nz] = [-Math.sin(yaw), Math.cos(yaw)];
+    for (const lat of [-3, -1, 0, 1, 3]) {
+      const w = raceWay(track, px + nx * lat, pz + nz * lat);
+      if (!w) continue;
+      assert.ok(Math.abs(w.lat - lat) < 0.35, `lat ${w.lat} for ${lat}`);
+      assert.ok(Math.abs(w.nx * nx + w.nz * nz - 1) < 0.05, "the lateral vector points the same way");
+      checked++;
+    }
+  }
+  assert.ok(checked > 40, `${checked} points checked`);
+  assert.equal(raceWay(track, 99999, 99999), null);
 });

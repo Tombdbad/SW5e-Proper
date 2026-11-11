@@ -281,6 +281,7 @@ uniform sampler2D gWet;
 uniform sampler2D gSoilN;
 uniform sampler2D gRockN;
 varying vec4 vSplat;
+varying vec4 vWay;
 vec3 gNd = vec3(0.0);
 float gHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float gNoise(vec2 p) {
@@ -332,7 +333,20 @@ const GROUND_ALBEDO = `{
   float bs = max(ws + hs - ma, 0.0) * step(0.02, ws); float br = max(wr + hr - ma, 0.0) * step(0.02, wr);
   float bp = max(wp + hp - ma, 0.0) * step(0.02, wp); float bq = max(ww + hw - ma, 0.0) * step(0.02, ww);
   vec3 d = (bs * ds + br * dr + bp * dp + bq * dw) / max(bs + br + bp + bq, 0.001);
-  surfaceAlbedo *= mix(vec3(1.0), d * macro, gMode.y * (0.35 + 0.65 * near));
+  float way = vSplat.w;
+  surfaceAlbedo *= mix(vec3(1.0), d * macro, gMode.y * (0.35 + 0.65 * near) * (1.0 - 0.55 * way));
+  // A worn way (the ground's own, no ribbon): two wheel ruts either side of the middle, the loose ground pushed up beside them, the middle scuffed
+  // pale. vWay: the signed distance to the side of the centre line (metres), the unit vector that points that way, the distance round.
+  if (way > 0.02) {
+    float lat = vWay.x; float a = abs(lat);
+    float u = (a - 0.95) / 0.32; float rut = exp(-u * u);
+    float bu = (a - 3.2) / 0.9; float berm = exp(-bu * bu);
+    surfaceAlbedo *= 1.0 - way * (0.26 * rut - 0.07 * berm + 0.07 * (1.0 - smoothstep(0.0, 1.4, a)));
+    if (!lite) {
+      float dh = 0.9 * rut * 2.0 * u / 0.32 - 0.5 * berm * 2.0 * bu / 0.9;
+      nd += -dh * sign(lat) * way * vec3(vWay.y, 0.0, vWay.z) * 0.55;
+    }
+  }
   gNd = nd * near;
 }`;
 
@@ -1307,8 +1321,8 @@ class Mirror {
         name: "GroundLayers",
         ubo: [{ name: "gTile", size: 4, type: "vec4" }, { name: "gAvg0", size: 4, type: "vec4" }, { name: "gAvg1", size: 4, type: "vec4" }, { name: "gAvg2", size: 4, type: "vec4" }, { name: "gAvg3", size: 4, type: "vec4" }, { name: "gMode", size: 4, type: "vec4" }],
         samplers: ["gSoil", "gRock", "gPale", "gWet", "gSoilN", "gRockN"],
-        attributes: ["splat"],
-        vertex: { CUSTOM_VERTEX_DEFINITIONS: "attribute vec4 splat;\nvarying vec4 vSplat;", CUSTOM_VERTEX_MAIN_END: "vSplat = splat;" },
+        attributes: ["splat", "way"],
+        vertex: { CUSTOM_VERTEX_DEFINITIONS: "attribute vec4 splat;\nattribute vec4 way;\nvarying vec4 vSplat;\nvarying vec4 vWay;", CUSTOM_VERTEX_MAIN_END: "vSplat = splat;\nvWay = way;" },
         fragment: {
           CUSTOM_FRAGMENT_DEFINITIONS: GROUND_GLSL,
           CUSTOM_FRAGMENT_UPDATE_ALBEDO: GROUND_ALBEDO,

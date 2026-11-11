@@ -128,6 +128,7 @@ export function ReliefGround({ biome, seed, inner, at, set, tint }: { biome: str
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
     geo.setAttribute("splat", new THREE.BufferAttribute(splat, 4));
+    geo.setAttribute("way", new THREE.BufferAttribute(new Float32Array(n * n * 4), 4));
     geo.setIndex(new THREE.BufferAttribute(index, 1));
     geo.computeVertexNormals();
     // Dressing: where it stands, outside the place and its first foothills, on ground it can stand on

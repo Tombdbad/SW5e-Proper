@@ -6,7 +6,7 @@ import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
-  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, terrainSurface,
+  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, raceWay, terrainSurface,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
@@ -198,6 +198,7 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     const pos: number[] = [];
     const col: number[] = [];
     const splat: number[] = [];
+    const way: number[] = [];
     const nor: number[] = [];
     const idx: number[] = [];
     const land = track.land;
@@ -233,7 +234,8 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             } else c.copy(a).lerp(b, 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013));
             // The way: the dust of the course, worn most in the middle and gone into the verge past the edge, broken up a little
             const d = raceDistance(track, x, z);
-            const worn = (1 - Math.min(1, Math.max(0, (d - w2 * 0.35) / (w2 * 0.65 + 10)))) * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11)) * (1 - Math.min(1, slope * 1.4));
+            const wornBase = (1 - Math.min(1, Math.max(0, (d - w2 * 0.35) / (w2 * 0.65 + 10)))) * (1 - Math.min(1, slope * 1.4));
+            const worn = wornBase * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11));
             if (worn > 0) c.lerp(verge, Math.min(0.7, worn));
             c.multiplyScalar(0.94 + Math.max(-0.08, Math.min(0.12, y * 0.004)));
             // A river's banks are wet mud; a lava flow's are scorched black
@@ -241,7 +243,9 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
             col.push(c.r, c.g, c.b);
             // (a river's bank is mud, the way itself soil: the layers' weights, with the water's wet laid over)
-            splat.push(sp[0], sp[1], Math.max(sp[2], water ? (water.inside ? 0.9 : 0.6) * (water.lava ? 0 : 1) : 0), 0);
+            splat.push(sp[0], sp[1], Math.max(sp[2], water ? (water.inside ? 0.9 : 0.6) * (water.lava ? 0 : 1) : 0), worn > 0 ? Math.min(1, worn * 1.6) : 0);
+            const wy = worn > 0.02 ? raceWay(track, x, z) : null;
+            way.push(wy ? wy.lat : 0, wy ? wy.nx : 0, wy ? wy.nz : 0, wy ? wy.s : 0);
           }
         }
         for (let j = 0; j < segs; j++) {
@@ -265,6 +269,7 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             nor.push(nor[v * 3], nor[v * 3 + 1], nor[v * 3 + 2]);
             col.push(col[v * 3], col[v * 3 + 1], col[v * 3 + 2]);
             splat.push(splat[v * 4], splat[v * 4 + 1], splat[v * 4 + 2], splat[v * 4 + 3]);
+            way.push(way[v * 4], way[v * 4 + 1], way[v * 4 + 2], way[v * 4 + 3]);
           }
           for (let k = 0; k < list.length - 1; k++) idx.push(list[k], down + k, list[k + 1], list[k + 1], down + k, down + k + 1);
         }
@@ -274,6 +279,7 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
     g.setAttribute("splat", new THREE.Float32BufferAttribute(splat, 4));
+    g.setAttribute("way", new THREE.Float32BufferAttribute(way, 4));
     g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
     g.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
     return g;
