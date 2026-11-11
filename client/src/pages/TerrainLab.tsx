@@ -1,5 +1,5 @@
 // /dev/terrain: the ground beyond a place on its own page, for looking at the land in a browser without a campaign (as /dev/dogfight does for the fights).
-// Drawn by the game's own (Babylon) renderer; add three=1 for three's. Query: biome (temperate, forest, jungle, swamp, ocean, desert, ice, volcanic, urban, barren), seed, view=high|low|top|ground (eye height, as the party sees it), inner (the flat ground's half side, in squares).
+// Drawn by the game's own (Babylon) renderer; add three=1 for three's. Query: biome (temperate, forest, jungle, swamp, ocean, desert, ice, volcanic, urban, barren), seed, fog=0 (no fog), view=high|low|top|ground (eye height, as the party sees it), inner (the flat ground's half side, in squares).
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { Suspense } from "react";
@@ -22,7 +22,7 @@ export default function TerrainLab() {
     <div style={{ position: "fixed", inset: 0, background: "#000" }}>
       <Canvas gl={q.get("three") ? undefined : babylonGl} camera={{ position: camera, fov: 55, near: 0.5, far: 3000 }}>
         <color attach="background" args={["#a9c4dc"]} />
-        <fog attach="fog" args={["#bcd0e0", 150, 600]} />
+        {q.get("fog") !== "0" && <fog attach="fog" args={["#bcd0e0", 150, 600]} />}
         <ambientLight intensity={0.8} />
         <directionalLight position={[300, 200, 120]} intensity={1.6} />
         <Suspense fallback={null}>

@@ -273,6 +273,27 @@ class LimbPlugin extends MaterialPluginBase {
   }
 }
 
+// The water's fragment code (see the "water" patch): the albedo from the depth and the foam, the normal from two drifting sets of ripples
+const WATER_GLSL = `varying float vShore;
+float wHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float wNoise(vec2 p) {
+  vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(wHash(i), wHash(i + vec2(1.0, 0.0)), f.x), mix(wHash(i + vec2(0.0, 1.0)), wHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float wRipple(vec2 p) { return 0.6 * wNoise(p * 0.9 + vec2(wTime * 0.35, wTime * 0.2)) + 0.4 * wNoise(p * 2.3 - vec2(wTime * 0.3, wTime * 0.5)); }
+vec3 wNormal(vec2 p) {
+  float h = wRipple(p); float e = 0.1;
+  return vec3(-(wRipple(p + vec2(e, 0.0)) - h) / e, 0.0, -(wRipple(p + vec2(0.0, e)) - h) / e) * 0.3;
+}
+`;
+const WATER_ALBEDO = `{
+  float depth = vShore;
+  float f = wRipple(vPositionW.xz);
+  vec3 tint = mix(wShallow.rgb, wDeep.rgb, smoothstep(0.0, 5.0, depth)) * (0.86 + 0.28 * f);
+  float foam = smoothstep(0.7, 0.0, depth) * smoothstep(0.3, 0.75, f);
+  surfaceAlbedo = mix(tint, vec3(0.86, 0.9, 0.92), foam);
+}`;
+
 // The ground layers' fragment code (see GroundLayers). Hooks: the albedo (the vertex colour is in by then), then the normal just before the lights.
 const GROUND_GLSL = `uniform sampler2D gSoil;
 uniform sampler2D gRock;
@@ -364,7 +385,10 @@ export type ShaderPatch =
   // the sea's waves (siteAssets.tsx waterMaterial)
   | { kind: "waves"; time: { value: number } }
   // the layered ground (terrain.tsx groundMaterial)
-  | { kind: "ground"; layers: GroundLayers };
+  | { kind: "ground"; layers: GroundLayers }
+  // standing and running water (terrain.tsx waterMaterial): tinted by its depth (the vertex attribute `shore`, metres), foam where it is shallow, two sets of
+  // ripples drifting different ways lighting it; colours in linear light
+  | { kind: "water"; time: { value: number }; deep: [number, number, number]; shallow: [number, number, number] };
 // The ground's layers (2026-11-11, ground material v2). The vertex colour is the hue (the palette: snow, sand, wet, the biome's own); the vertex attribute
 // `splat` (rock, pale, wet) says which layer each point is; the photographs lend only their pattern and relief (each divided by its own average colour),
 // blended by height at the seams, broken up by two octaves of world noise and a second, turned and scaled tap against the repeat; the rock is mapped
@@ -1313,6 +1337,24 @@ class Mirror {
           CUSTOM_VERTEX_UPDATE_NORMAL: "normalUpdated = normalize(vec3(-(waveH(wvP + vec2(0.06, 0.0)) - wvH) / 0.06, 1.0, -(waveH(wvP + vec2(0.0, 0.06)) - wvH) / 0.06));",
         },
         bind: (ubo) => ubo.updateFloat("uTime", patch.time.value),
+      });
+    } else if (patch.kind === "water") {
+      new CodePlugin(mat, {
+        name: "WaterSurface",
+        ubo: [{ name: "wTime", size: 1, type: "float" }, { name: "wDeep", size: 4, type: "vec4" }, { name: "wShallow", size: 4, type: "vec4" }],
+        attributes: ["shore"],
+        vertex: { CUSTOM_VERTEX_DEFINITIONS: "attribute float shore;\nvarying float vShore;", CUSTOM_VERTEX_MAIN_END: "vShore = shore;" },
+        fragment: {
+          CUSTOM_FRAGMENT_DEFINITIONS: WATER_GLSL,
+          CUSTOM_FRAGMENT_UPDATE_ALPHA: "if (vShore <= 0.0) discard;\nalpha = mix(0.5, 0.93, smoothstep(0.0, 1.6, vShore));",
+          CUSTOM_FRAGMENT_UPDATE_ALBEDO: WATER_ALBEDO,
+          CUSTOM_FRAGMENT_BEFORE_LIGHTS: "normalW = normalize(normalW + wNormal(vPositionW.xz));",
+        },
+        bind: (ubo) => {
+          ubo.updateFloat("wTime", patch.time.value);
+          ubo.updateFloat4("wDeep", patch.deep[0], patch.deep[1], patch.deep[2], 1);
+          ubo.updateFloat4("wShallow", patch.shallow[0], patch.shallow[1], patch.shallow[2], 1);
+        },
       });
     } else if (patch.kind === "ground") {
       const L = patch.layers;
