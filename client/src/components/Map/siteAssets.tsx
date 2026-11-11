@@ -7,6 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
+import { TREE_SWAP, TreeStand, useTreePack } from "./treePack";
 import { groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
@@ -1053,6 +1054,9 @@ function Group({ name, v, items, biome, palette }: { name: string; v: number; it
   const piece = LIBRARY[name];
   const file = useFile(piece.gltf);
   const colours = pieceColours(name, v, palette);
+  // Trees and hedges are the Megascans-built ones (treePack.tsx) where public/megascans/trees.glb is there: nothing is drawn of them for the moment it loads, the library's own where it is missing
+  const trees = useTreePack();
+  if (TREE_SWAP[name] && trees !== null) return trees ? <TreeStand pack={trees} name={name} variant={"ABC"[v % 3]} items={items} /> : null;
   return (
     <>
       <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} far={piece.far && ((k) => { k.surfaces = plantSurfaces(colours); piece.far!(k, colours, v); })} items={items} file={file} />

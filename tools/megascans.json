@@ -1,6 +1,18 @@
 {
   "_": "Quixel Megascans on Fab (Standard License; the repo is public, so no file made from them is committed: tools/refs/megascans/ and client/public/megascans/ are git-ignored). This file is the record: where each piece comes from and how tools/blender/build-megascans-pack.py makes it. Every piece is the LOW tier of its listing, downloaded 2026-11-11 by the user's go-ahead.",
   "listing": "https://www.fab.com/listings/",
+  "trees": {
+    "_": "The parts of trees.glb (tools/blender/build-megascans-trees.py), the low tier (the atlases the 4K or 1K set), downloaded 2026-11-11 by the user's go-ahead into tools/refs/megascans/<dir>/: trunks, limbs and stumps are .glb, the two atlases are zips unpacked into <dir>/x/.",
+    "alder_tree_trunk": { "id": "85be0523-547e-4c6f-81e6-8a349770ba3a", "file": "alder_tree_trunk_tkkobfdfa_low.glb", "use": "trunk of conifers and broadleaf A and C" },
+    "birch_tree_trunk": { "id": "040c2cf8-f19e-4e79-a4be-c8489e1b2994", "file": "birch_tree_trunk_tkjpbivfa_low.glb", "use": "trunk of broadleaf B (and tree_birch)" },
+    "aspen_branch": { "id": "f5a0abed-fdbe-43d8-a55f-8d8e079e5597", "file": "aspen_branch_thrrfblda_low.glb", "use": "limbs of the broadleaf trees" },
+    "common_spruce_branch": { "id": "07ea7814-cae1-44f8-b137-996899018e75", "file": "common_spruce_branch_uehjahtfa_low.glb", "use": "downloaded, not yet used" },
+    "norway_spruce_atlas": { "id": "e5a8e742-62da-40c8-a6a6-226f8ed7751b", "file": "norway_spruce_qgpvu2_4k.zip", "use": "needle cards of the conifers (six twigs cut out)" },
+    "bay_laurel": { "id": "32e37bd7-a689-4213-a04a-e9cb7c04f3c2", "file": "bay_laurel_umjjbjzja_low.zip", "use": "leaf cards of the broadleaf trees and the hedges (fifteen healthy leaves cut out)" },
+    "pine_tree_stump": { "id": "331a242b-dc24-4cef-8d29-51fb203d2ba5", "file": "pine_tree_stump_rfxaw_low.glb", "use": "stump A" },
+    "broken_stump": { "id": "767f5e4d-21ca-4971-8554-aab5ebd532f1", "file": "broken_stump_rkswd_low.glb", "use": "stump B" },
+    "tree_stump": { "id": "25abd26a-d3e5-4bf9-af55-9d20eb248385", "file": "tree_stump_qegv0_low.glb", "use": "stump C" }
+  },
   "pieces": {
     "forest_boulder": { "id": "f8597ba8-291d-4a41-9452-0fb1598736ec", "kind": "rock", "glb": "forest_boulder/forest_boulder_wgosajs_low.glb", "budget": 700, "size": 512 },
     "mossy_forest_boulder": { "id": "8cf6b5fa-fc74-4e00-aa37-8cb239bf9782", "kind": "rock", "glb": "mossy_forest_boulder/mossy_forest_boulder_wfstcdnaw_low.glb", "budget": 800, "size": 512 },
