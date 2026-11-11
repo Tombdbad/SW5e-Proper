@@ -151,7 +151,10 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
   if (typeof document !== "undefined") {
     const base = `/textures/${folder}/${set}`;
     const none = Promise.resolve(null);
-    Promise.all([loadMap(o.picture ? `/textures/${folder}/${o.picture}` : o.cutout ? `${base}/diffuse-cutout.webp` : `${base}/diffuse.jpg`, true), o.picture ? none : loadMap(`${base}/normal.jpg`, false), o.picture ? none : loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
+    // (a cut-out set may have a Megascans one beside it, `diffuse-cutout-megascans.webp` (tools/blender/build-megascans-trees.py, git-ignored: the Fab Standard License):
+    // that is used where it is there)
+    const cutout = o.cutout && !o.picture ? loadMap(`${base}/diffuse-cutout-megascans.webp`, true).then((t) => t ?? loadMap(`${base}/diffuse-cutout.webp`, true)) : null;
+    Promise.all([cutout ?? loadMap(o.picture ? `/textures/${folder}/${o.picture}` : `${base}/diffuse.jpg`, true), o.picture ? none : loadMap(`${base}/normal.jpg`, false), o.picture ? none : loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
       for (const target of [m, ...((m as SurfaceMaterial).followers as Set<THREE.MeshPhongMaterial>)]) {
         if (d) target.map = d;
         if (n) target.normalMap = n;

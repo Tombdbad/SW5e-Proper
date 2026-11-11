@@ -17,3 +17,4 @@ tools/refs/species/
 # Quixel Megascans (Fab Standard License: not redistributable; the repo is public): downloads and what is made from them stay on this PC
 tools/refs/megascans/
 client/public/megascans/
+client/public/textures/leaves/forest_leaves_02/diffuse-cutout-megascans.*

@@ -7,7 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
-import { TREE_SWAP, TreeStand, useTreePack } from "./treePack";
+import { GreatCrown, TREE_SWAP, TreeStand, hasGreatCrown, useTreePack } from "./treePack";
 import { groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
@@ -1791,11 +1791,13 @@ export function GreatTree({ w, d, aloft, biome, seed, clear }: { w: number; d: n
   const conifer = biome !== "jungle";
   const toward = Math.atan2(d / 2 - tz, w / 2 - tx);
   const reach = GREAT_TRUNK * s;
+  // (the crown is the Megascans-built one where trees.glb is there: treePack.tsx; the kit's own where it is not)
+  const trees = useTreePack();
   return (
     <group>
       <group position={[tx, -aloft, tz]} scale={s} rotation={[0, seed * 1.3, 0]}>
         <ArchPiece name={conifer ? "tree_great_conifer" : "tree_great"} wall={bark} thatch />
-        <ArchPiece name={conifer ? "tree_great_conifer_needles" : "tree_great_canopy"} wall={bark} thatch />
+        {hasGreatCrown(trees, conifer) ? <GreatCrown pack={trees} conifer={conifer} variant={"ABC"[Math.abs(seed) % 3]} /> : <ArchPiece name={conifer ? "tree_great_conifer_needles" : "tree_great_canopy"} wall={bark} thatch />}
       </group>
       {/* (two beams from the trunk to the deck's rim, under the planks) */}
       {[-0.5, 0.5].map((o, i) => {

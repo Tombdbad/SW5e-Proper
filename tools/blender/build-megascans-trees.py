@@ -131,6 +131,37 @@ def cut_atlas(base, opacity, accept, cell_w, cell_h, cols, rows, solid_last):
         rects.append(((cx * cell_w + 8) / W, (cy * cell_h + 8) / H, ((cx + 1) * cell_w - 8) / W, ((cy + 1) * cell_h - 8) / H, 1.0))
     return atlas, rects
 
+def leaf_cutout(atlas, rects, size=1024, count=120, seed=77):
+    """a tiling cut-out of the laurel's leaves, for the game's `leaf` finish (models.tsx MATERIALS.leaf: the small plants, moss and garden pieces, which are
+    mapped with a texture instead of cards): leaves of the atlas turned and scattered over a wrapping 1024 picture, the clear between them clear; surfaces.tsx
+    uses it in place of the plain one where it is there. Brightened (the scan's albedo is dark)."""
+    H, W = atlas.shape[:2]
+    rnd = random.Random(seed)
+    crops = [atlas[int(v0 * H):int(v1 * H), int(u0 * W):int(u1 * W)] for (u0, v0, u1, v1, asp) in rects[:-1]]
+    out = np.zeros((size, size, 4), dtype=np.float32)
+    for _ in range(count):
+        c = crops[rnd.randrange(len(crops))]
+        h, w = c.shape[:2]
+        s = rnd.uniform(1.0, 1.5); ang = rnd.uniform(0, 2 * math.pi)
+        R = int(math.hypot(w, h) * s / 2) + 2
+        ys, xs = np.mgrid[-R:R + 1, -R:R + 1]
+        ca, sa = math.cos(ang), math.sin(ang)
+        sx = (xs * ca + ys * sa) / s + w / 2; sy = (-xs * sa + ys * ca) / s + h / 2
+        ok = (sx >= 0) & (sx < w - 1) & (sy >= 0) & (sy < h - 1)
+        samp = c[np.clip(sy.astype(int), 0, h - 1), np.clip(sx.astype(int), 0, w - 1)]
+        keep = ok & (samp[:, :, 3] > 0.5)
+        cx, cy = rnd.randrange(size), rnd.randrange(size)
+        Y = (ys + cy) % size; X = (xs + cx) % size
+        out[Y[keep], X[keep]] = samp[keep]
+    solid = out[:, :, 3] > 0.5
+    mean = out[solid][:, :3].mean(axis=0) if solid.any() else np.array([0.1, 0.12, 0.03])
+    out[:, :, :3] = np.where(solid[:, :, None], out[:, :, :3], mean)
+    out[:, :, :3] = np.clip(out[:, :, :3] * 2.4, 0, 1)
+    out[:, :, 3] = solid.astype(np.float32)
+    path = os.path.join(ROOT, "client", "public", "textures", "leaves", "forest_leaves_02", "diffuse-cutout-megascans.png")
+    write_png(path, out)
+    print("wrote", path, "covered", round(float(solid.mean()), 2))
+
 # ---------------------------------------------------------------------------------------------------------------- a part: loose quads
 class Part:
     def __init__(self):
@@ -278,6 +309,7 @@ def build():
         raise SystemExit("the atlases did not cut into enough pieces")
     m_needle = image_material("needle_spruce", twig_atlas, True)
     m_leaf = image_material("leaf_laurel", leaf_atlas, True)
+    leaf_cutout(leaf_atlas, leaves)
     # --- scans
     alder, a_img = import_scan(os.path.join(REF, "alder_tree_trunk", "alder_tree_trunk_tkkobfdfa_low.glb"))
     birch, b_img = import_scan(os.path.join(REF, "birch_tree_trunk", "birch_tree_trunk_tkjpbivfa_low.glb"))
@@ -531,7 +563,50 @@ def build():
         limb_part = join(limbs, "drytree__%s__limb" % variant)
         return [trunk, limb_part]
 
+    # ---- the tree villages' great trees (siteAssets.tsx `GreatTree`; kit pieces tree_great_canopy and tree_great_conifer_needles of tools/blender/build-architecture.py):
+    # the same places in the kit's own units (metres, the great tree's foot at the origin), in cards: the kit's y-up (x, y, z) is (x, -z, y) here
+    def kit(x, y, z):
+        return (x, -z, y)
+
+    def greatcrown(variant, seed):
+        r = random.Random(seed)
+        part = Part()
+        lumps = [((0, 16.6, 0), 3.2)]
+        lumps += [((math.cos(2 * math.pi * i / 5 + 0.4) * 4.2, 15.2 + 0.3 * (i % 2), math.sin(2 * math.pi * i / 5 + 0.4) * 4.2), 2.4) for i in range(5)]
+        lumps += [((math.cos(2 * math.pi * i / 3 + 1.1) * 2.2, 17.6, math.sin(2 * math.pi * i / 3 + 1.1) * 2.2), 2.0) for i in range(3)]
+        for (p, rad) in lumps:
+            shell(part, kit(*p), (rad, rad, rad * 0.72), int(11 * rad * rad), 0.4 * rad + 0.1, r, leaves[-1])
+        return [part.object("greatcrown__%s__leaf" % variant, m_leaf)]
+
+    def greatneedles(variant, seed):
+        r = random.Random(seed)
+        part = Part()
+        for t in range(9):
+            f = t / 8
+            y = 10.0 + f * 12.5
+            length = 5.0 * (1 - f * 0.78) + 0.6
+            rt = 1.1 - 0.9 * f
+            for j in range(6):
+                a = 2 * math.pi * j / 6 + t * 0.55
+                c, s_ = math.cos(a), math.sin(a)
+                base = Vector(kit(rt * c, y, rt * s_))
+                tip = Vector(kit((rt + length) * c, y - length * (0.35 - 0.2 * f), (rt + length) * s_))
+                d = tip - base
+                side = unit(d.cross(Vector((0, 0, 1))))
+                up = unit(d.cross(side))
+                if up.z < 0:
+                    up = -up
+                w = min(length * 0.5, 2.4) + 0.3
+                for tilt in (0.0, 0.9, -0.9):
+                    sv = unit(side * math.cos(tilt) + up * math.sin(tilt))
+                    u0, v0, u1, v1, asp = twigs[r.randrange(len(twigs))]
+                    part.quad(base - sv * (w / 2), base + sv * (w / 2), tip + sv * (w * 0.12), tip - sv * (w * 0.12), (u0, v0, u1, v1), unit(Vector((c, -s_, 0)) * 0.5 + Vector((0, 0, 0.85))))
+        return [part.object("greatneedles__%s__needle" % variant, m_needle)]
+
     out = []
+    for v, seed in (("A", 41), ("B", 42), ("C", 43)):
+        out += greatcrown(v, seed)
+        out += greatneedles(v, seed + 10)
     out += from_pack("jungle", "tropical_palm", "palm", 1.8)
     out += from_pack("forest", "bracken_fern", "fern", 0.6)
     for v, seed in (("A", 5), ("B", 6), ("C", 7)):
