@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TERRAIN_STYLES, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainColorAt, terrainSplat, terrainSurface, kitSpots, terrainGradient, ecologySpots, ECOLOGY, levelDisc, levelRoad, scatterOn, thermalSettle, streamPower, terrainWater,
-  raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain, districtGround, districtRelief, levelBox,
+  raceCourse, raceWay, groundAt, biomeSky, RACE, CROSSING, type RaceScenery, type Terrain, districtGround, districtRelief, levelBox, districtLand, districtHill, districtGroundOf, generateWorld, formOf, exitsOf, UPPER_DOOR,
 } from "@shared/logic";
 import { AIR, airGround, airTerrain, dogfightStart } from "../../shared/logic/dogfight";
 import { bombFall } from "../../shared/logic/dogfightSim";
@@ -317,4 +317,83 @@ test("levelBox makes a rectangle level and leaves the land beyond its blend alon
   levelBox(t, -40, -20, 60, 30, 5, 20, 12);
   for (const [x, z] of [[-40, -20], [20, 10], [0, 0], [-38, -18], [-45, -20]]) assert.ok(Math.abs(terrainHeight(t, x, z) - 12) < 1e-4, `level at ${x},${z}`);
   assert.equal(terrainHeight(t, 150, 150), before);
+});
+
+test("a district's buildings stand at their own levels on the land (2026-11-12): level inside, the land at their walls, the ground before a way in at its floor, the ways climbing between", () => {
+  const frame = { seed: 21, biome: "temperate", cx: 40, cz: 30, size: 240 };
+  const land = districtLand(frame)!;
+  assert.ok(districtHill("temperate") >= 10 && districtHill("urban") === 0, "a broad hill under a green world's town, none in a paved city");
+  // (the land rises and falls by metres over the place)
+  let [lo, hi] = [Infinity, -Infinity];
+  for (let z = 0; z <= 60; z += 3) for (let x = 0; x <= 80; x += 3) { lo = Math.min(lo, land(x, z)); hi = Math.max(hi, land(x, z)); }
+  assert.ok((hi - lo) * 1.4 > 4, `the built ground climbs: ${((hi - lo) * 1.4).toFixed(1)} m`);
+  const boxes = [{ x: 10, y: 10, width: 14, height: 10 }, { x: 50, y: 34, width: 12, height: 12 }];
+  const levels = boxes.map((b) => Math.round(land(b.x + b.width / 2, b.y + b.height + 0.5) * 100) / 100);
+  const pads = boxes.map((b, i) => ({ ...b, h: levels[i], box: true }));
+  const aprons = [{ x: 16, y: 20, width: 1, height: 2, h: levels[0] }, { x: 55, y: 46, width: 1, height: 2, h: levels[1] }, { x: 24, y: 14, width: 2, height: 1, h: levels[0] + 3.4 }];
+  const ways = [{ x: 0, y: 24, width: 80, height: 6 }];
+  const g = districtGround({ ...frame, pads, ways, aprons })!;
+  assert.equal(g.size, 240);
+  boxes.forEach((b, i) => {
+    for (let y = b.y + 1; y < b.y + b.height - 1; y++) for (let x = b.x + 1; x < b.x + b.width - 1; x++) assert.ok(Math.abs(g.at(x + 0.5, y + 0.5) - levels[i]) < 1e-4, `box ${i} level at ${x},${y}`);
+  });
+  for (const a of aprons) assert.ok(Math.abs(g.at(a.x + 0.5, a.y + 0.5) - a.h) < 0.02 && Math.abs(g.at(a.x + 0.5, a.y + a.height - 0.5) - a.h) < 0.02, `the ground before a way in at its floor (${a.h})`);
+  // The walls meet the land where it is, not a pad: somewhere round each box the ground at its wall line is off its level by more than half a square
+  boxes.forEach((b, i) => {
+    let off = 0;
+    for (let x = b.x; x <= b.x + b.width; x++) for (const y of [b.y, b.y + b.height]) off = Math.max(off, Math.abs(g.at(x, y) - levels[i]));
+    for (let y = b.y; y <= b.y + b.height; y++) for (const x of [b.x, b.x + b.width]) off = Math.max(off, Math.abs(g.at(x, y) - levels[i]));
+    assert.ok(off > 0.5, `box ${i}: the land at its walls is ${off.toFixed(2)} squares off its floor`);
+  });
+  // The way climbs evenly: no step along it steeper than a stair
+  let steep = 0;
+  for (let x = 1; x < 79; x += 0.5) steep = Math.max(steep, Math.abs(g.at(x + 0.5, 27) - g.at(x, 27)) / 0.5);
+  assert.ok(steep < 0.9, `the way's steepest ${steep.toFixed(2)}`);
+  // The same ground for the same spec
+  assert.equal(districtGround({ ...frame, pads: [...pads], ways, aprons })!.at(5, 5), g.at(5, 5));
+});
+
+test("buildings on a hillside: each at its own level, its ways in on the ground before them, no window under the ground, and an upper floor's street door where the land comes up to it (2026-11-12)", async () => {
+  const { getWorldCatalog } = await import("../../server/sw5eData");
+  const catalog = await getWorldCatalog();
+  let [uppers, stepped, ways, windows] = [0, 0, 0, 0];
+  for (const seed of [1, 2, 3, 5]) {
+    const world = generateWorld({ seed, partyLevel: 5 }, catalog);
+    for (const [id, plan] of Object.entries(world.districtPlans ?? {})) {
+      if (!plan.levels) continue;
+      const district = { id, buildingIds: Object.keys(plan.boxes) };
+      const g = districtGroundOf(world, district);
+      assert.ok(g, `${id}: a district with levels has its ground`);
+      if (new Set(Object.values(plan.levels)).size > 1) stepped++;
+      for (const b of district.buildingIds) {
+        for (const room of Object.values(world.areas)) {
+          const l = room.parentId === b && room.kind === "room" ? room.layout : undefined;
+          if (!l || (l.level ?? 0) < 0) continue;
+          assert.equal(l.base ?? 0, plan.levels[b] ?? 0, `${room.name}: at its building's level`);
+          if (formOf(room) === "roof") continue;
+          for (const a of l.assets) {
+            if (!a.side) continue;
+            const o = { x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) };
+            const floor = (l.base ?? 0) + (l.level ?? 0) * 3.4;
+            const ground = g!.at(o.x + 0.5, o.y + 0.5);
+            const inBox = Object.values(plan.boxes).some((q) => o.x >= q.x && o.x < q.x + q.width && o.y >= q.y && o.y < q.y + q.height);
+            if ((a.kind === "exit" || a.kind === "secret") && !inBox) {
+              ways++;
+              assert.ok(Math.abs(ground - floor) < 0.05, `${id} ${room.name} ${a.name}: the ground before it ${ground.toFixed(2)}, its floor ${floor.toFixed(2)}`);
+              if (a.name === UPPER_DOOR) {
+                uppers++;
+                assert.equal(l.level, 1, "an upper street door is on the first floor");
+                assert.ok(room.gateway, "and its room is a way in");
+                assert.ok(exitsOf(world, b).some((e) => e.to === room.id && e.via === "enter"), "the building can be entered there");
+              }
+            }
+            if (a.kind === "window" && !l.aloft) { windows++; assert.ok(ground <= floor + 0.75 + 1e-6, `${id} ${room.name}: a window under the ground (${ground.toFixed(2)} over a floor at ${floor.toFixed(2)})`); }
+          }
+        }
+      }
+    }
+  }
+  assert.ok(stepped > 3, `districts whose buildings stand at different levels: ${stepped}`);
+  assert.ok(ways > 20 && windows > 20, `ways in ${ways}, windows ${windows}`);
+  assert.ok(uppers >= 1, `upper street doors: ${uppers}`);
 });

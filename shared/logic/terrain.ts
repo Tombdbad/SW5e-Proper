@@ -1033,17 +1033,22 @@ export const SQUARE_M = 1.4;
 // How many metres the open ground of a district rises and falls by (the style's relief, much reduced: a district is a few hundred metres across and
 // is built on the gentlest ground about); a paved city and a gas giant's platforms have none
 export const districtRelief = (biome: string): number => (biome === "urban" || biome === "gas giant" ? 0 : Math.max(0.6, Math.min(5, terrainStyleOf(biome).relief * 0.033)));
-export interface DistrictRect { x: number; y: number; width: number; height: number }
+// (`h`: where a pad has a level of its own, in squares over the land at the middle of the map; `box`: a building's box, whose inside is held at
+// exactly that level while the ground meets its walls where the land does: set into a hillside, standing on its plinth where the land falls away)
+export interface DistrictRect { x: number; y: number; width: number; height: number; h?: number; box?: boolean }
 export interface DistrictGroundSpec {
-  seed: number; biome: string;
+  // (`land`: the seed of the eroded land the districts of one settlement share, each reading it its own way; without it the district's own)
+  seed: number; biome: string; land?: number;
   // The middle of the map and the squares across it (the ground mesh is `size` squares square, centred there)
   cx: number; cz: number; size: number;
   // Level pads (buildings, rooms, gardens, stalls, a curtain wall) and graded ways (avenues, alleys)
   pads: DistrictRect[]; ways: DistrictRect[];
+  // The ground before each way in, level with its floor (with `h`): the ground floor's doors, and an upper floor's where the land comes up to it
+  aprons?: DistrictRect[];
 }
 export interface DistrictGround {
-  // The field in metres (pads at 0); `cx`, `cz` the middle in squares
-  t: Terrain; cx: number; cz: number;
+  // The field in metres (pads at 0, or each at its own level); `cx`, `cz` the middle in squares, `size` the squares across it
+  t: Terrain; cx: number; cz: number; size: number;
   // How high the ground is at a point of the district's grid (squares, continuous: a square's middle is x + 0.5), in squares
   at: (x: number, z: number) => number;
   // The rise over run at a point
@@ -1073,6 +1078,102 @@ function distanceFromBuilt(spec: DistrictGroundSpec, n: number): Float32Array {
   }
   return d;
 }
+// The lie of a district's built ground (2026-11-12, the user: "I want LARGE natural hills/cliffs/ravines to exist within relevant locations and to have our
+// buildings/entrances/windows to follow the topology (NOT flatten everything!)"): a broad hill or valley under the whole place, metres over its breadth,
+// on top of the small swells of `districtRelief`; each building stands level at its own height on it (shared/logic planDistrict "The lie of the land")
+export const districtHill = (biome: string): number => (biome === "urban" || biome === "gas giant" ? 0 : clamp(terrainStyleOf(biome).relief * 0.15, 3, 30));
+// (the hill's breadth in metres: a swell as broad as a town, so that it reads as a hillside under several buildings, not as a bump under one)
+const HILL_SPAN = 150;
+interface DistrictLand { land: Terrain; k: number; n: number; size: number; sizeM: number; raw: Float32Array; flow: Float32Array; big: Float32Array }
+const LANDS = new Map<string, DistrictLand>();
+const ERODED = new Map<string, Terrain>();
+// The land of a district before anything is built on it, in metres on a grid of one square, its middle at 0: the swells and the hill (the hill only where
+// the buildings stand at levels of their own); `big` the land's own rise and fall, -1..1, for the hills and ravines beyond the built ground.
+// The eroded land is the costly part (a tenth of a second or more): the districts of one settlement share it (`spec.land`, its seed), each reading it turned
+// and mirrored its own way (one of eight, by its own seed) under a hill of its own, so that a world of hundreds of districts is made in reasonable time.
+function districtLandOf(spec: Pick<DistrictGroundSpec, "seed" | "biome" | "size" | "land">, hill: boolean): DistrictLand {
+  const size = Math.round(spec.size / 2) * 2;
+  const key = `${spec.seed}|${spec.land ?? ""}|${spec.biome}|${size}|${hill}`;
+  const have = LANDS.get(key);
+  if (have) return have;
+  const sizeM = size * SQUARE_M;
+  // The land: the style's own at its full relief (so that the erosion has slopes to work on), its heights then scaled to the district's
+  const landSeed = spec.land ?? spec.seed;
+  const landKey = `${landSeed}|${spec.biome}|${size}`;
+  const land = ERODED.get(landKey) ?? terrainFor({ seed: (landSeed ^ 0x2c1b3c6d) | 0, biome: spec.biome, size: sizeM, n: 97, erosion: "light", wave: (DISTRICT_WAVE * 336) / sizeM });
+  if (!ERODED.has(landKey)) { if (ERODED.size >= 4) ERODED.delete(ERODED.keys().next().value as string); ERODED.set(landKey, land); }
+  const k = districtRelief(spec.biome) / Math.max(1e-6, land.max - land.min);
+  const n = size + 1;
+  const raw = new Float32Array(n * n);
+  const flow = new Float32Array(n * n);
+  const big = new Float32Array(n * n);
+  // (how this district reads the shared land: mirrored across x, across z, x and z swapped; none where the land is its own)
+  const turn = spec.land === undefined ? 0 : (spec.seed >>> 3) & 7;
+  const read = (x: number, z: number): [number, number] => { const [a, b] = turn & 4 ? [z, x] : [x, z]; return [turn & 1 ? -a : a, turn & 2 ? -b : b]; };
+  // (the hill: three octaves of noise at the scale of HILL_SPAN, stretched to `districtHill` from its lowest to its highest over the field)
+  const span = districtHill(spec.biome);
+  const hs = (spec.seed ^ 0x5f3759df) | 0;
+  const swell = new Float32Array(n * n);
+  let [lo, hi] = [Infinity, -Infinity];
+  if (hill && span > 0) {
+    // (on a grid of four squares, filled in between: the hill is a hundred squares broad, and the noise is the costly part)
+    const S = 4;
+    const m = Math.ceil((n - 1) / S) + 1;
+    const coarse = new Float32Array(m * m);
+    for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) coarse[j * m + i] = terrainNoise(((i * S - size / 2) * SQUARE_M) / HILL_SPAN + 3.7, ((j * S - size / 2) * SQUARE_M) / HILL_SPAN - 1.9, hs, 3);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const [ci, cj] = [Math.min(m - 2, Math.floor(i / S)), Math.min(m - 2, Math.floor(j / S))];
+      const [u, w] = [i / S - ci, j / S - cj];
+      const c = cj * m + ci;
+      const v = (coarse[c] * (1 - u) + coarse[c + 1] * u) * (1 - w) + (coarse[c + m] * (1 - u) + coarse[c + m + 1] * u) * w;
+      swell[j * n + i] = v;
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+  }
+  const hk = hill && span > 0 && hi > lo ? span / (hi - lo) : 0;
+  const mid = land.min + (land.max - land.min) * 0.5;
+  // (sampled inline: sixty thousand points a district, where a call and its arrays cost more than the sum)
+  const [ln, lh, lf, cell] = [land.n, land.h, land.flow, land.cell];
+  const spread = Math.max(1e-6, land.max - land.min);
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const [x, z] = read(-sizeM / 2 + i * SQUARE_M, -sizeM / 2 + j * SQUARE_M);
+      let fx = (x - land.x0) / cell;
+      let fz = (z - land.z0) / cell;
+      fx = fx < 0 ? 0 : fx > ln - 1 ? ln - 1 : fx;
+      fz = fz < 0 ? 0 : fz > ln - 1 ? ln - 1 : fz;
+      const ix = Math.min(ln - 2, Math.floor(fx));
+      const iz = Math.min(ln - 2, Math.floor(fz));
+      const u = fx - ix;
+      const v = fz - iz;
+      const c = iz * ln + ix;
+      const h = (lh[c] * (1 - u) + lh[c + 1] * u) * (1 - v) + (lh[c + ln] * (1 - u) + lh[c + ln + 1] * u) * v;
+      const q = j * n + i;
+      raw[q] = (h - land.min) * k + swell[q] * hk;
+      flow[q] = lf[Math.round(fz) * ln + Math.round(fx)];
+      big[q] = clamp(((h - mid) / spread) * 3.2, -1, 1);
+    }
+  }
+  // (its middle at 0: the datum every pad's level is reckoned from)
+  const zero = raw[(size / 2) * n + size / 2];
+  for (let c = 0; c < n * n; c++) raw[c] -= zero;
+  const out = { land, k, n, size, sizeM, raw, flow, big };
+  if (LANDS.size >= 4) LANDS.delete(LANDS.keys().next().value as string);
+  LANDS.set(key, out);
+  return out;
+}
+// How high the land of a district stands at a point of its grid before it is built on (squares over its middle; x + 0.5 a square's middle): what
+// the plan sets each building's level and its upper ways in by (shared/logic planDistrict), the same land `districtGround` then shapes round them
+export function districtLand(spec: Pick<DistrictGroundSpec, "seed" | "land" | "biome" | "size" | "cx" | "cz">): ((x: number, z: number) => number) | null {
+  if (districtRelief(spec.biome) <= 0 || spec.size < 8) return null;
+  const L = districtLandOf(spec, true);
+  const t: Terrain = { seed: L.land.seed, biome: spec.biome, n: L.n, size: L.sizeM, cell: SQUARE_M, x0: -L.sizeM / 2, z0: -L.sizeM / 2, h: L.raw, min: 0, max: 0, flow: L.flow };
+  return (x, z) => terrainHeight(t, (x - spec.cx) * SQUARE_M, (z - spec.cz) * SQUARE_M) / SQUARE_M;
+}
+// (a pad's own level graded into: the ways are smoothed along their length this many times, the ground before a way in is level a half square round it
+// and blended back over this many)
+const WAY_PASSES = 14, APRON_FLAT = 0.5, APRON_BLEND = 2.5;
 const GROUNDS = new Map<string, DistrictGround>();
 export function districtGround(spec: DistrictGroundSpec): DistrictGround | null {
   const relief = districtRelief(spec.biome);
@@ -1080,52 +1181,81 @@ export function districtGround(spec: DistrictGroundSpec): DistrictGround | null 
   const key = JSON.stringify(spec);
   const have = GROUNDS.get(key);
   if (have) return have;
-  const size = Math.round(spec.size);
-  const sizeM = size * SQUARE_M;
-  // The land: the style's own at its full relief (so that the erosion has slopes to work on), its heights then scaled to the district's
-  const land = terrainFor({ seed: (spec.seed ^ 0x2c1b3c6d) | 0, biome: spec.biome, size: sizeM, n: 97, erosion: "light", wave: (DISTRICT_WAVE * 336) / sizeM });
-  const k = relief / Math.max(1e-6, land.max - land.min);
-  const n = size + 1;
-  const t: Terrain = { seed: land.seed, biome: spec.biome, n, size: sizeM, cell: SQUARE_M, x0: -sizeM / 2, z0: -sizeM / 2, h: new Float32Array(n * n), min: 0, max: 0, flow: new Float32Array(n * n) };
-  for (let j = 0; j < n; j++) {
-    for (let i = 0; i < n; i++) {
-      const [x, z] = [t.x0 + i * t.cell, t.z0 + j * t.cell];
-      t.h[j * n + i] = (terrainHeight(land, x, z) - land.min) * k;
-      t.flow[j * n + i] = terrainFlow(land, x, z);
-    }
-  }
+  // (each building at its own level: the pads say so)
+  const stepped = spec.pads.some((p) => p.h !== undefined);
+  const L = districtLandOf(spec, stepped);
+  const { land, n, size, sizeM } = L;
+  const t: Terrain = { seed: land.seed, biome: spec.biome, n, size: sizeM, cell: SQUARE_M, x0: -sizeM / 2, z0: -sizeM / 2, h: L.raw.slice(), min: 0, max: 0, flow: L.flow.slice() };
   // (rects from the district's squares to the field's metres)
   const toM = (r: DistrictRect) => [(r.x - spec.cx) * SQUARE_M, (r.y - spec.cz) * SQUARE_M, r.width * SQUARE_M, r.height * SQUARE_M] as const;
-  // The level of the pads: the mean of the land under them (so that as much is cut as filled)
+  // The level of the pads that have none of their own: the mean of the land under them (so that as much is cut as filled)
   let [sum, count] = [0, 0];
   for (const p of spec.pads) {
+    if (p.h !== undefined) continue;
     const [x, z, w, d] = toM(p);
     for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) { sum += terrainHeight(t, x + (w * a) / 4, z + (d * b) / 4); count++; }
   }
-  const base = count ? sum / count : (land.max - land.min) * k * 0.5;
-  for (const p of spec.pads) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, PAD_FLAT * SQUARE_M, PAD_BLEND * SQUARE_M, base); }
-  for (const p of spec.ways) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, WAY_FLAT * SQUARE_M, WAY_BLEND * SQUARE_M, base); }
+  // (stepped: the land's own middle is the datum, and pads without a level of their own take theirs from the land under them alone)
+  const base = stepped ? 0 : count ? sum / count : 0;
+  const padLevel = (p: DistrictRect) => {
+    if (p.h !== undefined) return p.h * SQUARE_M;
+    if (!stepped) return base;
+    const [x, z, w, d] = toM(p);
+    let s = 0;
+    for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) s += terrainHeight(t, x + (w * a) / 4, z + (d * b) / 4);
+    return s / 25;
+  };
+  if (!stepped) {
+    for (const p of spec.pads) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, PAD_FLAT * SQUARE_M, PAD_BLEND * SQUARE_M, base); }
+    for (const p of spec.ways) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, WAY_FLAT * SQUARE_M, WAY_BLEND * SQUARE_M, base); }
+  } else {
+    // The gardens, the stalls and a curtain wall level at their own heights (a building's box is held at its level below, after the rest)
+    for (const p of spec.pads) if (!p.box) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, PAD_FLAT * SQUARE_M, PAD_BLEND * SQUARE_M, padLevel(p)); }
+    // The ways follow the land from one building's level to the next, smoothed along their length so that they climb evenly
+    const onWay = new Uint8Array(n * n);
+    const grid = (v: number, c: number) => Math.round(v - c + size / 2);
+    for (const w of spec.ways) for (let j = Math.max(0, grid(w.y, spec.cz)); j <= Math.min(n - 1, grid(w.y + w.height, spec.cz)); j++) for (let i = Math.max(0, grid(w.x, spec.cx)); i <= Math.min(n - 1, grid(w.x + w.width, spec.cx)); i++) onWay[j * n + i] = 1;
+    const next = new Float32Array(n * n);
+    for (let pass = 0; pass < WAY_PASSES; pass++) {
+      next.set(t.h);
+      for (let j = 1; j < n - 1; j++) for (let i = 1; i < n - 1; i++) {
+        const c = j * n + i;
+        if (onWay[c]) next[c] = (t.h[c] * 2 + t.h[c - 1] + t.h[c + 1] + t.h[c - n] + t.h[c + n]) / 6;
+      }
+      t.h.set(next);
+    }
+    // The ground before each way in, level with its floor
+    for (const a of spec.aprons ?? []) { const [x, z, w, d] = toM(a); levelBox(t, x, z, w, d, APRON_FLAT * SQUARE_M, APRON_BLEND * SQUARE_M, padLevel(a)); }
+  }
   // The land round the built ground (2026-11-12, the user: the rim was flattened, "the OPPOSITE of what I intended": large hills, cliffs and ravines must stand where the
   // place is not walked): the pads and ways keep their gentle ground and level squares, and out from them the style's land is let rise and fall at a scale of its own, tens of
   // metres, its ridges and hollows sharpened into cliff faces and ravines; only the last squares of the field ease to the level of the pads, where the land beyond (ReliefGround) begins
   const near = new Float32Array(n * n);
   for (let k = 0; k < n * n; k++) near[k] = t.h[k] - base;
   const away = distanceFromBuilt(spec, n);
-  const mid = land.min + (land.max - land.min) * 0.5;
   const bigRange = clamp(terrainStyleOf(spec.biome).relief * 0.4, 6, 40);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const edge = Math.min(i, j, n - 1 - i, n - 1 - j);
-      const [x, z] = [t.x0 + i * t.cell, t.z0 + j * t.cell];
-      const v = clamp(((terrainHeight(land, x, z) - mid) / Math.max(1e-6, land.max - land.min)) * 3.2, -1, 1);
+      const v = L.big[j * n + i];
       const w = smoothstep(BUILT_CLEAR, BUILT_CLEAR + BUILT_RAMP, away[j * n + i]);
       t.h[j * n + i] = (near[j * n + i] + w * v * bigRange) * smoothstep(0, RIM_EASE, edge);
+    }
+  }
+  // A building's box: level at its own height inside, its edge left where the land meets its walls (above its ground floor on a hillside, below it
+  // where the land falls away and the building stands on its plinth)
+  if (stepped) {
+    const grid = (v: number, c: number) => Math.round(v - c + size / 2);
+    for (const p of spec.pads) {
+      if (!p.box) continue;
+      const h = padLevel(p);
+      for (let j = Math.max(0, grid(p.y, spec.cz) + 1); j <= Math.min(n - 1, grid(p.y + p.height, spec.cz) - 1); j++) for (let i = Math.max(0, grid(p.x, spec.cx) + 1); i <= Math.min(n - 1, grid(p.x + p.width, spec.cx) - 1); i++) t.h[j * n + i] = h;
     }
   }
   refresh(t);
   const at = (x: number, z: number) => terrainHeight(t, (x - spec.cx) * SQUARE_M, (z - spec.cz) * SQUARE_M) / SQUARE_M;
   const slope = (x: number, z: number) => terrainSlope(t, (x - spec.cx) * SQUARE_M, (z - spec.cz) * SQUARE_M);
-  const out: DistrictGround = { t, cx: spec.cx, cz: spec.cz, at, slope, lowest: t.min / SQUARE_M, highest: t.max / SQUARE_M };
+  const out: DistrictGround = { t, cx: spec.cx, cz: spec.cz, size, at, slope, lowest: t.min / SQUARE_M, highest: t.max / SQUARE_M };
   if (GROUNDS.size >= 4) GROUNDS.delete(GROUNDS.keys().next().value as string);
   GROUNDS.set(key, out);
   return out;

@@ -28,8 +28,8 @@ import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShi
 export * from "./shipyard";
 import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
-import { ECO_HIT, ECOLOGY, PACK_SCALE, ecologySpots, terrainFor, terrainHeight, type EcoSpot, type Terrain } from "./terrain";
-export { ECO_HIT, PACK_SCALE, TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, kitSpots, type KitSpot, type KitKind, ECOLOGY, ecologySpots, type EcoEntry, type EcoSpot, terrainNoise, levelDisc, levelBox, levelRoad, districtGround, districtRelief, SQUARE_M, type DistrictGround, type DistrictGroundSpec, type DistrictRect, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
+import { ECO_HIT, ECOLOGY, PACK_SCALE, ecologySpots, terrainFor, terrainHeight, districtGround, districtLand, districtRelief, type DistrictGround, type DistrictGroundSpec, type DistrictRect, type EcoSpot, type Terrain } from "./terrain";
+export { ECO_HIT, PACK_SCALE, TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, kitSpots, type KitSpot, type KitKind, ECOLOGY, ecologySpots, type EcoEntry, type EcoSpot, terrainNoise, levelDisc, levelBox, levelRoad, districtGround, districtRelief, districtHill, districtLand, SQUARE_M, type DistrictGround, type DistrictGroundSpec, type DistrictRect, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -2018,6 +2018,9 @@ export interface RoomLayout {
   ramp?: boolean;
   // How far above the ground the building's floor stands, in metres (a tree village's huts on their platforms, a swamp's on stilts: canopyOf)
   aloft?: number;
+  // The level its building stands at on the district's land, in squares over the land at the middle of the map (planDistrict "The lie of the land";
+  // the map draws every floor of the building that much higher)
+  base?: number;
   // Open to the sky outside the building's walls (2026-11-06, the user: round buildings of several floors "should utilise the ramp assets on their
   // exteriors"): the landings and ramps of a round tower's stairwell, decks and slopes with a rail, no walls or roof (tag "open-air", linkColumns)
   open?: boolean;
@@ -10844,6 +10847,80 @@ export interface DistrictPlan {
   ways: { x: number; y: number; width: number; height: number; kind: "avenue" | "alley" }[];
   // What the site lays out on the open ground: a curtain wall, gardens, a market's stalls
   grounds?: SiteGrounds;
+  // The level each building stands at on the district's land, in squares (see "The lie of the land"); none where the ground is level
+  levels?: Record<string, number>;
+}
+
+// ---- The lie of the land (2026-11-12, the user: "I want LARGE natural hills/cliffs/ravines to exist within relevant locations and to have our buildings/entrances/
+// windows to follow the topology (NOT flatten everything!) The floor levels within a building should remain level, but if the building is on a hill then deeper rooms
+// must be set within the ground and where relevant a second storey should have access to the street - when the ground rises to the relevant height."). House rules:
+// - A district's land is shared/logic/terrain.ts `districtLand`: small swells and a broad hill, metres over the breadth of the place (none in a paved city, on the
+//   water, on a station or a gas giant's platforms).
+// - Each building stands level at the height of the land at its ways in on the ground floor (the mean over the squares outside them; with none, over the squares round
+//   its walls); a palace and what stands within its curtain wall, at one level, the mean of the land under them all. Every room of the building is that much higher
+//   (`RoomLayout.base`). The ground meets its walls where the land does: above the ground floor on the uphill side (the rooms there are set into the hill), below it where
+//   the land falls away (the building stands on its plinth); before each way in it is level with that way's floor.
+// - Where the land outside the wall of a room on the first floor stands a storey up (from three quarters of a storey to a third more), that room gets a way out onto the
+//   street there ("Upper street door"; one to a building, where the land is nearest a storey), the ground before it level with its floor.
+// - No window is left where the ground outside it comes over its sill; no balcony where the ground under it comes within a square of its floor; a catwalk or a bridge
+//   joins two buildings only where they stand within LIE_SPAN squares of the same level.
+export const UPPER_DOOR = "Upper street door";
+const LIE_SPAN = 0.6;
+const WINDOW_SILL = 0.75;
+// The frame of a district's land (its seed, its world, the middle of its map and how far it reaches), or none where it is level
+export function districtFrame(world: World, district: Pick<District, "id" | "buildingIds">, width: number, height: number): Pick<DistrictGroundSpec, "seed" | "land" | "biome" | "cx" | "cz" | "size"> | null {
+  const id = district.buildingIds.find((b) => world.areas[b]);
+  if (!id) return null;
+  const trail = trailOf(world, id);
+  const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
+  if (!biome || trail.some((a) => a.type === "station") || world.areas[id]?.type === "starship" || waterOf(world, id) || districtRelief(biome) <= 0) return null;
+  // (the eroded land is the settlement's, each of its districts reading it its own way: terrain.ts districtLandOf; a district's id is "<settlement>/<n>")
+  return { seed: hashOf(`${district.id}|ground`), land: hashOf(`${district.id.split("/")[0]}|land`), biome, cx: Math.round(width / 2), cz: Math.round(height / 2), size: Math.round(Math.max(240, width + 80, height + 80) / 2) * 2 };
+}
+// (the square outside a way in a room's wall, on the district's grid)
+const outsideAsset = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
+// What a district's ground is shaped round: each building's box at its level, a room on the ground outside its box, the site's gardens, stalls and wall, the ways,
+// and the ground before every way in at its floor (the same in the plan and on the map, which draws it: LocalMap `reliefGround`)
+export function districtGroundSpec(world: World, district: Pick<District, "id" | "buildingIds">, plan: Pick<DistrictPlan, "width" | "height" | "boxes" | "ways" | "grounds" | "levels">): DistrictGroundSpec | null {
+  const frame = districtFrame(world, district, plan.width, plan.height);
+  if (!frame) return null;
+  // (a plan made before 2026-11-12 has no levels: its buildings stand at 0 on level pads, the old way, with no hill)
+  const levels = plan.levels;
+  const pads: DistrictRect[] = [];
+  const aprons: DistrictRect[] = [];
+  for (const id of district.buildingIds) {
+    const box = plan.boxes[id];
+    if (!box) continue;
+    const h = levels ? levels[id] ?? 0 : undefined;
+    pads.push(h === undefined ? { x: box.x, y: box.y, width: box.width, height: box.height } : { x: box.x, y: box.y, width: box.width, height: box.height, h, box: true });
+    for (const room of childrenOf(world, id)) {
+      const l = room.kind === "room" ? room.layout : undefined;
+      if (!l) continue;
+      const level = l.level ?? 0;
+      const within = l.x >= box.x && l.y >= box.y && l.x + l.width <= box.x + box.width && l.y + l.height <= box.y + box.height;
+      if (h === undefined ? !l.aloft && level <= 0 : !within && !l.aloft && level === 0 && !openAir(room)) pads.push({ x: l.x, y: l.y, width: l.width, height: l.height, ...(h === undefined ? {} : { h }) });
+      // (a hut aloft: the ground at the foot of its ladder)
+      if (h === undefined || level < 0 || formOf(room) === "roof") continue;
+      for (const a of l.assets) {
+        if ((a.kind !== "exit" && a.kind !== "secret") || !a.side) continue;
+        const o = outsideAsset(l, a);
+        const [dx, dy] = a.side === "e" ? [1, 0] : a.side === "w" ? [-1, 0] : a.side === "s" ? [0, 1] : [0, -1];
+        aprons.push({ x: Math.min(o.x, o.x + dx), y: Math.min(o.y, o.y + dy), width: dx ? 2 : 1, height: dy ? 2 : 1, h: Math.round((h + level * ARCH_LEVEL) * 100) / 100 });
+      }
+    }
+  }
+  const g = plan.grounds;
+  const walled = Object.values(levels ?? {});
+  for (const r of g?.gardens ?? []) pads.push({ x: r.x, y: r.y, width: r.width, height: r.height });
+  for (const st of g?.stalls ?? []) pads.push({ x: st.x, y: st.y, width: st.w, height: st.h });
+  if (g?.wall) pads.push({ x: g.wall.x, y: g.wall.y, width: g.wall.width, height: g.wall.height, ...(levels ? { h: walled.length ? walled[0] : 0 } : {}) });
+  return { ...frame, pads, ways: plan.ways.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })), aprons };
+}
+// A planned district's ground, as the map draws it and the party walks it (shared/logic/terrain.ts districtGround), or none where it is level
+export function districtGroundOf(world: World, district: Pick<District, "id" | "buildingIds">): DistrictGround | null {
+  const plan = world.districtPlans?.[district.id];
+  const spec = plan ? districtGroundSpec(world, district, plan) : null;
+  return spec ? districtGround(spec) : null;
 }
 
 // Open ground of a site, in squares of the district's grid. The wall and the stalls block movement and shots;
@@ -11162,6 +11239,50 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
     }
   }
 
+  // The lie of the land (see "The lie of the land"): each building's level, and a way out from the first floor onto the street where the land comes up to it
+  const frame = districtFrame(world, district, width, height);
+  const lieAt = frame ? districtLand(frame) : null;
+  const levels: Record<string, number> = {};
+  const inAnyBox = (x: number, y: number) => Object.values(boxes).some((q) => x >= q.x && x < q.x + q.width && y >= q.y && y < q.y + q.height);
+  const landSq = (x: number, y: number) => (lieAt ? lieAt(x + 0.5, y + 0.5) : 0);
+  if (lieAt) {
+    const round = (v: number) => Math.round(v * 100) / 100;
+    const mean = (squares: { x: number; y: number }[]) => (squares.length ? squares.reduce((s, q) => s + landSq(q.x, q.y), 0) / squares.length : 0);
+    const ring = (q: { x: number; y: number; width: number; height: number }) => [
+      ...Array.from({ length: q.width }, (_, i) => [{ x: q.x + i, y: q.y - 1 }, { x: q.x + i, y: q.y + q.height }]).flat(),
+      ...Array.from({ length: q.height }, (_, i) => [{ x: q.x - 1, y: q.y + i }, { x: q.x + q.width, y: q.y + i }]).flat(),
+    ];
+    const ways = (b: Area) => roomsOf(b).filter((a) => (a.layout!.level ?? 0) === 0).flatMap((a) => a.layout!.assets.filter((x) => (x.kind === "exit" || x.kind === "secret") && x.side).map((x) => outsideAsset(a.layout!, x)));
+    const walled = members.some((b) => b.type === "palace");
+    const common = walled ? round(mean(members.flatMap((b) => ring(boxes[b.id])))) : 0;
+    for (const b of members) {
+      const doors = ways(b);
+      levels[b.id] = walled ? common : round(mean(doors.length ? doors : ring(boxes[b.id])));
+    }
+    for (const b of members) {
+      if (walled || canopyOf(world, b.id) || b.type === "cave" || b.type === "arena") continue;
+      const P = levels[b.id];
+      const rises = (x: number, y: number) => { const up = landSq(x, y) - P; return up >= ARCH_LEVEL * 0.75 && up <= ARCH_LEVEL * 1.35; };
+      const uppers = roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) === 1 && !a.layout!.roof && !holdsShips(a) && !a.secretEntry && !a.tags.includes("code:K") && !a.tags.includes("code:H"));
+      let best: { room: Area; side: Side; at: number; off: number } | undefined;
+      for (const room of uppers) {
+        for (const side of ["s", "n", "e", "w"] as Side[]) {
+          const at = wayOutSquare(everyRoom(), room, side, (x, y) => reach(x, y) && !inAnyBox(x, y) && rises(x, y));
+          if (at === undefined) continue;
+          const o = outsideOf(room.layout!, side, at);
+          const off = Math.abs(landSq(o.x, o.y) - P - ARCH_LEVEL);
+          if (!best || off < best.off) best = { room, side, at, off };
+        }
+      }
+      if (!best) continue;
+      const l = best.room.layout!;
+      l.assets.push({ id: `${best.room.id}-${l.assets.length + 1}-u`, kind: "exit", name: UPPER_DOOR, ...wallSquare(l, best.side, best.at), w: 1, h: 1, side: best.side, to: b.id });
+      best.room.gateway = true;
+    }
+  }
+  // (a span between two buildings only where they stand at about the same level)
+  const sameLevel = (a: Area, b: Area) => Math.abs((levels[a.id] ?? 0) - (levels[b.id] ?? 0)) <= LIE_SPAN;
+
   // Open-air rooms of the district
   const make = (b: Area, name: string, form: Form, layout: RoomLayout, tags: string[]): Area => {
     const area: Area = {
@@ -11237,6 +11358,8 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
           const under = (x: number, y: number) => reach(x, y) && groundOpen(x, y);
           let streetUnder = true;
           for (let x = layout.x; x < layout.x + layout.width; x++) for (let y = layout.y; y < layout.y + layout.height; y++) if (!under(x, y)) streetUnder = false;
+          // (and the land under it a square or more below its floor: see "The lie of the land")
+          if (lieAt) for (let x = layout.x; x < layout.x + layout.width; x++) for (let y = layout.y; y < layout.y + layout.height; y++) if (landSq(x, y) > (levels[b.id] ?? 0) + (l.level ?? 0) * ARCH_LEVEL + (l.aloft ?? 0) - 1) streetUnder = false;
           if (!streetUnder || everyRoom().some((o) => o.layout && layoutsClash(layout, o.layout))) continue;
           const balcony = make(b, canopy ? CANOPY_DECK : "Balcony", "balcony", layout, [`low:${l.level ?? 0}`, "rise:0", ...(canopy ? ["canopy"] : [])]);
           balcony.description = canopy ? `A deck of planks off the ${room.name.toLowerCase()}, out over the forest floor.` : `A balcony off the ${room.name.toLowerCase()}, over the street.`;
@@ -11276,7 +11399,7 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
     for (let j = i + 1; j < roofs.length; j++) {
       const [p, q] = [roofs[i], roofs[j]];
       const [pl, ql] = [p.roof.layout!, q.roof.layout!];
-      if (pl.level !== ql.level) continue;
+      if (pl.level !== ql.level || !sameLevel(p.building, q.building)) continue;
       const level = pl.level ?? 1;
       const tryAcross = (first: typeof p, second: typeof p, axis: "x" | "y") => {
         const [fl, sl] = [first.roof.layout!, second.roof.layout!];
@@ -11332,7 +11455,7 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
     for (let i = 0; i < ends.length; i++) {
       for (let j = i + 1; j < ends.length; j++) {
         const [p, q] = [ends[i], ends[j]];
-        if (p.building === q.building) continue;
+        if (p.building === q.building || !sameLevel(p.building, q.building)) continue;
         for (const [first, second] of [[p, q], [q, p]] as const) {
           for (const axis of ["x", "y"] as const) {
             const [fl, sl] = [first.roof.layout!, second.roof.layout!];
@@ -11397,7 +11520,27 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
   }
 
   const grounds = siteGrounds(ctx, district, members, everyRoom(), width, height, edge, boxes, ways);
-  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, ...(grounds ? { grounds } : {}) };
+  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, ...(grounds ? { grounds } : {}), ...(lieAt ? { levels } : {}) };
+  // Every room of a building stands at its level; and no window is left with the ground outside it over its sill
+  if (lieAt) {
+    for (const b of members) for (const room of roomsOf(b)) { if (levels[b.id]) room.layout!.base = levels[b.id]; else delete room.layout!.base; }
+    const spec = districtGroundSpec(world, district, plan);
+    const g = spec ? districtGround(spec) : null;
+    if (g) {
+      for (const b of members) for (const room of roomsOf(b)) {
+        const l = room.layout!;
+        if ((l.level ?? 0) < 0) continue;
+        const floor = (l.base ?? 0) + (l.level ?? 0) * ARCH_LEVEL + (l.aloft ?? 0);
+        l.assets = l.assets.filter((a) => {
+          if (a.kind !== "window" || !a.side) return true;
+          const o = outsideAsset(l, a);
+          // (at the wall's face and a square out from it)
+          const ground = Math.max(g.at(o.x + 0.5, o.y + 0.5), g.at((o.x + l.x + a.x) / 2 + 0.5, (o.y + l.y + a.y) / 2 + 0.5));
+          return ground <= floor + WINDOW_SILL;
+        });
+      }
+    }
+  }
   world.districtPlans = { ...(world.districtPlans ?? {}), [district.id]: plan };
   return plan;
 }
