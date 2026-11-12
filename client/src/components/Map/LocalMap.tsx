@@ -32,7 +32,7 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight, isArenaBowl, terrainStyleOf, districtGround } from "@shared/logic";
+import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf } from "@shared/logic";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
@@ -588,7 +588,8 @@ function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Ar
 // view, the ceiling obscures the view when the player looks down)": now 3.4 and 3.0, and the camera keeps under the ceiling, aim.ts `roof`)
 export const LEVEL_H = 3.4;
 // (and a tree or stilt village's rooms on their platforms, `aloft` metres up: shared/logic canopyOf)
-const levelY = (l?: Pick<RoomLayout, "level" | "aloft">) => (l?.level ?? 0) * LEVEL_H + (l?.aloft ?? 0);
+// (and every floor of a building on a district's rolling land at the level its building stands at, `base`: shared/logic planDistrict "The lie of the land")
+const levelY = (l?: Pick<RoomLayout, "level" | "aloft" | "base">) => (l?.level ?? 0) * LEVEL_H + (l?.aloft ?? 0) + (l?.base ?? 0);
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
 // north-west corner, the middle of a square being half way into it): evenly up a flight, lift or
@@ -3444,8 +3445,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // wall stands on a level pad and the ways between them are graded to it, all at the street's level (y 0, where every room and door is drawn); the ground
   // between them and out to the rim of the map is the biome's land, a few metres up and down. None on the sea or under it, aboard a ship, on a station or a
   // paved city. `groundY` is its height (squares) at a point of the street's frame (the district's grid: a square's middle is x + 0.5), 0 where there is none.
+  // (2026-11-12, the user: the buildings, their ways in and windows to follow the land, not flatten it: in a planned district each building stands at its own level,
+  // shared/logic planDistrict "The lie of the land", and the ground is the one the plan was made on, districtGroundOf)
   const reliefGround = useMemo(() => {
     if (!planned || !look || building.type === "starship" || waterOf(world, building.id) || !groundTexture(biome, building.type, GROUND[biome] ?? "#1c222b")) return null;
+    if (district && districtPlan) return districtGroundOf(world, district);
     const g = districtPlan?.grounds;
     const pads = [
       ...(districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []),
@@ -3458,6 +3462,30 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const groundY = (x: number, z: number) => (reliefGround ? reliefGround.at(x, z) : 0);
   // (on a square: at its middle)
   const groundSq = (x: number, y: number) => groundY(x + 0.5, y + 0.5);
+  // The level a building of the district stands at (shared/logic planDistrict "The lie of the land"): that of the box a point is in, else of the nearest (a catwalk between two)
+  const padAt = (x: number, y: number) => {
+    const levels = districtPlan?.levels;
+    if (!levels) return 0;
+    let [best, far] = [0, Infinity];
+    for (const b of buildings) {
+      const r = districtPlan!.boxes[b.id];
+      if (!r) continue;
+      const d = Math.max(r.x - x, x - (r.x + r.width), r.y - y, y - (r.y + r.height), 0);
+      if (d < far) [far, best] = [d, levels[b.id] ?? 0];
+    }
+    return best;
+  };
+  // How far the land falls away below a room at its walls (where a building stands on the rolling land, the downhill side): the plinth it stands on
+  const plinthOf = (l: RoomLayout) => {
+    if (!reliefGround || l.aloft || (l.level ?? 0) < 0) return 0;
+    const base = l.base ?? 0;
+    let low = Infinity;
+    for (let i = 0; i <= l.width; i++) low = Math.min(low, groundY(l.x + i, l.y), groundY(l.x + i, l.y + l.height));
+    for (let j = 0; j <= l.height; j++) low = Math.min(low, groundY(l.x, l.y + j), groundY(l.x + l.width, l.y + j));
+    return low < base - 0.02 ? base - low + 0.06 : 0;
+  };
+  // How high a level of a district fight is at a point: the street on the ground, an upper floor at its building's level (DuelPieces `high`)
+  const duelHigh = (z: number | undefined, x: number, y: number) => (z ? z * LEVEL_H + padAt(x, y) : groundY(x, y));
   // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
   // a catwalk, which stand over what is below)
   // (a covered walkway is no room here either: the wall it meets has its doorway framed and cut through, as for an open one)
@@ -3595,8 +3623,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // (the trees, rocks and cover stood on the rolling ground: the height under each piece's middle)
   const stood = useMemo(() => {
     const on = (list: Placed[]) => (reliefGround ? list.map((it) => ({ ...it, h: (it.h ?? 0) + reliefGround.at(it.x, it.y) })) : list);
-    return { ambient: on(street.ambient), cover: on(cover), backdrop: on(backdrop) };
-  }, [street, cover, backdrop, reliefGround]);
+    return { ambient: on(street.ambient), cover: on(cover), backdrop: on(backdrop), fixtures: on(fixtures.placed) };
+  }, [street, cover, backdrop, reliefGround, fixtures]);
   // The way in of the building the party is in front of, and which way it faces
   const myFront = street.doors[me.id] ?? Object.values(street.doors)[0] ?? { door: { x: ground.x + 2, y: Math.round(cz) }, outward: { x: -1, y: 0 } };
 
@@ -4598,7 +4626,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
       if (sit.current && into > 0.3) token.current.rotation.y = sit.current.face;
     }
-    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, duelHigh(duelRef.current.z, (duelRef.current.x ?? 0) + 0.5, (duelRef.current.y ?? 0) + 0.5), (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
@@ -5009,9 +5037,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
 
   // The camera looks at the opened room, at the party when it is out of doors, else at the building
-  const focus: V3 = duelist && duel ? [(duelist.x ?? 0) + 0.5 - cx, (duelist.z ?? 0) * LEVEL_H, (duelist.y ?? 0) + 0.5 - cz] : opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, levelY(opened.layout) + rise(opened.layout) / 2, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, groundSq(standing.x, standing.y), standing.y + 0.5 - cz] : [0, 0, 0];
+  const focus: V3 = duelist && duel ? [(duelist.x ?? 0) + 0.5 - cx, duelHigh(duelist.z, (duelist.x ?? 0) + 0.5, (duelist.y ?? 0) + 0.5), (duelist.y ?? 0) + 0.5 - cz] : opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, levelY(opened.layout) + rise(opened.layout) / 2, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, groundSq(standing.x, standing.y), standing.y + 0.5 - cz] : [0, 0, 0];
   // The ground hides a cellar: it is taken away while one is looked into
   const underground = !!opened?.layout && (opened.layout.level ?? 0) < 0;
+  // (inside a building on the rolling land, the ground is let down to its floor under the whole of its box: where the land is higher outside, the bank it makes
+  // against the walls would show inside its rooms; from the street the walls hide it, and the ground meets them where the land does)
+  const sunkBox = opened?.layout && !openAir(opened) && (opened.layout.level ?? 0) >= 0 && opened.layout.base !== undefined ? districtPlan?.boxes[opened.parentId ?? ""] : undefined;
+  const sunkUnder = useMemo(() => (sunkBox && opened?.layout ? [{ x: sunkBox.x, y: sunkBox.y, width: sunkBox.width, height: sunkBox.height, h: opened.layout.base ?? 0 }] : undefined), [sunkBox, opened?.layout?.base]);
   const reach = duel ? 22 : opened?.layout ? Math.max(opened.layout.width, opened.layout.height) * 1.1 + 6 : outside && planned ? 17 : plan ? Math.max(plan.width, plan.height) * 0.9 + 12 : 22;
   const floor = floorOf((opened ? world.areas[opened.parentId ?? ""] : me)?.type ?? building.type);
   // The rooms that have a roof of their own over them (a platform to climb to, shown on top of them)
@@ -5106,7 +5138,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </group>
         ) : groundTex ? (
           <group visible={!underground}>
-            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} relief={reliefGround ? { ground: reliefGround, ...reliefSets(biome) } : null} />
+            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={reliefGround?.size ?? sizeOfGround} h={reliefGround?.size ?? sizeOfGround} at={reliefGround ? [reliefGround.cx, -0.02, reliefGround.cz] : [cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} relief={reliefGround ? { ground: reliefGround, ...reliefSets(biome), flat: sunkUnder } : null} />
             {/* Under an open sky the ground goes on, plainly, to the horizon's haze */}
             {/* (a land of hills and valleys where the biome has them: client/src/components/Map/terrain.tsx; level under the place, rising away from it;
                 let down under the place where its own ground has hollows, so that it does not show through them) */}
@@ -5160,7 +5192,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           if (room === opened && formOf(room)) return null;
           const ways = l.assets.filter((a) => a.kind === "exit" && a.side);
           return (
-            <group key={`canopy-${room.id}`} position={[l.x, l.aloft, l.y]} onClick={reveal && formOf(room) ? (e) => tapPlace(e, room.id) : undefined}>
+            <group key={`canopy-${room.id}`} position={[l.x, l.aloft + (l.base ?? 0), l.y]} onClick={reveal && formOf(room) ? (e) => tapPlace(e, room.id) : undefined}>
               {/* (a hut's deck and the rope bridges between huts, shared/logic planDistrict "Rope bridges", are drawn as they are from on them: RoomShell `canopy`) */}
               {formOf(room) === "corridor" || formOf(room) === "walkway" ? <CanopyBridge w={l.width} d={l.height} kind={kind} biome={biome} />
                 : formOf(room) === "balcony" ? <CanopyPlatform w={l.width} d={l.height} open={canopyRails(l)} aloft={l.aloft} kind={kind} biome={biome} />
@@ -5313,9 +5345,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <WallAnchor key={room.id} at={[l.x, lift, l.y]}><group position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
-              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && (() => {
+              {/* (and a room on the rolling land stands on its plinth down to where the land falls away below its walls: plinthOf) */}
+              {lift - (l.aloft ?? 0) - (l.base ?? 0) + plinthOf(l) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && (() => {
                 // (2026-11-11, the user: square corners on a building of rounded ones: the block follows the radii of the room it holds up, a roof those of the room under it, as the roof's own parapet does, and is drawn as every other block is)
-                const held = lift - (l.aloft ?? 0);
+                const held = lift - (l.aloft ?? 0) - (l.base ?? 0) + plinthOf(l);
                 const under = form === "roof" ? roofUnder(l) : undefined;
                 const inset = (r: number) => Math.max(0, r - 0.05);
                 const radii = (under ? radiiOf(under) : radiiOf(room)).map(inset) as [number, number, number, number];
@@ -5345,15 +5378,17 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     const at = onWall(l, a);
                     const step = beyond(l, a);
                     const sign = a.side === "s" || a.side === "e" ? 1 : -1;
-                    const top = lift + 0.9;
+                    // (from the ground at its foot, which on rolling land is not the building's level)
+                    const drop = lift - groundSq(step.x, step.y);
+                    const top = drop + 0.9;
                     const rungs = Math.max(2, Math.round(top / 0.4));
                     return (
                       <group key={a.id}>
-                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, -lift - 0.02 + 0.03, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
+                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, -drop - 0.02 + 0.03, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
                           <planeGeometry args={[0.92, 0.92]} />
                           <meshBasicMaterial color={WAY_COLORS.exit} transparent opacity={0.45} depthWrite={false} />
                         </mesh>
-                        <group position={[at.x, -lift - 0.02, at.z]} rotation={[0, at.turn, 0]}>
+                        <group position={[at.x, -drop - 0.02, at.z]} rotation={[0, at.turn, 0]}>
                           {[-0.28, 0.28].map((x) => <Box key={x} at={[x, top / 2, sign * 0.12]} size={[0.06, top, 0.06]} color="#c8ccd2" />)}
                           {Array.from({ length: rungs }, (_, i) => <Box key={i} at={[0, 0.25 + (i * (top - 0.4)) / rungs, sign * 0.12]} size={[0.56, 0.05, 0.05]} color="#9aa0a8" />)}
                           <Label at={[0, top + 0.5, sign * 0.1]} size={0.3} color={WAY_COLORS.exit}>Ladder to the roof</Label>
@@ -5369,7 +5404,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 (() => {
                   const ways = (side: string) => l.assets.some((a) => (a.kind === "door" || a.kind === "exit") && a.side === side);
                   const sides = (["n", "e", "s", "w"] as const).filter((side) => !ways(side));
-                  const drop = Math.min(LEVEL_H, lift - (l.aloft ?? 0));
+                  const drop = Math.min(LEVEL_H, lift - (l.aloft ?? 0) - (l.base ?? 0));
                   // (of wood in a tree or timber village: planks on log posts with log rails; of steel elsewhere)
                   const wood = !!canopyAt.get(room.parentId ?? "") || family === "timber";
                   return (
@@ -5398,7 +5433,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {/* (a covered walkway, where the air is bad or on a station: the kit's tube, the same seen from within) */}
                   {l.tube ? <TubeWalk w={l.width} d={l.height} tint={wall} /> : <>{slab("#59636d")}{rail()}</>}
                   {/* Posts it stands on, down to the street */}
-                  {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
+                  {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => { const down = lift - groundY(l.x + px, l.y + pz); return down > 0.01 ? <Box key={i} at={[px, -down / 2, pz]} size={[0.1, down, 0.1]} color="#59636d" /> : null; })}
                 </group>
               ) : form === "balcony" ? (
                 // A balcony over the street (shared/logic "Balconies"): its floor and balustrade (reached by its patio doors, or from the street with climbing gear: outsideClimbs)
@@ -5517,7 +5552,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall, pack } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={buildingSet} tint={wallColor} bend={place.bend} deep={!form && !l.shape && !l.mask && Math.min(l.width, l.height) > 2 * BLOCK_WALL + 0.2 ? BLOCK_WALL - 0.01 : 0} />
                     {a.kind === "window" && !form && lit(room) && <WindowGlow style={style} pane={a.pane} bend={place.bend} />}
                   </group>
-                  {a.kind === "window" && !form && lit(room) && lift < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}
+                  {a.kind === "window" && !form && lit(room) && lift - (l.base ?? 0) < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}
                   </group>
                 );
               })}
@@ -5540,9 +5575,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <Barricade key={`${b.sign.x},${b.sign.y}`} squares={b.squares} guards={b.guards} ground={groundSq} onTap={tappable ? () => onAct?.({ type: "note", text: "Barricades. The officers are holding this way out until the search is called off." }) : undefined} />
             ))}
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
-            {districtPlan?.grounds?.wall && <CurtainWall wall={districtPlan.grounds.wall} biome={biome} />}
-            {districtPlan?.grounds?.gardens && <GardenGround rects={districtPlan.grounds.gardens} biome={biome} />}
-            <Scatter placed={fixtures.placed} biome={biome} />
+            {/* (a site's wall and gardens on their level pads: shared/logic districtGround) */}
+            {districtPlan?.grounds?.wall && <group position={[0, groundY(districtPlan.grounds.wall.x + 1.5, districtPlan.grounds.wall.y + 1.5), 0]}><CurtainWall wall={districtPlan.grounds.wall} biome={biome} /></group>}
+            {districtPlan?.grounds?.gardens?.map((r, i) => <group key={`garden-${i}`} position={[0, groundY(r.x + r.width / 2, r.y + r.height / 2), 0]}><GardenGround rects={[r]} biome={biome} /></group>)}
+            <Scatter placed={stood.fixtures} biome={biome} />
             <Scatter placed={stood.ambient} biome={biome} />
             <Scatter placed={stood.cover} biome={biome} />
             <Scatter placed={stood.backdrop} biome={biome} />
@@ -5551,17 +5587,17 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               const spot = keeperSpot(st);
               return (
                 <group key={st.id}>
-                  <group position={[st.x + st.w / 2, 0, st.y + st.h / 2]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
+                  <group position={[st.x + st.w / 2, groundY(st.x + st.w / 2, st.y + st.h / 2), st.y + st.h / 2]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
                     <StallModel trade={st.trade} state={stallState("market", minutes)} canvas={st.canvas} seed={hue(st.id)} />
                   </group>
                   {keeper && stallState("market", minutes) !== "packed" && (
-                    <group position={[spot.x, 0, spot.y]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
+                    <group position={[spot.x, groundY(spot.x, spot.y), spot.y]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
                       <Figure kind={tokenOf(keeper)} ring={SIDE_COLORS[keeper.disposition]} name={keeper.name} species={keeper.species} role={keeper.role} />
                       <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[keeper.disposition]}>{keeper.name}</Label>
                       {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(Math.floor(st.x + st.w / 2), st.south ? st.y + st.h : st.y - 1), () => onAct?.({ type: "occupant", id: keeper.id }))} label={keeper.name} />}
                     </group>
                   )}
-                  {tappable && !keeper && <Hit at={[st.x + st.w / 2, 0.6, st.y + st.h / 2]} size={[st.w, 1.2, st.h]} onTap={() => onAct?.({ type: "note", text: stallState("market", minutes) === "packed" ? "The stall is packed up for the night; its keeper is gone home. It opens in the morning." : "Nobody keeps this stall just now." })} label="Stall" />}
+                  {tappable && !keeper && <Hit at={[st.x + st.w / 2, groundY(st.x + st.w / 2, st.y + st.h / 2) + 0.6, st.y + st.h / 2]} size={[st.w, 1.2, st.h]} onTap={() => onAct?.({ type: "note", text: stallState("market", minutes) === "packed" ? "The stall is packed up for the night; its keeper is gone home. It opens in the morning." : "Nobody keeps this stall just now." })} label="Stall" />}
                 </group>
               );
             })}
@@ -5666,7 +5702,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         )}
 
         {present && <CoopPeers hereId={hereId} open={open} height={heightNow} water={inside ? null : water} />}
-        {duel && <DuelPieces ground={groundY} />}
+        {duel && <DuelPieces ground={groundY} pad={padAt} />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
             {/* In the saddle: the beast under the character, who sits on its back (and while getting off it) */}
@@ -5736,12 +5772,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           if (duelRef.current || (duel && key.startsWith("sq:"))) {
             const fighters = useCombat.getState().combatants;
             const fighter = key === "me" ? fighters.find((c) => c.isPlayer) : key.startsWith("foe:") ? fighters.filter((c) => !onPartySide(c) && c.hp > 0)[Number(id) || 0] : undefined;
-            if (fighter) return [(fighter.x ?? 0) + 0.5 - cx, (fighter.z ? fighter.z * LEVEL_H : groundSq(fighter.x ?? 0, fighter.y ?? 0)) + 0.6, (fighter.y ?? 0) + 0.5 - cz];
+            if (fighter) return [(fighter.x ?? 0) + 0.5 - cx, duelHigh(fighter.z, (fighter.x ?? 0) + 0.5, (fighter.y ?? 0) + 0.5) + 0.6, (fighter.y ?? 0) + 0.5 - cz];
             const piece = what === "asset" ? useCombat.getState().arena.assets.find((a) => a.id === id) : undefined;
-            if (piece) return [piece.x + piece.w / 2 - cx, (piece.z ? piece.z * LEVEL_H : groundY(piece.x + piece.w / 2, piece.y + piece.h / 2)) + 0.5, piece.y + piece.h / 2 - cz];
+            if (piece) return [piece.x + piece.w / 2 - cx, duelHigh(piece.z, piece.x + piece.w / 2, piece.y + piece.h / 2) + 0.5, piece.y + piece.h / 2 - cz];
             if (what === "sq") {
               const [qx, qy, qz = 0] = id.split(",").map(Number);
-              return [qx + 0.5 - cx, (qz ? qz * LEVEL_H : groundSq(qx, qy)) + 0.05, qy + 0.5 - cz];
+              return [qx + 0.5 - cx, duelHigh(qz, qx + 0.5, qy + 0.5) + 0.05, qy + 0.5 - cz];
             }
           }
           if (key === "me") return [feet.current.x + 0.5 - cx, heightNow() + 0.6, feet.current.y + 0.5 - cz];
@@ -5806,7 +5842,7 @@ function Picked({ asset, high = 0 }: { asset: RoomAsset; high?: number }) {
 // bar of hit points, and a tap on a lit square moves there and a tap on an enemy picks it out.
 // ---------------------------------------------------------------------------------------------
 
-function DuelPieces({ ground = () => 0 }: { ground?: (x: number, z: number) => number }) {
+function DuelPieces({ ground = () => 0, pad = () => 0 }: { ground?: (x: number, z: number) => number; pad?: (x: number, z: number) => number }) {
   const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
   const motionOf = useFightMotions(combatants);
   const pickable = usePickable();
@@ -5818,7 +5854,8 @@ function DuelPieces({ ground = () => 0 }: { ground?: (x: number, z: number) => n
   const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, Step>();
   const plan = player && target ? attackPlan(arena, combatants, player, target, player.rangedDice ? "ranged" : "melee") : undefined;
   // (how high a level is; the street level stands on the open ground at the point x, y of the street: shared/logic districtGround)
-  const high = (z: number | undefined, x: number, y: number) => (z ? z * LEVEL_H : ground(x, y));
+  // (an upper level is a floor of the building there, at the level the building stands at on the rolling land: padAt)
+  const high = (z: number | undefined, x: number, y: number) => (z ? z * LEVEL_H + pad(x, y) : ground(x, y));
   return (
     <>
       {/* The crates set out on the street as cover, which a power can shove or hurl */}

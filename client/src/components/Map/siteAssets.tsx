@@ -1306,7 +1306,8 @@ export function groundTexture(biome: string, buildingType: string, base: string)
 // level at 0), the plane is a grid of one square (two on the lite tier) stood on it, coloured by its slope and by where the water went: bare rock showing
 // on the steepest banks, mud in the wettest hollows (the relief's own rock and mud photographs), the hollows a little darker and the crests a little lighter
 // (the vertex colour, over the photograph's).
-export interface GroundRelief { ground: DistrictGround; rock: string; wet: string }
+// (`flat`: boxes the ground is let down to a level under, edges and all: a building the party is inside, LocalMap `sunkUnder`)
+export interface GroundRelief { ground: DistrictGround; rock: string; wet: string; flat?: { x: number; y: number; width: number; height: number; h: number }[] }
 export function GroundSurface({ set, tint, parallax, w, h, at, onTap, relief }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void; relief?: GroundRelief | null }) {
   const lite = useQuality((q) => q.tier === "lite");
   // (the tint is made anew by each caller's render: it is the material's key by its colour)
@@ -1314,6 +1315,8 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap, relief }: 
   const maps = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`, ...(relief ? [`/textures/${relief.rock}/diffuse.jpg`, `/textures/${relief.wet}/diffuse.jpg`] : [])]) as THREE.Texture[];
   const [diffuse, normal, height, rockMap, wetMap] = maps;
   const ground = relief?.ground ?? null;
+  const flat = relief?.flat;
+  const flatKey = (flat ?? []).map((f) => `${f.x},${f.y},${f.width},${f.height},${f.h}`).join(";");
   const geo = useMemo(() => {
     if (!ground) {
       const g = new THREE.PlaneGeometry(w, h);
@@ -1333,7 +1336,8 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap, relief }: 
       for (let i = 0; i < nx; i++) {
         const [x, z] = [-w / 2 + i * sx, -h / 2 + j * sz];
         const [gx, gz] = [at[0] + x, at[2] + z];
-        const y = ground.at(gx, gz);
+        let y = ground.at(gx, gz);
+        for (const f of flat ?? []) if (gx > f.x - 0.01 && gx < f.x + f.width + 0.01 && gz > f.y - 0.01 && gz < f.y + f.height + 0.01) y = Math.min(y, f.h - 0.03);
         const v = j * nx + i;
         pos.set([x, y, z], v * 3);
         // (the slope read steeper than it is: a district's ground is gentle, and its banks are where the bare ground shows; the curve over three squares)
@@ -1364,7 +1368,7 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap, relief }: 
     g.computeBoundingSphere();
     return g;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [w, h, ground, lite, at[0], at[2]]);
+  }, [w, h, ground, lite, at[0], at[2], flatKey]);
   useEffect(() => () => geo.dispose(), [geo]);
   const material = useMemo(() => {
     for (const t of maps) {
