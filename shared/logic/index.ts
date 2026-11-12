@@ -15,6 +15,7 @@
  * enhanced items, starship equipment, travel times) and run where it is loaded: on the server.
  * The edit and travel functions need only the world itself and run anywhere.
  */
+import { looksFor, type BuildingLook } from "./stalberg";
 import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
 import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay } from "./caves";
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
@@ -10849,6 +10850,8 @@ export interface DistrictPlan {
   grounds?: SiteGrounds;
   // The level each building stands at on the district's land, in squares (see "The lie of the land"); none where the ground is level
   levels?: Record<string, number>;
+  // Each building's look (crown, trim, band), chosen together so that neighbours agree where they should and differ where they should (shared/logic/stalberg.ts)
+  looks?: Record<string, BuildingLook>;
 }
 
 // ---- The lie of the land (2026-11-12, the user: "I want LARGE natural hills/cliffs/ravines to exist within relevant locations and to have our buildings/entrances/
@@ -11520,7 +11523,10 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
   }
 
   const grounds = siteGrounds(ctx, district, members, everyRoom(), width, height, edge, boxes, ways);
-  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, ...(grounds ? { grounds } : {}), ...(lieAt ? { levels } : {}) };
+  // (2026-11-12, Stalberg's constraint solving; dice of their own, so the rest of the world is made as it was)
+  let lookTry = 0;
+  const looks = looksFor(members.filter((b) => boxes[b.id]).map((b) => ({ id: b.id, box: boxes[b.id], grand: /^(palace|estates|manor house|temple|archive|arena)$/.test(b.type) })), () => createRandom(hashOf(`${district.id}|looks|${lookTry++}`)));
+  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, looks, ...(grounds ? { grounds } : {}), ...(lieAt ? { levels } : {}) };
   // Every room of a building stands at its level; and no window is left with the ground outside it over its sill
   if (lieAt) {
     for (const b of members) for (const room of roomsOf(b)) { if (levels[b.id]) room.layout!.base = levels[b.id]; else delete room.layout!.base; }
