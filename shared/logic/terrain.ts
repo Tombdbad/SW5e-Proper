@@ -127,6 +127,7 @@ function ridgedFbm(x: number, y: number, seed: number, octaves: number): number 
   }
   return sum / norm;
 }
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const smoothstep = (a: number, b: number, v: number) => {
   const t = clamp01((v - a) / (b - a));
@@ -1051,7 +1052,27 @@ export interface DistrictGround {
   lowest: number; highest: number;
 }
 // (squares; the swell as a share of a 336 m map: 47 m)
-const PAD_FLAT = 1, PAD_BLEND = 5, WAY_FLAT = 0.5, WAY_BLEND = 3, RIM_FLAT = 10, RIM_BLEND = 20, DISTRICT_WAVE = 0.14;
+const PAD_FLAT = 1, PAD_BLEND = 5, WAY_FLAT = 0.5, WAY_BLEND = 3, BUILT_CLEAR = 10, BUILT_RAMP = 20, RIM_EASE = 12, DISTRICT_WAVE = 0.14;
+// How far each square of the field is from the nearest pad or way, in squares (a two-pass chamfer distance over the grid)
+function distanceFromBuilt(spec: DistrictGroundSpec, n: number): Float32Array {
+  const d = new Float32Array(n * n).fill(1e6);
+  for (const r of [...spec.pads, ...spec.ways]) {
+    const [x0, x1, y0, y1] = [Math.max(0, Math.floor(r.x - spec.cx + (n - 1) / 2)), Math.min(n - 1, Math.ceil(r.x + r.width - spec.cx + (n - 1) / 2)), Math.max(0, Math.floor(r.y - spec.cz + (n - 1) / 2)), Math.min(n - 1, Math.ceil(r.y + r.height - spec.cz + (n - 1) / 2))];
+    for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) d[j * n + i] = 0;
+  }
+  const S = Math.SQRT2;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i;
+    if (i > 0) d[k] = Math.min(d[k], d[k - 1] + 1);
+    if (j > 0) { d[k] = Math.min(d[k], d[k - n] + 1); if (i > 0) d[k] = Math.min(d[k], d[k - n - 1] + S); if (i < n - 1) d[k] = Math.min(d[k], d[k - n + 1] + S); }
+  }
+  for (let j = n - 1; j >= 0; j--) for (let i = n - 1; i >= 0; i--) {
+    const k = j * n + i;
+    if (i < n - 1) d[k] = Math.min(d[k], d[k + 1] + 1);
+    if (j < n - 1) { d[k] = Math.min(d[k], d[k + n] + 1); if (i < n - 1) d[k] = Math.min(d[k], d[k + n + 1] + S); if (i > 0) d[k] = Math.min(d[k], d[k + n - 1] + S); }
+  }
+  return d;
+}
 const GROUNDS = new Map<string, DistrictGround>();
 export function districtGround(spec: DistrictGroundSpec): DistrictGround | null {
   const relief = districtRelief(spec.biome);
@@ -1084,11 +1105,21 @@ export function districtGround(spec: DistrictGroundSpec): DistrictGround | null 
   const base = count ? sum / count : (land.max - land.min) * k * 0.5;
   for (const p of spec.pads) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, PAD_FLAT * SQUARE_M, PAD_BLEND * SQUARE_M, base); }
   for (const p of spec.ways) { const [x, z, w, d] = toM(p); levelBox(t, x, z, w, d, WAY_FLAT * SQUARE_M, WAY_BLEND * SQUARE_M, base); }
-  // The rim: back to the pads' level, so that the relief round the place meets it
+  // The land round the built ground (2026-11-12, the user: the rim was flattened, "the OPPOSITE of what I intended": large hills, cliffs and ravines must stand where the
+  // place is not walked): the pads and ways keep their gentle ground and level squares, and out from them the style's land is let rise and fall at a scale of its own, tens of
+  // metres, its ridges and hollows sharpened into cliff faces and ravines; only the last squares of the field ease to the level of the pads, where the land beyond (ReliefGround) begins
+  const near = new Float32Array(n * n);
+  for (let k = 0; k < n * n; k++) near[k] = t.h[k] - base;
+  const away = distanceFromBuilt(spec, n);
+  const mid = land.min + (land.max - land.min) * 0.5;
+  const bigRange = clamp(terrainStyleOf(spec.biome).relief * 0.4, 6, 40);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const edge = Math.min(i, j, n - 1 - i, n - 1 - j);
-      t.h[j * n + i] = lerp(base, t.h[j * n + i], smoothstep(RIM_FLAT, RIM_FLAT + RIM_BLEND, edge)) - base;
+      const [x, z] = [t.x0 + i * t.cell, t.z0 + j * t.cell];
+      const v = clamp(((terrainHeight(land, x, z) - mid) / Math.max(1e-6, land.max - land.min)) * 3.2, -1, 1);
+      const w = smoothstep(BUILT_CLEAR, BUILT_CLEAR + BUILT_RAMP, away[j * n + i]);
+      t.h[j * n + i] = (near[j * n + i] + w * v * bigRange) * smoothstep(0, RIM_EASE, edge);
     }
   }
   refresh(t);

@@ -1226,7 +1226,8 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint
       {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} timber={portal.family === "timber"} pack={portal.pack} position={[0, 0, 0.13]} />}
       {/* (what shades the door from the street, by the pack: the desert's awning on poles, the frontier's canvas) */}
       {portal?.pack && isDoor && !bend && awningOf(portal.pack) && <ModPiece name={awningOf(portal.pack)!} pack={portal.pack} wall={portal.wall} position={[0, 0, 0.02]} />}
-      {isDoor && <DoorVoid style={style} bend={bend} deep={deep} />}
+      {/* (the dark of the way beyond shows only while the leaf is open: drawn in front of a shut leaf it hid the door, 2026-11-12) */}
+      {isDoor && open && <DoorVoid style={style} bend={bend} deep={deep} />}
       {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} tint={tint} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}

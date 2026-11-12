@@ -290,13 +290,21 @@ test("a district's open ground rolls, and its pads, ways and rim are level at th
     assert.ok(Math.abs(g.at(x + 0.5, y + 0.5)) < (corner ? 0.03 : 1e-6), `level at ${x},${y}`);
   }
   // The rim, where the relief round the place takes over
-  for (const k of [-119, 0, 119]) { assert.ok(Math.abs(g.at(30 + k, 25 - 119)) < 1e-6); assert.ok(Math.abs(g.at(30 - 119, 25 + k)) < 1e-6); }
-  // The open ground: up and down by a few metres (squares of 1.4 m), gentle enough to walk
-  let [lo, hi, steep] = [Infinity, -Infinity, 0];
-  for (let z = -80; z < 130; z += 2) for (let x = -80; x < 140; x += 2) { const h = g.at(x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); steep = Math.max(steep, g.slope(x, z)); }
-  assert.ok(hi - lo > 1 && (hi - lo) * 1.4 <= districtRelief("temperate") + 1e-6, `rises and falls: ${lo.toFixed(2)} .. ${hi.toFixed(2)}`);
+  for (const k of [-119, 0, 119]) { assert.ok(Math.abs(g.at(30 + k, 25 - 120)) < 1e-6); assert.ok(Math.abs(g.at(30 - 120, 25 + k)) < 1e-6); }
+  // The open ground among the buildings: up and down by a few metres (squares of 1.4 m), gentle enough to walk; beyond it the land is let rise and fall by tens of metres (the user,
+  // 2026-11-12: hills, cliffs and ravines where the place is not walked)
+  let [lo, hi, steep, farLo, farHi, farSteep] = [Infinity, -Infinity, 0, Infinity, -Infinity, 0];
+  for (let z = -80; z < 130; z += 2) for (let x = -80; x < 140; x += 2) {
+    const h = g.at(x, z);
+    const near = x > 5 && x < 55 && z > 17 && z < 29;
+    if (near) { lo = Math.min(lo, h); hi = Math.max(hi, h); steep = Math.max(steep, g.slope(x, z)); }
+    else { farLo = Math.min(farLo, h); farHi = Math.max(farHi, h); farSteep = Math.max(farSteep, g.slope(x, z)); }
+  }
+  assert.ok(hi - lo > 0.3 && (hi - lo) * 1.4 <= districtRelief("temperate") + 6, `rises and falls: ${lo.toFixed(2)} .. ${hi.toFixed(2)}`);
   assert.ok(steep < 0.35, `walkable: steepest ${steep.toFixed(3)}`);
-  assert.ok(g.lowest <= lo + 1e-6 && g.highest >= hi - 1e-6);
+  assert.ok((farHi - farLo) * 1.4 > 12, `hills and ravines beyond: ${((farHi - farLo) * 1.4).toFixed(1)} m`);
+  assert.ok(farSteep > steep, "steeper beyond");
+  assert.ok(g.lowest <= Math.min(lo, farLo) + 1e-6 && g.highest >= Math.max(hi, farHi) - 1e-6);
   // The same for the same spec, and none for a paved city
   assert.equal(districtGround({ ...spec, pads: [...pads] })!.at(-40, 70), g.at(-40, 70));
   assert.equal(districtGround({ ...spec, biome: "urban" }), null);
