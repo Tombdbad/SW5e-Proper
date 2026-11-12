@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { boxUV } from "../../client/src/components/Map/surfaces";
-import { holeOf, piercedWall, bendAlong } from "../../client/src/components/Map/interiors/Walls";
+import { holeOf, piercedWall, bendAlong, openingSpans, openingHalf, shellAlong, solidSpans } from "../../client/src/components/Map/interiors/Walls";
 import { outline, outlineAt, radiiOf } from "../../shared/logic/footprint";
 
 // The area of the faces of a geometry that look along +z (the wall's face toward the room)
@@ -67,4 +67,43 @@ test("a wall's texture is laid out in its building's frame: two boxes meeting in
   };
   assert.deepEqual(at(a, 7, 2), at(b, 7, 2));
   assert.ok(at(a, 7, 2));
+});
+
+// 2026-11-12, the user: through a window seen from outside, stone where the room should be ("The interior should ALSO have a window in the same location")
+// A large window's frame (0.84 by 0.48, scaled 1.3 by 2.3 and set 0.3 up) is wider than a square
+const large: [number, number][] = [[-0.546, 0.69], [0.546, 0.69], [0.546, 1.794], [-0.546, 1.794]];
+test("a large window takes more than a square of wall, and none of its frame is walled over", () => {
+  const half = openingHalf(holeOf(large));
+  assert.ok(half > 0.546 && half < 0.7, `half ${half}`);
+  const g = piercedWall(holeOf(large), 2.4, 0.16, [-half, half])!;
+  assert.ok(Math.abs(frontArea(g) - (2 * half * 2.4 - 1.092 * 1.104)) < 1e-6, `front ${frontArea(g)}`);
+  // a doorway keeps its square
+  assert.equal(openingHalf(holeOf(large), false), 0.5);
+});
+test("two openings close together share the wall between them, up to the middle", () => {
+  const spans = openingSpans([{ s: 3, half: 0.6 }, { s: 4, half: 0.6 }, { s: 9.5, half: 0.5 }], 10);
+  assert.deepEqual(spans.map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), [[2.4, 3.5], [3.5, 4.6], [9, 10]]);
+  // and the wall that is left runs round the rest of the line
+  assert.deepEqual(solidSpans(spans, 10).map(([a, b]) => [+a.toFixed(6), +b.toFixed(6)]), [[0, 2.4], [4.6, 9]]);
+});
+test("a round room's outer wall is cut through where its window stands, and whole elsewhere", () => {
+  const o = outline(6, 6, radiiOf("round", 6, 6));
+  const s0 = 7.3;
+  const parts = shellAlong(o, 0.16, 2.4, [{ s: s0, hole: holeOf(large) }]);
+  // where a point of the plan is along the line (the circle of radius 3 about (3, 3); the line starts at the top, angle 1.5 pi)
+  const along = (x: number, z: number) => 3 * ((((Math.atan2(z - 3, x - 3) - Math.PI * 1.5) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
+  let faces = 0;
+  for (const g of parts) {
+    const p = g.getAttribute("position");
+    for (let i = 0; i < p.count; i += 3) {
+      const [cx, cy, cz] = [0, 1, 2].map((k) => (p.getComponent(i, k) + p.getComponent(i + 1, k) + p.getComponent(i + 2, k)) / 3);
+      const r = Math.hypot(cx - 3, cz - 3);
+      assert.ok(r > 3 - 0.16 - 0.01 && r < 3 + 0.01, `a face off the wall, at radius ${r}`);
+      // nothing inside the window's frame (a little in from its edge)
+      const off = along(cx, cz) - s0;
+      assert.ok(!(Math.abs(off) < 0.5 && cy > 0.72 && cy < 1.76), `a face in the window at ${off}, ${cy}`);
+      faces++;
+    }
+  }
+  assert.ok(faces > 100);
 });

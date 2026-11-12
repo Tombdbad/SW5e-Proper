@@ -25,7 +25,7 @@ import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, Roc
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, isBaked, packOf, pieceOf, wallFilesOf, wallPackOf } from "./interiors/packs";
 import { loadModel } from "./interiors/assets";
-import { PackWalls, cornerCentre, CORNER_START, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
+import { PackWalls, cornerCentre, CORNER_START, bendOf, holeOf, piercedWall, openingHalf, openingSpans, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { beginSwing, kickOf, motion, nowSeconds, climbPhase, mountPlace, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
@@ -1006,6 +1006,7 @@ const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: n
 // (a window by its size: a slit, a small pane, a window one climbs through, a great window; shared/logic "Windows")
 // (2026-11-03, the user: the windows were too small to light a room: a large one is now 1.1 m wide and 1.1 m high, a great one 1.6 by 1.5)
 const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.9, 1], small: [0.85, 1.4, 1], large: [1.3, 2.3, 1], wide: [1.9, 3.1, 1] };
+const paneScaleOf = (kind: string, pane?: RoomAsset["pane"]): V3 | undefined => (kind === "window" ? PANE_SCALE[pane?.size ?? "small"] ?? [1, 1, 1] : undefined);
 // Where a door, way out or window of a room's wall stands (2026-10-26): on the wall line (`outline`) across from its square, so on the
 // curve of a round room; turned along the line there (the turn `onWall` gives on a straight side), and bent onto it where it curves
 interface WayPlace {
@@ -1094,19 +1095,20 @@ function MeetFill({ meet, width, height, y, h, color, wall }: { meet: Meet; widt
 }
 // The square of wall a door or window is set in: whole but for the frame's outer outline (models.tsx `openingOutline`), so that only
 // what is inside the frame is open (a window's square was open from the floor up, beside and under the frame, and an arched doorway's
-// square open over the arch); bent onto a curved wall; `lift` raises the opening in a room whose floor climbs
-function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall }: { kind: RoomAsset["kind"]; pane?: RoomAsset["pane"]; style?: Style; wallH: number; lift?: number; bend?: Bend; color: string; wall: WallSet }) {
-  const scale = kind === "window" ? PANE_SCALE[pane?.size ?? "small"] ?? [1, 1, 1] : undefined;
+// square open over the arch); bent onto a curved wall; `lift` raises the opening in a room whose floor climbs. `span` is the stretch of wall it
+// takes, along its own x (a large or great window more than a square: `openingSpans`)
+function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall, span }: { kind: RoomAsset["kind"]; pane?: RoomAsset["pane"]; style?: Style; wallH: number; lift?: number; bend?: Bend; color: string; wall: WallSet; span?: [number, number] }) {
+  const scale = paneScaleOf(kind, pane);
   const geometry = useMemo(() => {
     const hole = holeOf(openingOutline(kind, style, scale).map(([x, y]) => [x, y + lift] as [number, number]));
-    const flat = piercedWall(hole, wallH, WALL_THICK);
+    const flat = piercedWall(hole, wallH, WALL_THICK, span ?? 1);
     if (!flat) return null;
     const shaped = bend ? bend.apply(flat) : flat;
     if (shaped !== flat) flat.dispose();
     const textured = boxUV(shaped, 1 / WALL_TILE);
     shaped.dispose();
     return textured;
-  }, [kind, style?.arch, style?.porthole, scale?.join(","), wallH, lift, bend?.key]);
+  }, [kind, style?.arch, style?.porthole, scale?.join(","), wallH, lift, bend?.key, span?.join(",")]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
   if (!geometry) return null;
   return <Solids><mesh geometry={geometry} material={wallMaterial(wall, { tint: color })} castShadow receiveShadow /></Solids>;
@@ -1432,7 +1434,17 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const met = (p: WayPlace) => meets.some((m) => m.place(p.a));
   // (a tree or timber village's stairwell is of wood, not steel: planks, logs and rope-tied rails)
   const rustic = !!canopy;
-  const cut =wallStretches(wallLine, width, height, [...setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => [p.s - 0.5, p.s + 0.5] as [number, number]), ...meetGaps]);
+  // (each door takes its square of the wall, each window as much as its frame is wide, a large one more than a square: 2026-11-12, the user saw stone
+  // through a window's glass, the edges of its hole walled over)
+  const holed = setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p));
+  const holeSpans = openingSpans(holed.map((p) => ({ s: p.s, half: openingHalf(holeOf(openingOutline(p.a.kind, style, paneScaleOf(p.a.kind, p.a.pane))), p.a.kind === "window") })), wallLine.length);
+  // (the stretch an opening takes, along its own x: that runs with the path on the north and west sides and against it on the south and east)
+  const spanOf = (p: WayPlace): [number, number] | undefined => {
+    const sp = holeSpans[holed.indexOf(p)];
+    if (!sp) return undefined;
+    return p.a.side === "n" || p.a.side === "w" ? [sp[0] - p.s, sp[1] - p.s] : [p.s - sp[1], p.s - sp[0]];
+  };
+  const cut = wallStretches(wallLine, width, height, [...holeSpans, ...meetGaps]);
   // The rounded corners, each a quarter ring (or what is left of it beside a door or window)
   const cornerList = cut.arcs.map((c) => ({ corner: c.corner, r: c.r, from: c.from, to: c.to }));
   // Each wall runs between its corners, stopping short of a rounded one
@@ -1517,7 +1529,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const rails = plan?.form === "walkway" || plan?.open || (plan?.form === "corridor" && plan.aloft) ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p) && !p.a.seam).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
-                <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
+                <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} span={spanOf(p)} />
               </group>
             ));
             const solid = (list: typeof runs) => list.map(({ side, a, b, at }) => {
@@ -5313,6 +5325,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           // (a flight under the opened one, in a tower's stair block, stops at its floor: its climb would fill the flight above)
           const body = (carries && opened?.layout ? Math.min(tall + rise(l), levelY(opened.layout) - levelY(l)) : tall + rise(l)) - sunk;
           const lift = levelY(l);
+          // (2026-11-12, the user: stone behind a ground-floor window's glass. A room over another stood on a solid block from the ground, which filled the room beneath it behind its
+          // windows. Seen closed, the block starts where the room of the same footprint beneath it ends. Seen with a room opened the lower rooms are lowered, so the block stays whole.)
+          const heldFrom = (here: RoomLayout, up: number, open: Area | null): number => {
+            if (open) return 0;
+            let top = 0;
+            for (const o of rooms) {
+              const m = o.layout;
+              if (!m || o === room || !sameFootprint(m, here) || formOf(o) || m.roof || levelY(m) >= up - 0.01) continue;
+              top = Math.max(top, levelY(m) + LEVEL_H * (m.tall ? 2 : 1));
+            }
+            return top >= up - 0.01 ? up : top;
+          };
           const roof = hue(room.id);
           const crown = crownOf(family, roof, Math.min(l.width, l.height));
           const prop = pack ? roofPropOf(pack, roof, Math.min(l.width, l.height)) : null;
@@ -5346,9 +5370,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
               {/* (and a room on the rolling land stands on its plinth down to where the land falls away below its walls: plinthOf) */}
-              {lift - (l.aloft ?? 0) - (l.base ?? 0) + plinthOf(l) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && (() => {
+              {lift - Math.max((l.aloft ?? 0) + (l.base ?? 0) - plinthOf(l), heldFrom(l, lift, opened)) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && (() => {
                 // (2026-11-11, the user: square corners on a building of rounded ones: the block follows the radii of the room it holds up, a roof those of the room under it, as the roof's own parapet does, and is drawn as every other block is)
-                const held = lift - (l.aloft ?? 0) - (l.base ?? 0) + plinthOf(l);
+                const held = lift - Math.max((l.aloft ?? 0) + (l.base ?? 0) - plinthOf(l), heldFrom(l, lift, opened));
                 const under = form === "roof" ? roofUnder(l) : undefined;
                 const inset = (r: number) => Math.max(0, r - 0.05);
                 const radii = (under ? radiiOf(under) : radiiOf(room)).map(inset) as [number, number, number, number];
@@ -5496,11 +5520,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
                     <KitRoomBlock pack={pack} timber={family === "timber"} w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={buildingSet}
-                      holes={!opened && !form && !l.shape && !l.mask ? l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => ({
+                      holes={!opened && !l.mask ? l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => ({
                         // (cut through the wall where the frame stands: the same openings drawn below, the same outline the frame is made for)
+                        // (and on the curve of a round or oval room, or a rounded corner, as on a straight side: models.tsx cutShell)
                         side: a.side as "n" | "e" | "s" | "w",
                         at: a.side === "n" || a.side === "s" ? a.x + 0.5 : a.y + 0.5,
-                        outline: openingOutline(a.kind, style, a.kind === "window" ? PANE_SCALE[a.pane?.size ?? "small"] ?? [1, 1, 1] : undefined),
+                        outline: openingOutline(a.kind, style, paneScaleOf(a.kind, a.pane)),
+                        kind: a.kind,
                       })) : undefined}
                       tint={wallColor} drum={!opened && !form && l.shape === "round" ? {
                         // (the ways in and the windows by their angle about the room's centre, 0 east and a quarter turn south, as interiors/architecture.ts reads them)
