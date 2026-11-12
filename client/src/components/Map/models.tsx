@@ -29,7 +29,8 @@ import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from 
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 import { hullWear, speederWear, type Wear } from "./interiors/wear";
-import { piercedWall, holeOf, type Bend } from "./interiors/Walls";
+import { holeOf, layAlong, openingHalf, openingSpans, shellAlong, type Bend } from "./interiors/Walls";
+import { outline, outlineOf, type Outline } from "@shared/logic/footprint";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -1629,36 +1630,41 @@ function TexturedBody({ id, set, tint, build, position }: { id: string; set: Wal
 // door/window frame"): the walls are then built as slabs with those openings cut through them (interiors/Walls.tsx `piercedWall`, the outline the frame
 // is made for, `openingOutline`), the rounded corners as before, a thin cap on top, and a dark core inside, so that a doorway shows the dark of the room
 // and not a wall behind its frame. `side` the wall it is in, `at` the middle of its square along that wall from the room's corner (squares), `outline` its hole.
-export interface BlockHole { side: "n" | "e" | "s" | "w"; at: number; outline: [number, number][] }
+export interface BlockHole { side: "n" | "e" | "s" | "w"; at: number; outline: [number, number][]; kind?: string }
 export const BLOCK_WALL = 0.16;
-function cutShell(k: Kit, w: number, d: number, r: [number, number, number, number], height: number, color: string, holes: BlockHole[]) {
-  const t = BLOCK_WALL;
-  // (a run of wall along one side, from a0 to a1 along it, at `across` across, with its holes; `alongX` for the north and south walls)
-  const run = (a0: number, a1: number, across: number, alongX: boolean, side: BlockHole["side"]) => {
-    if (a1 - a0 < 1e-3) return;
-    const mine = holes.filter((h) => h.side === side).map((h) => ({ c: h.at - (alongX ? w : d) / 2, hole: holeOf(h.outline) })).filter((h) => h.c - 0.5 >= a0 - 1e-3 && h.c + 0.5 <= a1 + 1e-3).sort((a, b) => a.c - b.c);
-    const place = (geo: THREE.BufferGeometry, c: number) => k.add(geo, color, { at: alongX ? [c, 0, across] : [across, 0, c], rot: alongX ? undefined : [0, Math.PI / 2, 0] });
-    let from = a0;
-    for (const h of mine) {
-      if (h.c - 0.5 - from > 1e-3) place(new THREE.BoxGeometry(h.c - 0.5 - from, height, t).translate(0, height / 2, 0), (from + h.c - 0.5) / 2);
-      const g = piercedWall(h.hole, height, t);
-      if (g) place(g, h.c);
-      from = h.c + 0.5;
+// (2026-11-12, the user: a window seen from outside showed stone behind its glass. The walls are laid along the room's own wall line, the line its doors
+// and windows stand on (shared/logic footprint `outline`), so that an opening on a rounded corner, or in a round or oval room, is cut through as one on a
+// straight side is; and each opening takes as much wall as its frame is wide, a large window more than a square. `within`: only that stretch of the line,
+// `t` the wall's thickness.)
+// The plan of a room as a shape for `upright` (centred, as planRect's), `inset` in from its wall line: the true curve its walls follow. (planRect's corners are
+// quadratic, a quarter of their radius outside the circle at their middle, so a dark inside built with them stood out through a round room's wall.)
+function outlineShape(w: number, d: number, r: [number, number, number, number], inset = 0): THREE.Shape {
+  const o = outline(w, d, r);
+  const pts: THREE.Vector2[] = [];
+  const put = (x: number, z: number) => pts.push(new THREE.Vector2(x - w / 2, -(z - d / 2)));
+  o.pieces.forEach((pc, i) => {
+    const prev = o.pieces[(i + o.pieces.length - 1) % o.pieces.length];
+    if (pc.kind === "line") {
+      // (a square corner is set in from both its walls)
+      const n = [-pc.dir[1], pc.dir[0]];
+      const m = prev.kind === "line" && prev !== pc ? [-prev.dir[1], prev.dir[0]] : [0, 0];
+      put(pc.from[0] + inset * (n[0] + m[0]), pc.from[1] + inset * (n[1] + m[1]));
+      return;
     }
-    if (a1 - from > 1e-3) place(new THREE.BoxGeometry(a1 - from, height, t).translate(0, height / 2, 0), (from + a1) / 2);
-  };
-  const [nw, ne, se, sw] = r;
-  run(-w / 2 + nw, w / 2 - ne, -d / 2 + t / 2, true, "n");
-  run(-w / 2 + sw, w / 2 - se, d / 2 - t / 2, true, "s");
-  run(-d / 2 + Math.max(nw, t), d / 2 - Math.max(sw, t), -w / 2 + t / 2, false, "w");
-  run(-d / 2 + Math.max(ne, t), d / 2 - Math.max(se, t), w / 2 - t / 2, false, "e");
-  // (the rounded corners: a quarter of a ring each, its outside on the room's outline, turned as CornerWall turns them)
-  const centres: [number, number][] = [[-w / 2 + nw, -d / 2 + nw], [w / 2 - ne, -d / 2 + ne], [w / 2 - se, d / 2 - se], [-w / 2 + sw, d / 2 - sw]];
-  r.forEach((rad, i) => {
-    if (rad < t + 1e-3) return;
-    k.group([centres[i][0], 0, centres[i][1]], undefined, undefined, () => shell(k, rad - t, t, height, color, { start: [Math.PI, Math.PI / 2, 0, -Math.PI / 2][i], arc: Math.PI / 2 }));
+    const steps = Math.max(4, Math.ceil(pc.length / 0.1));
+    const rr = Math.max(0, pc.r - inset);
+    for (let k = 0; k < steps; k++) {
+      const phi = pc.phi0 + ((k / steps) * pc.length) / pc.r;
+      put(pc.c[0] + rr * Math.cos(phi), pc.c[1] + rr * Math.sin(phi));
+    }
   });
-  upright(k, planRect(w, d, r), 0.04, color, { y: height - 0.04 });
+  return new THREE.Shape(pts);
+}
+const blockOpenings = (o: Outline, w: number, d: number, holes: BlockHole[]) => holes.map((h) => ({ s: outlineOf(o, w, d, h.side, h.at - 0.5), hole: holeOf(h.outline), window: h.kind === "window" }));
+function cutShell(k: Kit, w: number, d: number, r: [number, number, number, number], height: number, color: string, holes: BlockHole[], within?: [number, number], t = BLOCK_WALL) {
+  const o = outline(w, d, r);
+  for (const g of shellAlong(o, t, height, blockOpenings(o, w, d, holes), within)) k.add(g, color, { at: [-w / 2, 0, -d / 2] });
+  if (!within) upright(k, outlineShape(w, d, r), 0.04, color, { y: height - 0.04 });
 }
 
 export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set, bare = false, holes }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet; bare?: boolean; holes?: BlockHole[] }) {
@@ -1683,7 +1689,7 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
         build={(k) => {
           if (!set && !bare) shell(k);
           // (the dark inside a block whose walls have openings: what a doorway or a window shows)
-          if (cut && !bare) upright(k, planRect(w - 2 * BLOCK_WALL - 0.02, d - 2 * BLOCK_WALL - 0.02, r.map((x) => Math.max(0, x - BLOCK_WALL)) as typeof r), height - 0.06, "#0b0c0e");
+          if (cut && !bare) upright(k, outlineShape(w, d, r, BLOCK_WALL + 0.01), height - 0.06, "#0b0c0e");
           if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
           if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
           if (parapet && !set) rim(k);
@@ -2077,11 +2083,47 @@ export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: D
   if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R) return <RoomBlock {...block} />;
   const bays = baysFor(r);
   const fit = bayFit(r, bays);
+  // The windows the plan has (2026-11-12, the user: stone showed through a window's glass): the kit's window bay is a slit, not the window the map frames,
+  // so each bay a window's frame reaches into is a stretch of the building's own wall with the window cut through it, its plinth and cornice laid along it
+  // as the kit's are, and the room's dark inside behind it (the kit's door bays are kept)
+  const radii = block.radii.map(r2) as [number, number, number, number];
+  const o = outline(block.w, block.d, radii);
+  const panes = (block.holes ?? []).filter((h) => h.kind === "window");
+  const openings = blockOpenings(o, block.w, block.d, panes);
+  const spans = openingSpans(openings.map((h) => ({ s: h.s, half: openingHalf(h.hole) })), o.length);
+  const B = (Math.PI * 2) / bays;
+  const sOf = (phi: number) => r * ((((phi - Math.PI * 1.5) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2));
+  const doorBays = new Set(drum.doors.map((a) => bayAt(a, bays)));
+  const patched = new Set<number>();
+  for (const [a, b] of spans) {
+    const [k0, k1] = [Math.round((a / r + Math.PI * 1.5) / B), Math.round((b / r + Math.PI * 1.5) / B)];
+    for (let k = k0; k <= k1; k++) if (!doorBays.has(((k % bays) + bays) % bays)) patched.add(((k % bays) + bays) % bays);
+  }
+  const storeyH = block.height / drum.storeys;
+  const body = block.dim ? shade(block.wall, 0.45) : block.wall;
+  const patchKey = `drumpatch:${block.w}:${r2(storeyH)}:${bays}:${body}:${[...patched].sort((x, y) => x - y).join(",")}:${spans.map(([a, b]) => `${a.toFixed(2)}/${b.toFixed(2)}`).join(",")}:${panes.map((h) => h.outline.map((p) => p.map((v) => v.toFixed(2)).join("/")).join(";")).join(",")}`;
+  const patch = (k: Kit) => {
+    const kitY = storeyH / ARCH_STOREY;
+    for (const bay of patched) {
+      const from = sOf((bay - 0.5) * B);
+      const within: [number, number] = [from, from + r * B];
+      cutShell(k, block.w, block.d, radii, storeyH, body, panes, within, 0.2);
+      // (the kit bay's plinth, 0.35 high and 0.16 proud, and its cornice from 3.05 to 3.32 of its storey of 3.4, 0.25 proud)
+      for (const [y0, y1, out] of [[0, 0.35, 0.16], [3.05, 3.32, 0.25]] as const) {
+        const len = r * B;
+        const g = new THREE.BoxGeometry(len, (y1 - y0) * kitY, out, Math.ceil(len / 0.15)).translate(0, ((y0 + y1) / 2) * kitY, -out / 2).toNonIndexed();
+        k.add(layAlong(g, o, from + len / 2), body, { at: [-block.w / 2, 0, -block.d / 2] });
+        g.dispose();
+      }
+    }
+  };
   return (
     <>
       <RoomBlock {...block} bare />
+      {patched.size > 0 && (block.set ? <TexturedBody id={patchKey} set={block.set} tint={body} build={patch} position={[block.w / 2, 0, block.d / 2]} /> : <Model id={patchKey} position={[block.w / 2, 0, block.d / 2]} build={patch} />)}
+      {patched.size > 0 && <Model id={`drumcore:${block.w}:${r2(block.height)}`} position={[block.w / 2, 0, block.d / 2]} build={(k) => upright(k, outlineShape(block.w, block.d, radii, 0.21), block.height - 0.06, "#0b0c0e")} />}
       <group position={[block.w / 2, 0, block.d / 2]} scale={[1, block.height / (ARCH_STOREY * drum.storeys), 1]}>
-        {drumPlan(drum, bays).map((p, i) => (
+        {drumPlan(drum, bays).filter((p) => !(p.y === 0 && patched.has(bayAt(p.angle, bays)) && /_bay(_blank|_window)?_r4$/.test(p.piece))).map((p, i) => (
           <group key={i} rotation={[0, turnFor(p.angle), 0]}>
             {/* (a round building of a pack: its wall bays of the pack's own, in its textures, bent to the circle; the gantries, ramps and frames stay the old kit's) */}
             {pack && modParts()?.[`ext_${pack}_bay_blank`] && /_bay(_blank|_door|_window)?_r4$/.test(p.piece) ? (
@@ -2128,6 +2170,9 @@ export function TubeWalk({ w, d, tint = "#8a94a3" }: { w: number; d: number; tin
   );
 }
 
+// How far a window's frame reaches out from its wall's line on either side: past the faces of a room's wall (0.08 either side of the line) and of a
+// building's outer wall (its face on the line, 0.16 or 0.2 in), so that it stands proud seen from the street and from inside the room
+export const WINDOW_REACH = 0.2;
 export function Opening({ kind, color, style, scale, bend }: { kind: string; color: string; style?: Pick<Style, "arch" | "porthole">; scale?: V3; bend?: Bend }) {
   const arch = !!style?.arch;
   const port = !!style?.porthole;
@@ -2139,18 +2184,23 @@ export function Opening({ kind, color, style, scale, bend }: { kind: string; col
       build={(k) => {
         const depth = 0.26;
         if (kind === "window") {
+          // (2026-11-12, the user: "The interior should ALSO have a window in the same location". The frame reaches WINDOW_REACH either way from the wall's
+          // line, through the wall and out of both its faces: it stood 0.06 out on one side and 0.3 on the other, so it was buried in the wall seen from
+          // inside a room on its south and east walls, and from outside on its north and west ones, a porthole's ring in both)
           if (port) {
-            k.torus(0.22, 0.045, C.steelDark, { at: [0, 0.66, 0], finish: "sheen", seg: [8, 24] });
-            k.cyl(0.2, 0.2, color, { at: [0, 0.66, 0], rot: [Math.PI / 2, 0, 0], seg: 20, finish: "glow" });
+            const ring = new THREE.Shape().absarc(0, 0, 0.265, 0, Math.PI * 2, false);
+            ring.holes.push(new THREE.Path().absarc(0, 0, 0.2, 0, Math.PI * 2, true));
+            k.extrude(ring, WINDOW_REACH * 2, C.steelDark, { at: [0, 0.66, -WINDOW_REACH], bevel: 0.02, finish: "sheen" });
+            k.cyl(0.2, 0.06, "#1d2733", { at: [0, 0.66, 0], rot: [Math.PI / 2, 0, 0], seg: 20, finish: "glass" });
             return;
           }
           const outer = arch ? archShape(0.84, 0.56) : roundedRect(0.84, 0.48, [0.08, 0.08, 0.08, 0.08], -0.42, 0);
           const inner = arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06);
           outer.holes.push(inner);
-          // (2026-11-12, the user: the frames were hidden by the wall and tinted by what the window allows: the frame now stands out of the wall, 0.2 m proud of its face, in the
+          // (2026-11-12, the user: the frames were hidden by the wall and tinted by what the window allows: the frame now stands out of the wall, proud of its faces, in the
           // wall's own rough stone and one neutral colour for every window, so that which of them open is found out and not read off the colour. `color` is not used.)
-          k.extrude(outer, depth + 0.1, "#9a9384", { at: [0, 0.3, -0.06], bevel: 0.02, finish: "stone" });
-          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, "#1d2733", { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the room shows through it
+          k.extrude(outer, WINDOW_REACH * 2, "#9a9384", { at: [0, 0.3, -WINDOW_REACH], bevel: 0.02, finish: "stone" });
+          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.06, "#1d2733", { at: [0, 0.3, -0.03], finish: "glass" }); // the pane is glass: the room shows through it
           return;
         }
         if (kind === "secret") {

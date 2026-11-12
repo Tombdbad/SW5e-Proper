@@ -88,6 +88,12 @@ test("a round room's wall ring is bays of the interior kit, fewer where a way in
   assert.ok(whole.every((b, i) => i === 0 || Math.abs(b.angle - whole[i - 1].angle - Math.PI / 8) < 1e-9), "22.5 degrees apart");
   const cut = bayRing(4, Math.PI, Math.PI, Math.PI * 1.25);
   assert.ok(cut.length >= 2 && cut.length <= 3, "a door's share is left out");
+  // a part of a quarter is filled exactly: its bays meet end to end at the part's own ends, so a window's gap is never covered by a bay that straddles it (2026-11-12)
+  const from = Math.PI + 0.3, to = Math.PI + 1.2;
+  const part = bayRing(5, Math.PI, from, to);
+  const half = (b: { angle: number }) => ((to - from) / part.length) / 2;
+  assert.ok(Math.abs(part[0].angle - half(part[0]) - from) < 1e-9 && Math.abs(part[part.length - 1].angle + half(part[0]) - to) < 1e-9, "from the one end to the other");
+  assert.deepEqual(bayRing(5, Math.PI, from, from), []);
   assert.deepEqual(bayRing(INTERIOR_BAY_MIN_R - 0.1, 0), []);
   assert.ok(bayRing(8, 0).length > bayRing(3, 0).length, "a wider ring takes more bays");
   assert.equal(interiorStyleOf("medical", "desert"), "medical");

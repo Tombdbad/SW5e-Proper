@@ -142,6 +142,48 @@ export function PackWalls({ runs, corners = [], width, height, wallH, thick, ton
 // Each way in or window takes one square of wall: the wall there is drawn whole round the frame's outer edge (beside it, under it and
 // over it), and on a curved wall the piece, the frame and the leaf are bent onto the curve.
 
+// (how often a straight piece is cut along its length, squares, so that it can be bent onto a curve)
+const BEND_STEP = 0.15;
+// The wall between a hole's edge (`run`, points along x) and the wall's top or the floor (`limit`), `thick` deep about z = 0: its two faces, the reveal
+// along the hole's edge and its top or foot, a slice for each step along the edge
+function bandStrip(run: [number, number][], limit: number, above: boolean, thick: number): THREE.BufferGeometry {
+  const h = thick / 2;
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const v = new THREE.Vector3();
+  const [e1, e2] = [new THREE.Vector3(), new THREE.Vector3()];
+  // a quad a-b-c-d, turned to face `want`
+  const quad = (a: number[], b: number[], c: number[], d: number[], want: [number, number, number]) => {
+    for (const [p, q, r] of [[a, b, c], [a, c, d]]) {
+      e1.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+      e2.set(r[0] - p[0], r[1] - p[1], r[2] - p[2]);
+      v.crossVectors(e1, e2);
+      if (v.lengthSq() < 1e-14) continue;
+      const flip = v.x * want[0] + v.y * want[1] + v.z * want[2] < 0;
+      const tri = flip ? [p, r, q] : [p, q, r];
+      for (const t of tri) pos.push(t[0], t[1], t[2]);
+      for (let k = 0; k < 3; k++) nor.push(...want);
+    }
+  };
+  for (let i = 0; i + 1 < run.length; i++) {
+    const [[x0, y0], [x1, y1]] = [run[i], run[i + 1]];
+    if (x1 - x0 < 1e-7) continue;
+    quad([x0, y0, h], [x1, y1, h], [x1, limit, h], [x0, limit, h], [0, 0, 1]);
+    quad([x0, y0, -h], [x1, y1, -h], [x1, limit, -h], [x0, limit, -h], [0, 0, -1]);
+    quad([x0, limit, -h], [x1, limit, -h], [x1, limit, h], [x0, limit, h], [0, above ? 1 : -1, 0]);
+    // (the reveal faces the hole: away from the band, across the edge)
+    const [dx, dy] = [x1 - x0, y1 - y0];
+    const len = Math.hypot(dx, dy);
+    const out: [number, number, number] = above ? [dy / len, -dx / len, 0] : [-dy / len, dx / len, 0];
+    quad([x0, y0, -h], [x1, y1, -h], [x1, y1, h], [x0, y0, h], out);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(new Array((pos.length / 3) * 2).fill(0), 2));
+  return g;
+}
+
 // What an opening cuts out of its square of wall: the top and bottom of its frame's outer edge across its width, sampled at `xs`
 export interface Hole {
   xs: number[];
@@ -173,34 +215,34 @@ export function holeOf(points: [number, number][], samples = 24): Hole {
   return hole;
 }
 
-// One square of wall (`width` along x about the middle, `wallH` high, `thick` deep about z = 0) with a hole in it: the wall beside the
-// hole, and over and under it wherever the wall reaches past it. A hole taller than the wall leaves only what is beside and under it
-export function piercedWall(hole: Hole | null, wallH: number, thick: number, width = 1): THREE.BufferGeometry | null {
-  const half = width / 2;
+// A stretch of wall (`width` along x about the middle, or [from, to] along x, `wallH` high, `thick` deep about z = 0) with a hole in it: the
+// wall beside the hole, and over and under it wherever the wall reaches past it. A hole taller than the wall leaves only what is beside and under it.
+// (2026-11-12, the user: a window seen from outside showed stone inside it. The stretch is as wide as the frame needs: a large or great window is
+// wider than the one square it used to be given, and its edges were walled over. Its edges are cut every few hand-widths, so that it bends
+// smoothly onto a curved wall instead of cutting across the curve.)
+export function piercedWall(hole: Hole | null, wallH: number, thick: number, width: number | [number, number] = 1): THREE.BufferGeometry | null {
+  const [lo, hi] = typeof width === "number" ? [-width / 2, width / 2] : width;
   const parts: THREE.BufferGeometry[] = [];
   const box = (x0: number, x1: number, y0: number, y1: number) => {
     if (x1 - x0 < 1e-3 || y1 - y0 < 1e-3) return;
-    const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, thick).toNonIndexed();
+    const g = new THREE.BoxGeometry(x1 - x0, y1 - y0, thick, Math.max(1, Math.ceil((x1 - x0) / BEND_STEP))).toNonIndexed();
     g.translate((x0 + x1) / 2, (y0 + y1) / 2, 0);
     parts.push(g);
   };
-  if (!hole || hole.xs.length < 2) box(-half, half, 0, wallH);
+  if (!hole || hole.xs.length < 2) box(lo, hi, 0, wallH);
   else {
-    const xs = hole.xs.map((x) => Math.max(-half, Math.min(half, x)));
-    box(-half, xs[0], 0, wallH);
-    box(xs[xs.length - 1], half, 0, wallH);
+    const xs = hole.xs.map((x) => Math.max(lo, Math.min(hi, x)));
+    box(lo, xs[0], 0, wallH);
+    box(xs[xs.length - 1], hi, 0, wallH);
     // The wall over the hole (between its top and the wall's) and under it (between the floor and its bottom), in runs where there is any
     const band = (edge: number[], above: boolean) => {
       const limit = above ? wallH : 0;
       const solid = (y: number) => (above ? y < wallH - 1e-4 : y > 1e-4);
       let run: [number, number][] = [];
       const flush = () => {
-        if (run.length >= 2) {
-          const pts = above ? [[run[0][0], limit], [run[run.length - 1][0], limit], ...[...run].reverse()] : [[run[0][0], limit], ...run, [run[run.length - 1][0], limit]];
-          const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y))), { depth: thick, bevelEnabled: false, curveSegments: 1 });
-          g.translate(0, 0, -thick / 2);
-          parts.push(g.index ? g.toNonIndexed() : g);
-        }
+        // (a strip, a slice from the hole's edge to the wall's top or the floor at each sample along it, so that a band bent onto a curve keeps to it:
+        // a shape filled in one went flat across the curve in long slivers)
+        if (run.length >= 2) parts.push(bandStrip(run, limit, above, thick));
         run = [];
       };
       for (let i = 0; i < xs.length; i++) {
@@ -268,4 +310,84 @@ export function bendOf(o: Outline, s0: number, sigma: number, reach = 1.25): Ben
   const curved = o.pieces.some((p) => p.kind === "arc" && s0 + reach > p.start && s0 - reach < p.start + p.length);
   if (!curved) return undefined;
   return { key: `bend:${o.length.toFixed(3)}:${s0.toFixed(3)}:${sigma}`, apply: (g) => bendAlong(g, o, s0, sigma) };
+}
+
+// ---- Openings wider than a square (2026-11-12, the user: through a window seen from outside, stone where the room should be: "The interior should ALSO
+// have a window in the same location") ---------------------------------------------------------------------------------------------------------------
+// A large window's frame is 1.1 squares across and a great one's 1.6, so the wall each opening takes is its frame's width and a hand's breadth of wall
+// round it, a square at least; two openings close together share what lies between them, each up to the middle.
+export const OPENING_MARGIN = 0.06;
+// (a doorway keeps its square: its frame is a square wide)
+export const openingHalf = (hole: Hole, window = true) => (window ? Math.max(0.5, Math.max(...hole.xs.map(Math.abs)) + OPENING_MARGIN) : 0.5);
+// The stretch of the wall line each opening takes ([from, to] along the path of `length`, closed round), from where it stands (`s`) and half its width
+export function openingSpans(openings: { s: number; half: number }[], length: number): [number, number][] {
+  const order = openings.map((o, i) => ({ ...o, i, at: ((o.s % length) + length) % length })).sort((a, b) => a.at - b.at);
+  const out: [number, number][] = openings.map((o) => [o.s - o.half, o.s + o.half]);
+  order.forEach((o, k) => {
+    if (order.length < 2) return;
+    const [prev, next] = [order[(k + order.length - 1) % order.length], order[(k + 1) % order.length]];
+    const back = (o.at - prev.at + length) % length || length;
+    const ahead = (next.at - o.at + length) % length || length;
+    out[o.i] = [o.s - Math.min(o.half, back / 2), o.s + Math.min(o.half, ahead / 2)];
+  });
+  return out;
+}
+// What is left of the wall line between the openings' stretches (or of the stretch `within`), as [from, to] along it (0 .. length)
+export function solidSpans(spans: [number, number][], length: number, within: [number, number] = [0, length]): [number, number][] {
+  const wrap = (x: number) => ((x % length) + length) % length;
+  const cuts: [number, number][] = [];
+  for (const [a, b] of spans) {
+    const from = wrap(a);
+    const to = from + (b - a);
+    if (to > length) cuts.push([from, length], [0, to - length]);
+    else cuts.push([from, to]);
+  }
+  let keep: [number, number][] = [within];
+  for (const [a, b] of cuts) keep = keep.flatMap(([x, y]) => (b <= x || a >= y ? [[x, y]] : ([[x, Math.max(x, a)], [Math.min(y, b), y]] as [number, number][]).filter(([p, q]) => q - p > 1e-6)));
+  return keep;
+}
+// Something drawn along x (about x = 0) laid on the wall line of `o` from the point `s0`: each point x along goes to the line at s0 + x, z across it into
+// the room (toward the inside), y kept. The result is in the room's plan (squares from its north-west corner), as `outline` gives it.
+export function layAlong(source: THREE.BufferGeometry, o: Outline, s0: number): THREE.BufferGeometry {
+  const g = source.clone();
+  const [pos, nor] = [g.getAttribute("position"), g.getAttribute("normal")];
+  for (let i = 0; i < pos.count; i++) {
+    const [x, y, z] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    const at = outlineAt(o, s0 + x);
+    pos.setXYZ(i, at.p[0] + z * at.n[0], y, at.p[1] + z * at.n[1]);
+    if (nor) {
+      const [nx, ny, nz] = [nor.getX(i), nor.getY(i), nor.getZ(i)];
+      nor.setXYZ(i, nx * at.t[0] + nz * at.n[0], ny, nx * at.t[1] + nz * at.n[1]);
+    }
+  }
+  pos.needsUpdate = true;
+  if (nor) nor.needsUpdate = true;
+  g.computeBoundingSphere();
+  return g;
+}
+// A building's outer wall along its wall line, `thick` deep inward from it and `wallH` high, with its doors and windows cut through it: each opening's
+// outline (`hole`, x along the wall about where it stands, `s` along the path) in a stretch as wide as its frame, the rest whole, straight or round a
+// curve. `within` keeps to a stretch of the line (the bays of a round room's kit that a window falls in), else the whole way round. In the room's plan.
+export function shellAlong(o: Outline, thick: number, wallH: number, openings: { s: number; hole: Hole; window?: boolean }[], within?: [number, number]): THREE.BufferGeometry[] {
+  const spans = openingSpans(openings.map((h) => ({ s: h.s, half: openingHalf(h.hole, h.window) })), o.length);
+  const out: THREE.BufferGeometry[] = [];
+  const lay = (g: THREE.BufferGeometry, s0: number) => {
+    g.translate(0, 0, thick / 2);
+    out.push(layAlong(g, o, s0));
+    g.dispose();
+  };
+  const ranges = within ? (within[1] - within[0] >= o.length ? [[0, o.length] as [number, number]] : solidSpans([[within[1], within[0] + o.length]], o.length)) : [[0, o.length] as [number, number]];
+  for (const range of ranges) {
+    for (const [a, b] of solidSpans(spans, o.length, range)) {
+      lay(new THREE.BoxGeometry(b - a, wallH, thick, Math.max(1, Math.ceil((b - a) / BEND_STEP))).translate(0, wallH / 2, 0).toNonIndexed(), (a + b) / 2);
+    }
+  }
+  openings.forEach((h, i) => {
+    // (an opening outside `within` is another piece's)
+    const at = ((h.s % o.length) + o.length) % o.length;
+    if (within && !ranges.some(([a, b]) => at >= a - 1e-6 && at <= b + 1e-6)) return;
+    const g = piercedWall(h.hole, wallH, thick, [spans[i][0] - h.s, spans[i][1] - h.s]);
+    if (g) lay(g, h.s);
+  });
+  return out;
 }

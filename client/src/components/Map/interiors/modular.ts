@@ -5,7 +5,7 @@
 // 5 cloth/green, 6 canvas/metal). Which pack a building takes, what stands on its roof, what shades its doors, and how each region is drawn (the texture set, the colour)
 // are decided here. Pure: tests/interiors/modular.test.ts. Drawn by models.tsx `ModPiece`.
 import { outline, outlineAt, type Radii } from "@shared/logic/footprint";
-import { baysFor, bayFit, type Family } from "./architecture";
+import { baysFor, bayFit, BAYS, KIT_RADIUS, type Family } from "./architecture";
 
 export type ExtPack = "desert" | "classical" | "deco" | "industrial" | "hull" | "frontier";
 
@@ -205,17 +205,17 @@ export const INTERIOR_LOOK: Record<InteriorStyle, Record<number, RegionLook>> = 
 export const INTERIOR_BAY_MIN_R = 2.5;
 export interface BayPlace { angle: number; across: number; out: number }
 // The bays of the quarter ring that starts at `start` (0 east, a quarter turn south), of radius r; `from` and `to` (angles) are the part of it that is wall, where a way in or a
-// window takes the rest: a bay is kept where it covers most of its own width of that part
+// window takes the rest. A whole quarter is the kit's bays as they were built; a part of one is filled with as many as fit, each stretched or narrowed to fill it exactly
+// (2026-11-12, the user: stone inside a window seen from within a round room. A whole bay was kept where most of it was wall, and covered the window beside it.)
 export function bayRing(r: number, start: number, from = start, to = start + Math.PI / 2): BayPlace[] {
-  if (r < INTERIOR_BAY_MIN_R) return [];
+  if (r < INTERIOR_BAY_MIN_R || to - from < 1e-3) return [];
   const n = baysFor(r);
   const step = (2 * Math.PI) / n;
-  const fit = bayFit(r, n);
-  const out: BayPlace[] = [];
-  for (let j = 0; j < Math.round(n / 4); j++) {
-    const angle = start + (j + 0.5) * step;
-    const covered = Math.min(angle + step / 2, to) - Math.max(angle - step / 2, from);
-    if (covered >= 0.4 * step) out.push({ angle, across: fit.across, out: r - 4 - 0.1 });
-  }
-  return out;
+  const whole = Math.abs(from - start) < 1e-6 && Math.abs(to - start - Math.PI / 2) < 1e-6;
+  const count = whole ? Math.round(n / 4) : Math.max(1, Math.round((to - from) / step));
+  const each = whole ? step : (to - from) / count;
+  // (a bay of `each` radians across, against the kit's own of 22.5 degrees at its radius of 4: bayFit's measure)
+  const across = ((r + 0.25) * Math.sin(each / 2)) / ((KIT_RADIUS + 0.25) * Math.sin(Math.PI / BAYS));
+  const base = whole ? start : from;
+  return Array.from({ length: count }, (_, j) => ({ angle: base + (j + 0.5) * each, across: whole ? bayFit(r, n).across : across, out: r - 4 - 0.1 }));
 }
