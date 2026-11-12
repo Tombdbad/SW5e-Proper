@@ -2123,8 +2123,10 @@ export function Opening({ kind, color, style, scale, bend }: { kind: string; col
           const outer = arch ? archShape(0.84, 0.56) : roundedRect(0.84, 0.48, [0.08, 0.08, 0.08, 0.08], -0.42, 0);
           const inner = arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06);
           outer.holes.push(inner);
-          k.extrude(outer, depth, shade(color, 0.35), { at: [0, 0.3, -depth / 2], bevel: 0.015, finish: "sheen" });
-          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, mix(color, "#ffffff", 0.15), { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the room shows through it
+          // (2026-11-12, the user: the frames were hidden by the wall and tinted by what the window allows: the frame now stands out of the wall, 0.2 m proud of its face, in the
+          // wall's own rough stone and one neutral colour for every window, so that which of them open is found out and not read off the colour. `color` is not used.)
+          k.extrude(outer, depth + 0.1, "#9a9384", { at: [0, 0.3, -0.06], bevel: 0.02, finish: "stone" });
+          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, "#1d2733", { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the room shows through it
           return;
         }
         if (kind === "secret") {

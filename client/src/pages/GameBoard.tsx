@@ -17,7 +17,7 @@ import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { stance, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
@@ -563,7 +563,7 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/itemFacts")).json(),
     staleTime: Infinity,
   });
-  const itemClock = useClock((c) => Math.floor(c.minutes / 5) * 5);
+  const itemClock = useClock((c) => Math.floor(c.minutes / CLOCK_STEP) * CLOCK_STEP);
   const character = useMemo(() => withItemEffects(rawCharacter, itemFacts, itemClock), [rawCharacter, itemFacts, itemClock]);
 
   // Write the player's hit points and power points back to the database whenever combat changes them
@@ -722,7 +722,7 @@ export default function GameBoard() {
   // It is saved every game hour, when the tab is hidden, and with anything that takes time.
   // The page and the map follow the clock in steps of five minutes (each step redraws them); the
   // clock line in the HUD shows every minute (ClockLine)
-  const clock = useClock((c) => Math.floor(c.minutes / 5) * 5);
+  const clock = useClock((c) => Math.floor(c.minutes / CLOCK_STEP) * CLOCK_STEP);
   const clockFor = useRef<string | null>(null);
   const clockValue = (total: number) => ({ total, days: dayOf(total) - 1, hours: Math.floor(hourOf(total)), minutes: Math.floor(total % 60) });
   const saveClock = (total = useClock.getState().minutes) =>
@@ -945,7 +945,7 @@ export default function GameBoard() {
   // nothing was recorded (an older save, enemies the game master added) they stand ready.
   const [sneaking, setSneaking] = useState(false);
   // The law's search for the party (see reportCrime in shared logic): shown on the map, and lied low from
-  const clockMinutes = useClock((c) => c.minutes);
+  const clockMinutes = useMinutes(world);
   // (The watch calms down once the party has been out of its sight for WATCH_COOLDOWN minutes: see leaveSight)
   const alert = hostiles.length && !(here && calmedAt(here, clockMinutes)) ? here?.alert ?? ALERT.confronting : ALERT.unaware;
   const allowed = hostiles.length > 0 && !!here?.allowed;

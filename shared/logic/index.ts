@@ -2490,7 +2490,8 @@ export function paneFor(buildingType: string, roomName: string, station: boolean
     return { size: "large", latch: locked ? "locked" : "latched", ...(locked ? { dc: 12 } : {}), ...(r.chance(/armsmith|pawnshop|curio/.test(buildingType) ? 0.6 : 0.3) ? { alarmed: true } : {}) };
   }
   const roll = r.next();
-  return { size: r.chance(0.65) ? "large" : "small", latch: roll < 0.3 ? "open" : roll < 0.8 ? "latched" : "locked", ...(roll >= 0.8 ? { dc: 12 } : {}), ...(r.chance(0.1) ? { alarmed: true } : {}) };
+  // (2026-11-12, the user: too many windows could be opened: a house's are mostly too small to get through, a fifth are large)
+  return { size: r.chance(0.2) ? "large" : r.chance(0.3) ? "slit" : "small", latch: roll < 0.3 ? "open" : roll < 0.8 ? "latched" : "locked", ...(roll >= 0.8 ? { dc: 12 } : {}), ...(r.chance(0.1) ? { alarmed: true } : {}) };
 }
 // What a window is called, by its size
 export const paneName = (pane: Pane, station: boolean) => (station && pane.size === "small" ? "Porthole" : { slit: "Window slit", small: "Small window", large: "Window", wide: "Great window" }[pane.size]);

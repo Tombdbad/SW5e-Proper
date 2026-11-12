@@ -261,7 +261,9 @@ export interface Bend {
   key: string;
   apply: (g: THREE.BufferGeometry) => THREE.BufferGeometry;
 }
-export function bendOf(o: Outline, s0: number, sigma: number, reach = 0.6): Bend | undefined {
+// (the reach is half the widest thing set in a wall, a great window at 1.9 squares across, and its frame: 2026-11-12, the user: a window's frame did not follow the wall's radius.
+// A piece reaching onto a curve from a straight stretch was left flat, its far end standing off or sunk into the wall. A bend on a straight stretch moves nothing, so it is wide.)
+export function bendOf(o: Outline, s0: number, sigma: number, reach = 1.25): Bend | undefined {
   // only where the stretch it covers runs onto a curve
   const curved = o.pieces.some((p) => p.kind === "arc" && s0 + reach > p.start && s0 - reach < p.start + p.length);
   if (!curved) return undefined;

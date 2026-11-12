@@ -180,7 +180,20 @@ const READY_DISTRICTS = new Set<string>();
 // The minute between the clock's ticks (a minute passes each real second while the clock runs), for what is
 // drawn moving by the clock: a ship coming down into its berth, the doors of its hangar
 let tickedAt = performance.now();
+if (typeof window !== "undefined") (window as unknown as { __useClock?: typeof useClock }).__useClock = useClock; // (for the console and the tests)
 useClock.subscribe((state, before) => { if (state.minutes !== before.minutes) tickedAt = performance.now(); });
+// The minute for what must follow the clock to the minute (a search closing in, a heist's countdown), and in steps of five otherwise (2026-11-12, the user: the game
+// stutters): a minute passes each real second, and everything that reads the minute draws again each time it changes. GameBoard (the whole page) and the scene both read it
+// every minute, so the scene was rebuilt each second (about 190 ms on an integrated GPU: a hitch a second). Held at five-minute steps unless something is on a clock.
+// (a step of fifteen: each redraw of the page and the scene still takes 200-300 ms on an integrated GPU, so one every five real seconds was a hitch every five seconds)
+export const CLOCK_STEP = 15;
+export function useMinutes(world?: World | null) {
+  return useClock((c) => {
+    const p = world?.pursuit;
+    const live = !!world && ((!!p && c.minutes < p.searchUntil + 1) || (!!world.heist && c.minutes < (world.heist.takeoffAt ?? 0) + 1) || !!world.incidents?.some((i) => (i.status === "open" || i.status === "fled") && c.minutes < i.searchUntil + 1));
+    return live ? c.minutes : Math.floor(c.minutes / CLOCK_STEP) * CLOCK_STEP;
+  });
+}
 // (a test may hold it at a minute of its own, `window.__minuteAt`, to look at a ship coming or going a step at a time)
 const minuteNow = () => (typeof window !== "undefined" ? (window as unknown as { __minuteAt?: number }).__minuteAt : undefined) ?? useClock.getState().minutes + Math.min(1, (performance.now() - tickedAt) / 1000);
 
@@ -193,7 +206,7 @@ const DUSK_SKY = new THREE.Color("#b8683f");
 // background colour; `ground` is the height of the ground the horizon's land stands on
 function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, floor = true, under = false }: { shadow?: number; cast?: boolean; indoors?: number; look?: WorldLook | null; ground?: number; fog?: [number, number]; floor?: boolean; under?: boolean }) {
   const lite = useQuality((q) => q.tier === "lite");
-  const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
+  const minutes = useClock((c) => Math.floor(c.minutes / CLOCK_STEP) * CLOCK_STEP);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
   // (the street lamps are lit from dusk to dawn: siteAssets.tsx LampLights)
@@ -204,8 +217,11 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   const sunLight = useRef<THREE.DirectionalLight>(null);
   useFrame(() => {
     if (!sunLight.current || !(light > 0)) return;
-    const a = ((hourOf(minuteNow()) - 6) / 12) * Math.PI;
-    sunLight.current.position.set(Math.cos(a) * 30, Math.max(6, Math.sin(a) * 30), 14);
+    // (2026-11-12, the user: the game stutters: a sun moved every frame made the renderer redo its shadows and lights at 200-500 ms a time; the light is moved once a minute of the
+    // clock, a quarter of a degree, which cannot be seen, and the sun's disc in the sky (scenery.tsx) still sweeps smoothly)
+    const a = ((hourOf(Math.floor(minuteNow())) - 6) / 12) * Math.PI;
+    const [x, y] = [Math.cos(a) * 30, Math.max(6, Math.sin(a) * 30)];
+    if (sunLight.current.position.x !== x || sunLight.current.position.y !== y) sunLight.current.position.set(x, y, 14);
   });
   // The sun crosses from east to west over the day; at night the moon stands high
   const angle = ((hourOf(minutes) - 6) / 12) * Math.PI;
@@ -1343,7 +1359,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const lightsOn = useRoomLights((s) => !(lightKey && s.off[lightKey]));
   const toggleLights = useRoomLights((s) => s.toggle);
   // The daylight now (0 at night): the mood's shaft of light is only drawn by day, and where no window lets a real one in
-  const dayNow = daylight(useClock((c) => Math.round(c.minutes / 5) * 5));
+  const dayNow = daylight(useClock((c) => Math.floor(c.minutes / CLOCK_STEP) * CLOCK_STEP));
   const rocky = !!mood && mood.buildingType === "cave";
   // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls; a cave's sloping passage (a stairs
   // room, 2026-10-30) has the whole of its rectangle for floor, and the same rock round it
@@ -3586,7 +3602,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // A blockade (shared logic "Criminal reputation") holds the ways out of the settlement while a
   // search is on: the squares two away from each signpost, all the way round it, are barricaded, so
   // that the sign cannot be walked up to. The barricade stands only where the ground is open.
-  const minutes = useClock((c) => c.minutes);
+  const minutes = useMinutes(world);
   // The shops that are shut for the night (shared logic afterHoursLock): their ways in are drawn locked
   const shut = useMemo(() => new Set(buildings.filter((b) => afterHoursLock(world, b.id, minutes) !== undefined).map((b) => b.id)), [world, buildings, Math.floor(minutes / 5)]);
   // The windows that are lit: at night, in a room whose lights are on, of a building that is not locked for the night (a locked shop is dark)
@@ -4984,7 +5000,6 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
   const wayColor = (a: RoomAsset) =>
     (a.kind === "door" && world.paths.find((p) => p.id === a.ref)?.locked) || (a.kind === "window" && a.pane?.latch === "locked" && !a.pane.broken) ? WAY_COLORS.locked
-    : a.kind === "window" && (a.pane?.latch === "open" || a.pane?.broken) && (a.pane.size === "large" || a.pane.size === "wide") ? WAY_COLORS.exit
     : WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door;
   const wayLabel = (a: RoomAsset) => {
     if (a.kind === "window") return undefined;
