@@ -12,6 +12,7 @@ import { shaderPatch } from "./babylon";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, isBaked, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
+import { usePackNamed } from "./packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, modParts, useModParts, modIntParts, useModIntParts, speciesParts, useSpeciesParts, shipParts, useShipParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
@@ -1797,9 +1798,15 @@ export function DoorVoid({ style, bend, deep = 0 }: { style?: Pick<Style, "arch"
     </mesh>
   );
 }
+// (2026-11-12, the user: the doors showed the wall's texture as the animated part: a leaf is now a Megascans door scan (client/public/megascans/doors.glb, git-ignored; where it
+// is not there the leaf is as it was) in the walls of plaster, stone and planks; the walls of metal and concrete keep their plate)
+const SCAN_WALLS: WallSet[] = ["painted_plaster_wall", "sandstone_blocks_05", "brown_planks_03"];
+const SCAN_M = 1.4; // (metres to a square: the scan is 1.09 m across, 2.0 m high)
 export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }: { open: boolean; mode: "hinge" | "rise"; metal?: boolean; tint?: string; style?: Pick<Style, "arch" | "porthole">; wall?: WallSet; bend?: Bend }) {
   const leaf = useRef<THREE.Group>(null);
   const t = useRef(0);
+  const doors = usePackNamed("doors");
+  const scan = mode === "hinge" && !metal && (!wall || SCAN_WALLS.includes(wall)) ? doors?.get("door_plank") : undefined;
   // The hinge (on the leaf's left edge) and the leaf's foot, in the doorway's frame
   const hinge: V3 = mode === "rise" ? [0, 0, 0] : [-DOOR_W / 2 + 0.11, 0.02, 0];
   const geo = useMemo(() => {
@@ -1820,6 +1827,23 @@ export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }:
     return uv;
   }, [mode, style?.arch, style?.porthole, bend?.key, !!wall]);
   useEffect(() => () => geo.dispose(), [geo]);
+  // The scan, stood in the leaf's place: its width and height made to the leaf's, its hinge edge at x 0, bent onto a curved wall as the board was
+  const scanGeo = useMemo(() => {
+    if (!scan) return null;
+    const g = scan.geometry.clone();
+    g.computeBoundingBox();
+    const b = g.boundingBox!;
+    const [w, h] = [DOOR_W - 0.22, DOOR_H - 0.12];
+    g.translate(-b.min.x, -b.min.y, -(b.min.z + b.max.z) / 2);
+    g.scale(w / (b.max.x - b.min.x), h / (b.max.y - b.min.y), 1 / SCAN_M);
+    if (!bend) return g;
+    g.translate(hinge[0], hinge[1], hinge[2]);
+    const bent = bend.apply(g);
+    g.dispose();
+    bent.translate(-hinge[0], -hinge[1], -hinge[2]);
+    return bent;
+  }, [scan, bend?.key]);
+  useEffect(() => () => scanGeo?.dispose(), [scanGeo]);
   // The leaf is of the same texture as the walls it is set in (2026-10-27, the user: the door panel's texture differed from the wall tiles), a little
   // darker so that it reads as a panel in its frame; with no wall set (a plain room) the old looks by set stay
   const look = DOOR_LOOKS.painted_plaster_wall;
@@ -1835,7 +1859,7 @@ export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }:
   return (
     <group position={hinge}>
       <group ref={leaf}>
-        <mesh geometry={geo} material={material} castShadow receiveShadow />
+        {scanGeo && scan ? <mesh geometry={scanGeo} material={scan.material} castShadow receiveShadow /> : <mesh geometry={geo} material={material} castShadow receiveShadow />}
       </group>
     </group>
   );

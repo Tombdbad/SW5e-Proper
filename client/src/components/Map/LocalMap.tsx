@@ -5492,9 +5492,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                         : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={buildingSet} /></group>
                         : pack && prop ? <ModPiece name={prop.piece} pack={pack} wall={wall} position={propSpot(!!prop.corner && !crowned, propScale(prop, Math.min(l.width, l.height)), tall + 0.05)} scale={crowned ? Math.min(l.width, l.height) * 0.36 : propScale(prop, Math.min(l.width, l.height))} />
                         : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} timber={family === "timber"} pack={pack} position={propSpot(!!crown.corner && !crowned, Math.min(l.width, l.height) * crown.fit, tall + 0.05)} scale={Math.min(l.width, l.height) * (crowned ? 0.36 : crown.fit)} />
-                        : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
-                        : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
-                        : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
+                        : roof % 3 === 0 ? (() => { const [sx, , sz] = propSpot(true, 1, 0); return <><Box at={[sx, tall + 0.35, sz]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[sx, tall + 0.65, sz]} r={0.25} h={0.1} color="#2b2f36" /></>; })()
+                        : roof % 3 === 1 ? (() => { const [sx, , sz] = propSpot(true, 0.3, 0); return <Mast at={[sx, tall + 0.1, sz]} h={1.8} />; })()
+                        : (() => { const [sx, , sz] = propSpot(true, 1, 0); return <Cyl at={[sx, tall + 0.4, sz]} r={0.5} h={0.6} color="#59636d" />; })()}
                     </>
                   )}
                 </>

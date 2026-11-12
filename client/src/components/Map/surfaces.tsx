@@ -154,7 +154,10 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
     // (a cut-out set may have a Megascans one beside it, `diffuse-cutout-megascans.webp` (tools/blender/build-megascans-trees.py, git-ignored: the Fab Standard License):
     // that is used where it is there)
     const cutout = o.cutout && !o.picture ? loadMap(`${base}/diffuse-cutout-megascans.webp`, true).then((t) => t ?? loadMap(`${base}/diffuse-cutout.webp`, true)) : null;
-    Promise.all([cutout ?? loadMap(o.picture ? `/textures/${folder}/${o.picture}` : `${base}/diffuse.jpg`, true), o.picture ? none : loadMap(`${base}/normal.jpg`, false), o.picture ? none : loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
+    // (2026-11-12, the user: the plain walls did not match the rough stone: a wall set may have a Megascans one beside it, `diffuse-megascans.jpg`, `normal-megascans.jpg`, `height-megascans.jpg`
+    // (the 1K maps of the Megascans Plaster Wall and Hewn Sandstone Wall, tools/refs/megascans, git-ignored: the Fab Standard License), used where it is there)
+    const pick = (name: string, colour: boolean) => (folder === "wall" && !o.picture ? loadMap(`${base}/${name}-megascans.jpg`, colour).then((t) => t ?? loadMap(`${base}/${name}.jpg`, colour)) : loadMap(`${base}/${name}.jpg`, colour));
+    Promise.all([cutout ?? (o.picture ? loadMap(`/textures/${folder}/${o.picture}`, true) : pick("diffuse", true)), o.picture ? none : pick("normal", false), o.picture ? none : pick("height", false)]).then(([d, n, h]) => {
       for (const target of [m, ...((m as SurfaceMaterial).followers as Set<THREE.MeshPhongMaterial>)]) {
         if (d) target.map = d;
         if (n) target.normalMap = n;

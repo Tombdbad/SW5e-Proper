@@ -56,3 +56,14 @@ export function useMegascans(biome: string): MegaPack | null {
   return pack;
 }
 
+
+// A pack by its file's name (doors.glb: tools/blender/build-megascans-doors.py); null while loading or where the file is not there. Its materials are as the scan has them.
+export function usePackNamed(name: string): MegaPack | null {
+  const [pack, setPack] = useState<MegaPack | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadPack(name).then((p) => live && setPack(p));
+    return () => { live = false; };
+  }, [name]);
+  return pack;
+}

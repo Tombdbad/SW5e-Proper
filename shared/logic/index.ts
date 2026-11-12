@@ -2493,6 +2493,13 @@ export function paneFor(buildingType: string, roomName: string, station: boolean
   // (2026-11-12, the user: too many windows could be opened: a house's are mostly too small to get through, a fifth are large)
   return { size: r.chance(0.2) ? "large" : r.chance(0.3) ? "slit" : "small", latch: roll < 0.3 ? "open" : roll < 0.8 ? "latched" : "locked", ...(roll >= 0.8 ? { dc: 12 } : {}), ...(r.chance(0.1) ? { alarmed: true } : {}) };
 }
+// A window set at square `at` of a wall `length` squares long keeps clear of the corners (2026-11-12, the user: a window's frame hung over the edge of the building): its frame stands
+// out of the wall and a corner may be rounded, so a large window wants two squares of wall to its corner and a great one more; where it has less it is a small one
+export function fitPane(pane: Pane, at: number, length: number): Pane {
+  const room = Math.min(at + 0.5, length - at - 0.5);
+  const need = { slit: 0, small: 0, large: 1.65, wide: 1.9 }[pane.size];
+  return room >= need ? pane : { ...pane, size: "small" };
+}
 // What a window is called, by its size
 export const paneName = (pane: Pane, station: boolean) => (station && pane.size === "small" ? "Porthole" : { slit: "Window slit", small: "Small window", large: "Window", wide: "Great window" }[pane.size]);
 
@@ -3476,7 +3483,7 @@ function moreWindows(world: World, building: Area) {
         const free = Array.from({ length }, (_, i) => i).filter(clear);
         if (!free.length) break;
         const at = free.length > 1 && k === 0 && have === 0 && length >= 8 ? free[Math.floor(free.length / 4)] : r.pick(free);
-        const pane = paneFor(building.type, room.name, station, r);
+        const pane = fitPane(paneFor(building.type, room.name, station, r), at, length);
         const s = wallSquare(l, side, at);
         l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "window", name: paneName(pane, station), ...s, w: 1, h: 1, side, pane, to: building.id });
       }
@@ -4895,8 +4902,9 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       for (const side of r.shuffle(["n", "s", "e", "w"] as Side[]).slice(0, 2)) {
         const free = outside(room, side).filter((i) => i > 0);
         if (free.length > 2 && r.chance(0.7)) {
-          const pane = paneFor(building.type, room.name, station, r);
-          inWall(room, "window", paneName(pane, station), side, r.pick(free), { pane, to: buildingId });
+          const at = r.pick(free);
+          const pane = fitPane(paneFor(building.type, room.name, station, r), at, side === "n" || side === "s" ? room.layout!.width : room.layout!.height);
+          inWall(room, "window", paneName(pane, station), side, at, { pane, to: buildingId });
         }
       }
     }
