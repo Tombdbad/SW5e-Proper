@@ -634,7 +634,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       const come = p.ads ?? 0;
       const lift = come * come * (3 - 2 * come);
       const at = camera.position.clone().add(r.multiplyScalar(0.3 * (1 - lift))).add(up.multiplyScalar(-0.26 + 0.2 * lift)).add(fwd.clone().multiplyScalar(0.7 - kick * 0.05));
-      if (blaster.current) { blaster.current.visible = st.weapon === "gun" && !((p.gun?.optic?.zoom ?? 0) >= 1.9 && come > 0.6); blaster.current.position.copy(at); blaster.current.quaternion.copy(camera.quaternion); blaster.current.scale.setScalar(0.55); }
+      if (blaster.current) { blaster.current.visible = st.weapon === "gun" && !(st.zoom >= 1.9 && come > 0.3); blaster.current.position.copy(at); blaster.current.quaternion.copy(camera.quaternion); blaster.current.scale.setScalar(0.55); }
       placeSaber(saber.current, saberBlade.current, at, camera.quaternion, st, p, now, true);
     } else {
       if (blaster.current) blaster.current.visible = false;
