@@ -76,7 +76,7 @@ import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare, isLowFuel, fuelAfter, LIMP_FACTOR, tankerCall,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
-  advanceSearch, retireSquad, SEARCH_STEP, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
+  advanceSearch, retireSquad, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
@@ -199,6 +199,13 @@ const WATCH_NOTE = [
   "They have stopped you and want to know your business. Talk your way through, go back, or fight.",
   "Weapons are out: leave the way you came or it comes to a fight.",
   "They attack on sight.",
+];
+// (the shooter's: no checks, the eye; at confronting and above the fight has begun)
+const WATCH_NOTE_SHOOTER = [
+  "They have not noticed you. Keep out of their sight: the eye over the crosshair opens as one of them notices you. Seen, it is a fight.",
+  "They heard something and are looking around: the eye shows how near they are to seeing you.",
+  "They have stopped you and want to know your business. Talk your way through, go back, or fight.",
+  ...WATCH_NOTE.slice(3),
 ];
 
 interface CheckPlan { what: string; dc: number; abilities: string[]; skills?: string[]; tool?: string; extra?: number }
@@ -1029,6 +1036,11 @@ export default function GameBoard() {
     return stealthMode({ stealthDisadvantage: traits.stealthDisadvantage, stealthAdvantage: traits.stealthAdvantage || field });
   };
   const stealthBonus = () => modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
+  // A d20 thrown on the table for a check made by hand here (haggling, gentling, the cold): the higher of two with advantage, the lower with
+  // disadvantage; in the shooter, the passive face (10, 15 or 5: passiveD20), the table having thrown nothing. And how it is told: the dice on
+  // the tabletop, the threshold in the shooter ([12/15])
+  const faceOf = (edge: number, first: number, second = first) => (playMode === "shooter" ? passiveD20(edge) : edge > 0 ? Math.max(first, second) : edge < 0 ? Math.min(first, second) : first);
+  const toldCheck = (roll: number, bonus: number, dc: number) => (playMode === "shooter" ? `[${roll + bonus}/${dc}]` : `${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}`);
   const stealthRoll = () => {
     const mode = stealthEdge();
     const a = d20();
@@ -1324,7 +1336,7 @@ export default function GameBoard() {
         const quiet = exit.secret || sneaking || useRun.getState().crouch || useRun.getState().prone;
         const level = arrivalAlert(world, target.id, quiet ? "secret" : "open");
         changes.galaxyMap = setAlert(world, target.id, level);
-        toast[level <= ALERT.suspicious ? "success" : "error"](quiet ? (level <= ALERT.suspicious ? "You slip in: nobody has seen you yet. Keep out of their sight." : `Coming in: ${WATCH_NOTE[level]}`) : `Walking in openly: ${WATCH_NOTE[level]}`);
+        toast[level <= ALERT.suspicious ? "success" : "error"](quiet ? (level <= ALERT.suspicious ? "You slip in: nobody has seen you yet. Keep out of their sight." : `Coming in: ${WATCH_NOTE_SHOOTER[level]}`) : `Walking in openly: ${WATCH_NOTE_SHOOTER[level]}`);
       } else if (watchersOf(target).length) {
         const approach = exit.secret ? "secret" : sneaking ? "sneak" : "open";
         const { roll, bonus, total } = approach === "sneak" ? stealthRoll() : { roll: 0, bonus: 0, total: 0 };
@@ -1829,6 +1841,14 @@ export default function GameBoard() {
     }
     const ram = how === "ram";
     const helper = party.some((c) => c.hp > 0 && c.kind !== "beast");
+    // (the shooter: a strain on the bar, the ram's +4 and a strength substance widening it; shooter.ts handsKindOf)
+    if (playMode === "shooter") {
+      const r = await askCheck({ what: `Force the door (${ram ? "portable ram" : "shoulder"})`, dc, abilities: ["strength"], extra: (ram ? 4 : 0) + (substanceFor("strength") || 0) });
+      if (!r) return;
+      noise();
+      if (r.success) openLock(exit, {}, false, "trespass");
+      return;
+    }
     const [first, second] = await rollOnTable("Force the door (Strength)", (ram && helper ? ["d20", "d20"] : ["d20"]) as TableDie[]);
     const roll = ram && helper ? Math.max(first, second) : first;
     const bonus = modifier(character.abilityScores?.strength) + (ram ? 4 : 0) + (substanceFor("strength") || 0);
@@ -1842,16 +1862,24 @@ export default function GameBoard() {
   // Look for hidden ways and caches: Wisdom (Perception)
   const search = async () => {
     if (!world || !here) return;
+    if (!await abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
+    revealHidden();
+  };
+  // What is hidden here is found: the ways, the caches, the secret ways in, the loose flagstones (a search that succeeds; in the shooter, the
+  // party walking near enough to see it)
+  const revealHidden = (quiet = false) => {
+    if (!world || !here) return;
     const hiddenPaths = world.paths.filter((p) => p.hidden && !p.climb && (p.from === here.id || p.to === here.id));
     const hiddenLoot = here.loot.filter((c) => c.hidden);
     const loose = trapsIn(here, false);
     // Secret ways: out of this room, or into the rooms of the building the party stands before
     const secretRooms = [here, ...childrenOf(world, here.id)].filter((a) => a.secretEntry && !a.secretEntry.found);
-    if (!await abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
     if (hiddenPaths.length + hiddenLoot.length + secretRooms.length + loose.length === 0) {
-      toast.info("There is nothing hidden here.");
+      if (!quiet) toast.info("There is nothing hidden here.");
       return;
     }
+    // (found by walking near it, the party is told what caught its eye; a search says so in what it opens)
+    if (quiet && (hiddenLoot.length || hiddenPaths.length)) toast.success(`Found: ${[hiddenLoot.length ? "something hidden" : "", hiddenPaths.length ? "a hidden way" : ""].filter(Boolean).join(" and ")}.`);
     if (loose.length) toast.success("Found: a loose flagstone over a pit.");
     const next = updateArea(world, here.id, {
       loot: here.loot.map((c) => ({ ...c, hidden: undefined })),
@@ -2869,7 +2897,7 @@ export default function GameBoard() {
         // notice loop with the DC as their passive Perception (a sheltered party is harder to find): seen, they close in; not, they move on)
         if (playMode === "shooter") {
           if (!searchers.current.some((s) => s.squad.id === squad.id)) {
-            searchers.current = [...searchers.current, { squad, area, perception: dc, until: clockNow() + SEARCH_STEP }];
+            searchers.current = [...searchers.current, { squad, area, perception: dc, until: performance.now() + SQUAD_SEARCH_MS }];
             toast.warning(`${squad.count} ${squad.heavy ? "troopers" : "constables"} come in to search ${world.areas[area]?.name ?? "the place"}: keep out of their sight.`);
           }
           continue;
@@ -2897,6 +2925,9 @@ export default function GameBoard() {
   // fighting: the hostiles here who have not seen it yet (full, they have: the fight begins), the lawmen in sight (full, a crime done under
   // their eyes is seen), a search squad standing in the way in (full, they close in), and the people of the place (a theft from a shop is seen
   // by its keeper). Out of the shooter it does nothing: the tabletop rolls.
+  // (a squad searches the room the party is in for 12 real seconds (house rule): the map's clock runs a minute a second, so its own two minutes
+  // a room would be gone before anyone could hide or be seen)
+  const SQUAD_SEARCH_MS = 12000;
   const searchers = useRef<{ squad: Squad; area: string; perception: number; until: number }[]>([]);
   const noticeLevels = useRef<Record<string, number>>({});
   const noticeKinds = useRef<Record<string, "hostile" | "law" | "squad" | "people">>({});
@@ -2910,9 +2941,10 @@ export default function GameBoard() {
     return { level: best.level, who: noticeNames.current[best.id] };
   };
   const engagingSquad = useRef(false);
+  const hiddenFound = useRef<{ area: string; done: boolean; since: number }>({ area: "", done: false, since: 0 });
   noticeTick.current = () => {
     // (the map has the party standing in this place: what it draws is where the watchers are)
-    if (playMode !== "shooter" || !world || !here || !character || inCombat || dead || character.currentHp <= 0 || useShoot.getState().session || partyLive.area !== here.id) {
+    if (playMode !== "shooter" || !world || !here || !character || inCombat || dead || character.currentHp <= 0 || useShoot.getState().session || partyLive.area !== here.id || useWarmup.getState().total > 0) {
       if (useNotice.getState().show) useNotice.setState({ level: 0, show: false, who: undefined });
       return;
     }
@@ -2923,10 +2955,26 @@ export default function GameBoard() {
       searchers.current = searchers.current.filter((s) => s.area === here.id);
     }
     const now = clockNow();
-    searchers.current = searchers.current.filter((s) => s.until > now);
+    searchers.current = searchers.current.filter((s) => s.until > performance.now());
     const layout = here.layout;
     const origin = layout ? { x: layout.x, y: layout.y } : { x: 0, y: 0 };
     const party = { x: partyLive.x, y: partyLive.y };
+    // What is hidden is seen by walking near it (the shooter's search, house rule): within 1.5 squares, and half a square farther for each
+    // point the passive Perception is over the search's DC (12 + the danger), to 6; and once the party has looked round the place for 20
+    // seconds with its passive Perception at the DC, all of it (the hidden ways, which stand nowhere on the map, too)
+    if (hiddenFound.current.area !== here.id) hiddenFound.current = { area: here.id, done: false, since: performance.now() };
+    if (!hiddenFound.current.done && !hostiles.length) {
+      const looks = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0) - (12 + here.danger);
+      const reach = Math.max(1.5, Math.min(6, 1.5 + looks * 0.5));
+      const loose = new Set(trapsIn(here, false).map((t) => t.id));
+      const spots = (layout?.assets ?? []).filter((a) => (a.kind === "loot" && here.loot.some((c) => c.id === a.ref && c.hidden)) || (a.kind === "secret" && !!here.secretEntry && !here.secretEntry.found) || loose.has(a.id));
+      const near = spots.some((a) => Math.hypot(a.x + origin.x - party.x, a.y + origin.y - party.y) <= reach);
+      const looked = looks >= 0 && performance.now() - hiddenFound.current.since > 20000;
+      if (near || looked) {
+        hiddenFound.current.done = true;
+        revealHidden(true);
+      }
+    }
     // Where someone of the place stands: as the map draws them (the room the party is in), else their square in the plan, else a little off
     const placed = (o: Occupant, far = 6) => {
       const asset = layout?.assets.find((a) => a.kind === "npc" && a.ref === o.id);
@@ -3426,11 +3474,11 @@ export default function GameBoard() {
     const barrier = languageBarrierWith(trader);
     const twice = (haggling.advantage && !barrier) || (!haggling.advantage && barrier);
     const [first, second] = await rollOnTable("Haggling (Persuasion)", (twice ? ["d20", "d20"] : ["d20"]) as TableDie[]);
-    const roll = haggling.advantage && !barrier ? Math.max(first, second) : !haggling.advantage && barrier ? Math.min(first, second) : first;
+    const roll = faceOf(haggling.advantage && !barrier ? 1 : !haggling.advantage && barrier ? -1 : 0, first, second);
     const bonus = modifier(character.abilityScores?.charisma) + (haggling.expertise ? 2 * proficiency : skilled("persuasion") ? proficiency : 0);
     const won = roll + bonus >= dc;
     const how = [haggling.advantage && `advantage from ${haggling.advantage}`, haggling.expertise && `expertise from ${haggling.expertise}`, barrier && "no common language: a translator would help (house rule)"].filter(Boolean).join(", ");
-    toast[won ? "success" : "error"](`Haggling (Persuasion${how ? `, ${how}` : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${won ? "Prices 10% better today." : roll + bonus <= dc - 5 ? "They take offence: prices a little worse today." : "They will not budge."}`);
+    toast[won ? "success" : "error"](`Haggling (Persuasion${how ? `, ${how}` : ""}): ${toldCheck(roll, bonus, dc)}. ${won ? "Prices 10% better today." : roll + bonus <= dc - 5 ? "They take offence: prices a little worse today." : "They will not budge."}`);
     recordDeal(trader.id, (e) => ({ ...e, haggle: won ? "won" : roll + bonus <= dc - 5 ? "lost" : "tried" }), false);
   };
 
@@ -3591,7 +3639,7 @@ export default function GameBoard() {
     if (camp && land === "ice" && !sheltered && !gear(/^heat generator/i) && !(play.wearing ?? []).some((n) => /diving suit/i.test(n))) {
       const twice = gear(/^blanket/i) || wearingNow.some((n) => /traveler/i.test(n));
       const [a, b] = await rollOnTable("The cold of the night (Constitution)", (twice ? ["d20", "d20"] : ["d20"]) as TableDie[]);
-      const roll = twice ? Math.max(a, b) : a;
+      const roll = faceOf(twice ? 1 : 0, a, b);
       const total = roll + modifier(character.abilityScores?.constitution);
       if (total < 10) {
         coldLevel = 1;
@@ -4294,7 +4342,7 @@ export default function GameBoard() {
     const holder = factionAt(world, here.id);
     if (margin >= 10 && holder) saveCampaign({ factionInfluence: addRenown(standing, holder, 1), ...pass(60) });
     else saveCampaign(pass(60));
-    toast[margin >= 0 ? "success" : "error"](`${instrument} for ${audience} listener${audience === 1 ? "" : "s"} (Performance${trained ? "" : ", untrained"}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${margin >= 0 ? `They are generous: ${tips} credits${margin >= 10 && holder ? `, and word reaches ${holder}` : ""}.` : "A cold room, and nothing in the hat."} An hour passes. (House rule: the books price no tips.)`);
+    toast[margin >= 0 ? "success" : "error"](`${instrument} for ${audience} listener${audience === 1 ? "" : "s"} (Performance${trained ? "" : ", untrained"}): ${toldCheck(roll, bonus, dc)}. ${margin >= 0 ? `They are generous: ${tips} credits${margin >= 10 && holder ? `, and word reaches ${holder}` : ""}.` : "A cold room, and nothing in the hat."} An hour passes. (House rule: the books price no tips.)`);
   };
 
   // ---- Companions: hiring, freeing, mending droids, gentling beasts
@@ -5167,6 +5215,11 @@ export default function GameBoard() {
         toast.info(`${spike}: reroll.`);
         result = await toolRoll(name, dc, `${spec.label} (rerolled)`, "intelligence");
       }
+    } else if (playMode === "shooter") {
+      // (the shooter: a strain on the bar; shooter.ts handsKindOf)
+      const r = await askCheck({ what: `Break the ${restraint === "collar" ? "collar" : "chains"}`, dc: 20, abilities: ["strength"], extra: substanceFor("strength") || 0 });
+      if (!r) return;
+      result = { success: r.success };
     } else {
       const [face] = await rollOnTable("Break the chains (Strength)", ["d20"]);
       const roll = face + modifier(character.abilityScores?.strength) + substanceFor("strength");
@@ -5185,7 +5238,13 @@ export default function GameBoard() {
     if (!slipped("Working at the cell", "trespass")) return;
     const dc = cell.cell?.dc ?? 15;
     let success = false;
-    if (how === "break") {
+    if (how === "break" && playMode === "shooter") {
+      // (the shooter: a strain on the bar; shooter.ts handsKindOf)
+      const r = await askCheck({ what: "Break the cell door", dc: dc + 5, abilities: ["strength"], extra: substanceFor("strength") || 0 });
+      if (!r) return;
+      success = r.success;
+      if (hostiles.length) setWatch(ALERT.attacking);
+    } else if (how === "break") {
       const [face] = await rollOnTable("Break the cell door (Strength)", ["d20"]);
       const roll = face + modifier(character.abilityScores?.strength) + substanceFor("strength");
       success = roll >= dc + 5;
@@ -5369,12 +5428,12 @@ export default function GameBoard() {
     const dc = gentleDC(o, hurt);
     const food = (character.equipment ?? []).find((n: string) => /rations/i.test(n));
     const [first, second] = await rollOnTable("Gentle the beast (Animal Handling)", (food ? ["d20", "d20"] : ["d20"]) as TableDie[]);
-    const roll = food ? Math.max(first, second) : first;
+    const roll = faceOf(food ? 1 : 0, first, second);
     const bonus = modifier(character.abilityScores?.wisdom) + (skilled("animal handling") ? proficiency : 0) + substanceFor("wisdom");
     const total = roll + bonus;
     const success = total >= dc;
     const spent = food ? consume(food) : null;
-    toast[success ? "success" : "error"](`Animal Handling on ${o.name}${food ? ` (${food} in hand: advantage)` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${success ? "It settles." : total <= dc - 5 ? "It bares its teeth." : "It shies away; try again."}`);
+    toast[success ? "success" : "error"](`Animal Handling on ${o.name}${food ? ` (${food} in hand: advantage)` : ""}: ${toldCheck(roll, bonus, dc)}. ${success ? "It settles." : total <= dc - 5 ? "It bares its teeth." : "It shies away; try again."}`);
     const time = pass(60);
     const changes: Record<string, any> = spent ? { equipment: spent.equipment } : {};
     if (success) return recruit({ ...o, wounds: [o.wounds?.[0] ?? o.hitPoints ?? 1] }, "beast", "gentled", {}, changes, time);
@@ -8949,7 +9008,7 @@ export default function GameBoard() {
           {hostile ? (
             <div className="mt-1 space-y-1">
               <p className="text-xs">
-                <span className="font-semibold text-red-300">Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}.</span> {allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}
+                <span className="font-semibold text-red-300">Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}.</span> {allowed ? "They let you through, and watch what you do." : (playMode === "shooter" ? WATCH_NOTE_SHOOTER : WATCH_NOTE)[alert]}
               </p>
               {watchButtons}
               {o.contract && o.role === "bounty target" && cState.active.some((c) => c.id === o.contract) && (
@@ -9925,7 +9984,7 @@ export default function GameBoard() {
                       <span className="font-semibold text-red-300">
                         Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}
                       </span>{" "}
-                      <span className="text-gray-300">{allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}</span>
+                      <span className="text-gray-300">{allowed ? "They let you through, and watch what you do." : (playMode === "shooter" ? WATCH_NOTE_SHOOTER : WATCH_NOTE)[alert]}</span>
                     </p>
                     {watchButtons}
                     <p className="text-xs text-gray-400">House rule: how enemies notice you is not in the books.</p>
@@ -10052,9 +10111,12 @@ export default function GameBoard() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={search} disabled={inCombat || dead || hostiles.length > 0}>
-                    Search
-                  </Button>
+                  {/* (the shooter searches by looking: what is hidden is found by walking near it, the notice loop) */}
+                  {playMode !== "shooter" && (
+                    <Button size="sm" variant="outline" onClick={search} disabled={inCombat || dead || hostiles.length > 0}>
+                      Search
+                    </Button>
+                  )}
                   {pursuit?.here && pursuit.phase === "searching" && playMode !== "shooter" && (
                     <Button size="sm" variant="destructive" onClick={lieLowNow} disabled={inCombat || dead} data-testid="lie-low">
                       Lie low (Stealth)

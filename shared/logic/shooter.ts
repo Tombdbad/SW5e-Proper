@@ -153,7 +153,7 @@ export type HandsKind = "pick" | "slice" | "strain" | "nimble";
 export function handsKindOf(what: string): HandsKind | undefined {
   if (/^(lock\b|window lock|jimmy the latch|pick the cell's lock)/i.test(what)) return "pick";
   if (/slip past the sensor|door alarm|guard console|hotwiring|loop the camera|from the panel|disable the (window's )?sensors?/i.test(what)) return "slice";
-  if (/climbing out|grappling hook's line|leap at the edge|break the glass/i.test(what)) return "strain";
+  if (/climbing out|grappling hook's line|leap at the edge|break the glass|force the door|break the (chains|collar|cell door)/i.test(what)) return "strain";
   if (/sleight of hand|slipping aboard/i.test(what)) return "nimble";
   return undefined;
 }

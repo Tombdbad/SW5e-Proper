@@ -258,7 +258,7 @@ export function HandsGame({ what, plan, onDone }: { what: string; plan: HandsPla
         <div style={{ color: "#fde68a" }}>{HANDS_TITLE[plan.kind]}: {what}</div>
         {plan.kind === "pick" ? (
           <>
-            <svg ref={dial} viewBox="-120 -110 240 130" style={{ width: "100%", height: 150, display: "block", marginTop: 6, cursor: "ew-resize" }} onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); aim(e); }} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && aim(e)} data-testid="hands-dial">
+            <svg ref={dial} viewBox="-120 -110 240 180" style={{ width: "100%", height: 190, display: "block", marginTop: 6, cursor: "ew-resize" }} onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); aim(e); }} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && aim(e)} data-testid="hands-dial">
               {/* the lock's face, turned by how far the cylinder has gone (a quarter turn opens it), and the keyhole */}
               <g transform={`rotate(${g.turn * 90 + (g.strain > 0 ? Math.sin(performance.now() / 25) * 2.5 * g.strain : 0)})`}>
                 <circle r={62} fill="#334155" stroke="#94a3b8" strokeWidth={3} />
