@@ -357,7 +357,8 @@ test("buildings on a hillside: each at its own level, its ways in on the ground 
   const { getWorldCatalog } = await import("../../server/sw5eData");
   const catalog = await getWorldCatalog();
   let [uppers, stepped, ways, windows] = [0, 0, 0, 0];
-  for (const seed of [1, 2, 3, 5]) {
+  // (seeds 6 and 13 have an upper street door: since 2026-11-15 the hill under a place is no steeper than 1 in 4, and the land stands a storey up by a first floor more rarely)
+  for (const seed of [2, 3, 6, 13]) {
     const world = generateWorld({ seed, partyLevel: 5 }, catalog);
     for (const [id, plan] of Object.entries(world.districtPlans ?? {})) {
       if (!plan.levels) continue;
@@ -377,7 +378,8 @@ test("buildings on a hillside: each at its own level, its ways in on the ground 
             const floor = (l.base ?? 0) + (l.level ?? 0) * 3.4;
             const ground = g!.at(o.x + 0.5, o.y + 0.5);
             const inBox = Object.values(plan.boxes).some((q) => o.x >= q.x && o.x < q.x + q.width && o.y >= q.y && o.y < q.y + q.height);
-            if ((a.kind === "exit" || a.kind === "secret") && !inBox) {
+            // (a hatch high in an upper floor's wall is no way in on foot: the ground is not brought up to it, 2026-11-15)
+            if ((a.kind === "exit" || a.kind === "secret") && !inBox && ((l.level ?? 0) === 0 || a.name === UPPER_DOOR)) {
               ways++;
               assert.ok(Math.abs(ground - floor) < 0.05, `${id} ${room.name} ${a.name}: the ground before it ${ground.toFixed(2)}, its floor ${floor.toFixed(2)}`);
               if (a.name === UPPER_DOOR) {

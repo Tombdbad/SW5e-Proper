@@ -1084,6 +1084,13 @@ function distanceFromBuilt(spec: DistrictGroundSpec, n: number): Float32Array {
 export const districtHill = (biome: string): number => (biome === "urban" || biome === "gas giant" ? 0 : clamp(terrainStyleOf(biome).relief * 0.15, 3, 30));
 // (the hill's breadth in metres: a swell as broad as a town, so that it reads as a hillside under several buildings, not as a bump under one)
 const HILL_SPAN = 150;
+// (2026-11-15, the user: "some doors lie below the terrain, with massive drops down to them". The hill was three octaves stretched to its full height whatever
+// its shape, which put slopes of 45 degrees and more under the buildings (a volcanic or forest world's 30 m over half a swell): no street climbs that, and a
+// building whose doors stand on it has one in a pit and one on a ledge. House rule: the hill under a place is two octaves, and no steeper anywhere than
+// HILL_GRADE, a steep street (1 in 4): where its shape would be steeper at its full height, it is lower. The cliffs and ravines stand round the place, not under it.)
+const HILL_GRADE = 0.25;
+// (the steepest the ground before a way in may fall or climb away from its sill, rise over run: see `districtGround`, "The ground about the ways in")
+export const WAY_GRADE = 0.3;
 interface DistrictLand { land: Terrain; k: number; n: number; size: number; sizeM: number; raw: Float32Array; flow: Float32Array; big: Float32Array }
 const LANDS = new Map<string, DistrictLand>();
 const ERODED = new Map<string, Terrain>();
@@ -1115,12 +1122,16 @@ function districtLandOf(spec: Pick<DistrictGroundSpec, "seed" | "biome" | "size"
   const hs = (spec.seed ^ 0x5f3759df) | 0;
   const swell = new Float32Array(n * n);
   let [lo, hi] = [Infinity, -Infinity];
+  // (the steepest step of the hill's own grid, as a slope in the noise's units a metre: across a cell and along its diagonals)
+  let steep = 0;
   if (hill && span > 0) {
     // (on a grid of four squares, filled in between: the hill is a hundred squares broad, and the noise is the costly part)
     const S = 4;
     const m = Math.ceil((n - 1) / S) + 1;
     const coarse = new Float32Array(m * m);
-    for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) coarse[j * m + i] = terrainNoise(((i * S - size / 2) * SQUARE_M) / HILL_SPAN + 3.7, ((j * S - size / 2) * SQUARE_M) / HILL_SPAN - 1.9, hs, 3);
+    for (let j = 0; j < m; j++) for (let i = 0; i < m; i++) coarse[j * m + i] = terrainNoise(((i * S - size / 2) * SQUARE_M) / HILL_SPAN + 3.7, ((j * S - size / 2) * SQUARE_M) / HILL_SPAN - 1.9, hs, 2);
+    for (let j = 0; j < m - 1; j++) for (let i = 0; i < m - 1; i++) steep = Math.max(steep, Math.abs(coarse[j * m + i + 1] - coarse[j * m + i]), Math.abs(coarse[(j + 1) * m + i] - coarse[j * m + i]), Math.abs(coarse[(j + 1) * m + i + 1] - coarse[j * m + i]) / Math.SQRT2, Math.abs(coarse[(j + 1) * m + i] - coarse[j * m + i + 1]) / Math.SQRT2);
+    steep /= S * SQUARE_M;
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
       const [ci, cj] = [Math.min(m - 2, Math.floor(i / S)), Math.min(m - 2, Math.floor(j / S))];
       const [u, w] = [i / S - ci, j / S - cj];
@@ -1131,7 +1142,7 @@ function districtLandOf(spec: Pick<DistrictGroundSpec, "seed" | "biome" | "size"
       hi = Math.max(hi, v);
     }
   }
-  const hk = hill && span > 0 && hi > lo ? span / (hi - lo) : 0;
+  const hk = hill && span > 0 && hi > lo ? Math.min(span / (hi - lo), steep > 0 ? HILL_GRADE / steep : Infinity) : 0;
   const mid = land.min + (land.max - land.min) * 0.5;
   // (sampled inline: sixty thousand points a district, where a call and its arrays cost more than the sum)
   const [ln, lh, lf, cell] = [land.n, land.h, land.flow, land.cell];
@@ -1224,6 +1235,32 @@ export function districtGround(spec: DistrictGroundSpec): DistrictGround | null 
       }
       t.h.set(next);
     }
+    // The ground about the ways in (2026-11-15, the user: doors below the terrain, "massive drops down to them"). The ground before a way in was a level
+    // patch of two squares blended back to the land over two and a half, whatever the land stood at: where a building's level is not the land's at that door
+    // (its doors are on different sides of a slope; the way is an upper floor's) the patch was a pit or a ledge with sides of 45 degrees and more. House rule:
+    // the ground falls or climbs away from every sill no faster than WAY_GRADE in any direction, so the land within reach of a way in lies between two cones
+    // about it (floor - grade * distance, floor + grade * distance), the lowest of the upper cones and the highest of the lower ones of all the ways; the land
+    // that already lies between them is left as it is. The plan sets the levels so that no two ways ask for more than that of the ground between them
+    // (shared/logic planDistrict "The lie of the land"); where they still do, the ground is put midway.
+    const sills = (spec.aprons ?? []).filter((a) => a.h !== undefined);
+    if (sills.length) {
+      const G = WAY_GRADE * SQUARE_M;
+      for (let j = 0; j < n; j++) {
+        const pz = j - size / 2 + spec.cz;
+        for (let i = 0; i < n; i++) {
+          const px = i - size / 2 + spec.cx;
+          let [low, high] = [-Infinity, Infinity];
+          for (const a of sills) {
+            const d = Math.hypot(Math.max(a.x - px, 0, px - (a.x + a.width)), Math.max(a.y - pz, 0, pz - (a.y + a.height)));
+            const f = (a.h as number) * SQUARE_M;
+            if (f - G * d > low) low = f - G * d;
+            if (f + G * d < high) high = f + G * d;
+          }
+          const c = j * n + i;
+          t.h[c] = low > high ? (low + high) / 2 : t.h[c] < low ? low : t.h[c] > high ? high : t.h[c];
+        }
+      }
+    }
     // The ground before each way in, level with its floor
     for (const a of spec.aprons ?? []) { const [x, z, w, d] = toM(a); levelBox(t, x, z, w, d, APRON_FLAT * SQUARE_M, APRON_BLEND * SQUARE_M, padLevel(a)); }
   }
@@ -1250,6 +1287,11 @@ export function districtGround(spec: DistrictGroundSpec): DistrictGround | null 
       if (!p.box) continue;
       const h = padLevel(p);
       for (let j = Math.max(0, grid(p.y, spec.cz) + 1); j <= Math.min(n - 1, grid(p.y + p.height, spec.cz) - 1); j++) for (let i = Math.max(0, grid(p.x, spec.cx) + 1); i <= Math.min(n - 1, grid(p.x + p.width, spec.cx) - 1); i++) t.h[j * n + i] = h;
+    }
+    // (and the ground before each way in exactly at its floor: a neighbour's blend, or the land eased midway between two cones, may have moved it a little)
+    for (const a of spec.aprons ?? []) {
+      if (a.h === undefined) continue;
+      for (let j = Math.max(0, grid(a.y, spec.cz)); j <= Math.min(n - 1, grid(a.y + a.height, spec.cz)); j++) for (let i = Math.max(0, grid(a.x, spec.cx)); i <= Math.min(n - 1, grid(a.x + a.width, spec.cx)); i++) t.h[j * n + i] = a.h * SQUARE_M;
     }
   }
   refresh(t);
