@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { micWhy, recordSpeech, setVoicePref, speak, stopSpeaking, transcribe, voicePrefs } from "@/lib/voice";
+import { micWhy, recordSpeech, setVoicePref, speakQueued, stopSpeaking, transcribe, voicePrefs } from "@/lib/voice";
 import { levelName, type sheetFor } from "@shared/logic/relations";
 
 export interface TalkSpeaker {
@@ -76,10 +76,16 @@ const subtitle = (text: string) => text.replace(/\[([a-z]+)\]/g, (_, c: string) 
 
 // The last thing each speaker said, kept while the page is open
 const lastSaid = new Map<string, string>();
+// ...and the last three exchanges with each (2026-11-15: a short memory; the model is sent them cut short, never a transcript)
+const memory = new Map<string, { asked: string; said: string }[]>();
+
+export interface TalkKnows { wares?: string[]; jobs?: string[]; rumours?: string[]; party?: string }
+export interface TalkCall { from?: "them" | "you"; via?: "commlink" | "transceiver"; reason?: string; ship?: string }
 
 // (`comms`: the talk is over a comlink, and sounds like it)
 // (`news`: what the town says of the party and its nemeses, shared/logic/relations.ts townTalk)
-export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpoke }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; news?: string; disabled?: boolean; comms?: boolean; onSpoke?: () => void }) {
+// (`knows`: their wares, work and rumours; `call`: a call over a link, and when `call.from` is "them" they ring and speak first)
+export function TalkPanel({ speaker, player, scene, news, knows, call, disabled, comms, onSpoke }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; news?: string; knows?: TalkKnows; call?: TalkCall; disabled?: boolean; comms?: boolean; onSpoke?: () => void }) {
   const [line, setLine] = useState("");
   const [heard, setHeard] = useState<{ asked: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -126,7 +132,7 @@ export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpo
       const response = await fetch("/api/dialogue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speaker, player, scene, news, line: asked, recap: lastSaid.get(speaker.id) }),
+        body: JSON.stringify({ speaker, player, scene, news, knows, call, line: asked, recap: lastSaid.get(speaker.id), history: memory.get(speaker.id) }),
         signal: control.signal,
       });
       if (!response.ok || !response.body) throw new Error("The dialogue service did not answer.");
@@ -134,6 +140,11 @@ export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpo
       const decoder = new TextDecoder();
       let pending = "";
       let text = "";
+      // Each finished sentence is spoken as it arrives, in their own voice, after the one before
+      let spoken = 0;
+      let queued = 0;
+      const who = { id: speaker.id, name: speaker.name, species: speaker.species, role: speaker.role, kind: speaker.form, creature: speaker.creature, gender: speaker.gender, disposition: speaker.disposition };
+      const say1 = (chunk: string) => { if (chunk.trim() && voicePrefs().voice && !control.signal.aborted) { setSpeaking(true); queued++; void speakQueued(chunk.trim(), who, { comms }).finally(() => { if (--queued <= 0) setSpeaking(false); }); } };
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -148,9 +159,14 @@ export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpo
           if (event.delta) {
             text += event.delta;
             setHeard({ asked, text });
+            say1(event.delta);
+            spoken = text.length;
           }
           // The server's cleaned copy (markdown removed, cut at the last whole sentence) replaces what streamed in
           if (event.done) {
+            // (what the server cleaned at the end that was not sent as a sentence is spoken now)
+            if (event.text.startsWith(text) && event.text.length > text.length) say1(event.text.slice(text.length));
+            else if (!spoken) say1(event.text);
             text = event.text;
             setHeard({ asked, text });
           }
@@ -158,12 +174,8 @@ export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpo
       }
       if (text) {
         lastSaid.set(speaker.id, text);
+        memory.set(speaker.id, [...(memory.get(speaker.id) ?? []), { asked, said: text }].slice(-3));
         onSpoke?.();
-      }
-      // Heard in their own voice (the page goes on while it plays)
-      if (text && voicePrefs().voice && !control.signal.aborted) {
-        setSpeaking(true);
-        void speak(text, { id: speaker.id, name: speaker.name, species: speaker.species, role: speaker.role, kind: speaker.form, creature: speaker.creature, gender: speaker.gender, disposition: speaker.disposition }, { comms }).finally(() => setSpeaking(false));
       }
     } catch (e: any) {
       if (e?.name !== "AbortError") setError(e?.message ?? "Could not get a reply.");
@@ -171,6 +183,10 @@ export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpo
       if (stop.current === control) setBusy(false);
     }
   };
+
+  // A call that comes in: the player answers and the caller speaks first
+  const ringing = call?.from === "them";
+  useEffect(() => { if (ringing && status.data?.ok) void say("Hello?"); }, [ringing, speaker.id, status.data?.ok]);
 
   if (status.data && !status.data.ok) {
     return <p className="text-xs text-gray-400" data-testid="talk-off">Spoken replies are off: the local model ({status.data.model}) is not running. Say what you do on the GM Interface tab.</p>;
