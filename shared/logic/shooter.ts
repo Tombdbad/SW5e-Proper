@@ -143,6 +143,47 @@ export function noticeRate(w: Watcher, p: Sneaker): number {
   const odds = clamp(Math.pow(NOTICE.perPoint, w.perception - (10 + p.stealth)), 0.12, 6);
   return NOTICE.fill * near * (seen + heard) * odds;
 }
+// ---- Done by hand (2026-11-15) -----------------------------------------------------------------------------------------------------------
+// HOUSE RULE: the shooter makes no check for what is done with the hands in the moment. A lock is picked on a dial (Skyrim's lockpicking: the
+// sweet spot is wider the better the character's passive check, 10 + its bonus, stands over the DC, and wider still with advantage); slicing
+// (alarms, sensors, panels, consoles, cameras, hotwiring), a strain (a climb, a haul, breaking glass) and quick hands (sleight of hand, slipping
+// aboard) are a cursor stopped in a window of a bar, so many times, with so many misses allowed. Everything else (talk, knowledge, crafting) is
+// the passive check against the DC, shown as a threshold: [Persuasion 14/16].
+export type HandsKind = "pick" | "slice" | "strain" | "nimble";
+export function handsKindOf(what: string): HandsKind | undefined {
+  if (/^(lock\b|window lock|jimmy the latch|pick the cell's lock)/i.test(what)) return "pick";
+  if (/slip past the sensor|door alarm|guard console|hotwiring|loop the camera|from the panel|disable the (window's )?sensors?/i.test(what)) return "slice";
+  if (/climbing out|grappling hook's line|leap at the edge|break the glass/i.test(what)) return "strain";
+  if (/sleight of hand|slipping aboard/i.test(what)) return "nimble";
+  return undefined;
+}
+// The passive check (10 + the bonus, +5 with advantage, -5 with disadvantage) over the DC: what sizes the game
+export const handsMargin = (bonus: number, dc: number, edge: number) => passiveD20(edge) + bonus - dc;
+export interface HandsPlan { kind: HandsKind; nodes: number; misses: number; window: number; partial: number; speed: number }
+export function handsPlan(kind: HandsKind, margin: number): HandsPlan {
+  const grow = Math.pow(1.15, margin);
+  // A dial: the sweet spot's half-width in degrees, and the band either side of it where the lock turns part of the way
+  if (kind === "pick") return { kind, nodes: 1, misses: 3, window: clamp(9 * grow, 2.5, 40), partial: 22, speed: 0 };
+  // A bar: the share of it each window takes, how many to hit, the misses allowed, and the cursor's sweeps a second
+  const nodes = kind === "slice" ? 3 : kind === "nimble" ? 2 : 1;
+  return { kind, nodes, misses: kind === "strain" ? 2 : 3, window: clamp(0.13 * grow, 0.035, 0.45), partial: 0, speed: kind === "strain" ? 0.75 : 0.9 };
+}
+// How far a lock turns with the pick at `pick` degrees and its sweet spot at `spot`: all the way (1) in the sweet spot, less across the band
+// beside it, a jiggle (0.08) beyond
+export function lockTurn(plan: HandsPlan, pick: number, spot: number): number {
+  const off = Math.abs(pick - spot);
+  if (off <= plan.window) return 1;
+  if (off <= plan.window + plan.partial) return Math.max(0.08, 1 - (off - plan.window) / plan.partial);
+  return 0.08;
+}
+// Where the cursor of a bar is at `t` seconds: back and forth across it
+export const barAt = (plan: HandsPlan, t: number) => {
+  const u = (t * plan.speed) % 2;
+  return u <= 1 ? u : 2 - u;
+};
+// What the game's end is told as the check's total (some callers read how far it was failed by: a fall at 5 under)
+export const handsTotal = (dc: number, won: boolean, done: number) => (won ? dc : done === 0 ? dc - 5 : dc - 1);
+
 // Every watcher's awareness `dt` seconds on (those no longer there are dropped); a watcher that has seen the party stays at 1 until it is told
 // otherwise
 export function stepNotice(levels: Record<string, number>, watchers: Watcher[], p: Sneaker, dt: number): Record<string, number> {

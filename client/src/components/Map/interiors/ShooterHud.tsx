@@ -2,9 +2,10 @@
 // focus, hit markers, a flash when the party is hurt, what it suffers (poisoned, burning, blinded) and a foe's grenade coming down near; and the
 // phone's buttons for the shots (fire, grenade, the item and the next one, reload, swap, block). Drawn inside the eye views'
 // own overlay (ViewRig.tsx), where the stick and the Use button are. interiors/shoot.ts has the keys.
+import { useEffect, useRef, useState } from "react";
 import { useShoot, type ShootKey } from "./shoot";
 import { useNotice } from "./aim";
-import { NOTICE } from "@shared/logic/shooter";
+import { NOTICE, barAt, lockTurn, type HandsPlan } from "@shared/logic/shooter";
 
 const base: React.CSSProperties = { borderRadius: 40, border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 12px sans-serif", pointerEvents: "auto", touchAction: "none", userSelect: "none", cursor: "pointer" };
 const fresh = (at: number, ms: number) => at > 0 && performance.now() - at < ms;
@@ -137,6 +138,161 @@ export function NoticeEye() {
       </svg>
       <div style={{ font: "600 11px sans-serif", color: colour, textShadow: "0 0 3px #000, 0 0 3px #000", marginTop: 2 }}>
         {seen ? `Seen${who ? ` by ${who}` : ""}` : looking ? `${who ?? "Someone"} is looking` : "Hidden"}
+      </div>
+    </div>
+  );
+}
+
+// What is done by hand in the shooter (2026-11-15; house rule, shooter.ts handsPlan): a lock on a dial, as Skyrim's (move the pick, hold Turn:
+// in the sweet spot the lock turns all the way; beside it, part of the way, and holding on strains the pick until it slips), or a bar whose
+// cursor is stopped in the lit window (slicing, a strain, quick hands). The world goes on meanwhile: the watchers still look (the eye).
+// `onDone` is told whether it was done and how many windows were hit, or null when it is called off (Esc).
+export interface HandsResult { won: boolean; done: number }
+const HANDS_TITLE: Record<HandsPlan["kind"], string> = { pick: "Pick the lock", slice: "Slice", strain: "Heave", nimble: "Steady hands" };
+const HANDS_HINT: Record<HandsPlan["kind"], string> = {
+  pick: "Move the pick (mouse, drag, or A / D), then hold Turn (Space). Where it turns all the way, the lock opens; where it sticks, let go before the pick slips.",
+  slice: "Stop the cursor in the lit window (Space, click or tap Now), once for each node.",
+  strain: "Put your weight in as the swing reaches the lit window (Space, click or tap Now).",
+  nimble: "Move when the cursor is in the lit window (Space, click or tap Now).",
+};
+export function HandsGame({ what, plan, onDone }: { what: string; plan: HandsPlan; onDone: (r: HandsResult | null) => void }) {
+  const [, redraw] = useState(0);
+  const s = useRef({ pick: 0, spot: (Math.random() * 2 - 1) * 78, turn: 0, strain: 0, holding: false, slipped: 0, t: Math.random() * 2, at: Math.random() * 0.6 + 0.2, done: 0, misses: 0, speed: plan.speed, keys: new Set<string>(), flash: "", flashAt: 0, over: false });
+  const dial = useRef<SVGSVGElement>(null);
+  const finish = (r: HandsResult | null) => {
+    if (s.current.over) return;
+    s.current.over = true;
+    setTimeout(() => onDone(r), r ? 450 : 0);
+  };
+  const say = (text: string) => Object.assign(s.current, { flash: text, flashAt: performance.now() });
+  // A window of the bar, inside it and clear of its ends
+  const nextSpot = () => plan.window / 2 + Math.random() * (1 - plan.window);
+  const press = () => {
+    const g = s.current;
+    if (g.over || plan.kind === "pick") return;
+    if (Math.abs(barAt({ ...plan, speed: g.speed }, g.t) - g.at) <= plan.window / 2) {
+      g.done += 1;
+      g.speed *= 1.12;
+      g.at = nextSpot();
+      say(g.done >= plan.nodes ? "Done!" : "Got it");
+      if (g.done >= plan.nodes) finish({ won: true, done: g.done });
+    } else {
+      g.misses += 1;
+      say("Missed");
+      if (g.misses >= plan.misses) finish({ won: false, done: g.done });
+    }
+  };
+  useEffect(() => {
+    // (the mouse is let go of, so the pick and the buttons can be used)
+    if (document.pointerLockElement) document.exitPointerLock?.();
+    // The game's keys are its own while it is open (caught before the walk and the jump see them; letting go still reaches them)
+    const own = ["Space", "KeyA", "KeyD", "ArrowLeft", "ArrowRight", "KeyW", "ArrowUp", "Escape", "KeyS", "ArrowDown", "KeyE", "Enter"];
+    const down = (e: KeyboardEvent) => {
+      if (!own.includes(e.code)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.code === "Escape") return finish(null);
+      if (e.repeat) return;
+      s.current.keys.add(e.code);
+      if (["Space", "Enter", "KeyE"].includes(e.code)) press();
+    };
+    const up = (e: KeyboardEvent) => { s.current.keys.delete(e.code); };
+    window.addEventListener("keydown", down, true);
+    window.addEventListener("keyup", up, true);
+    let last = performance.now();
+    let raf = 0;
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const g = s.current;
+      if (!g.over) {
+        if (plan.kind === "pick") {
+          const k = g.keys;
+          const nudge = (k.has("KeyD") || k.has("ArrowRight") ? 1 : 0) - (k.has("KeyA") || k.has("ArrowLeft") ? 1 : 0);
+          if (nudge && g.turn < 0.05) g.pick = Math.max(-90, Math.min(90, g.pick + nudge * 70 * dt));
+          const holding = g.holding || k.has("Space") || k.has("KeyW") || k.has("ArrowUp");
+          const max = lockTurn(plan, g.pick, g.spot);
+          if (holding) {
+            g.turn = Math.min(max, g.turn + 1.5 * dt);
+            if (g.turn >= 0.999) finish({ won: true, done: 1 });
+            else if (g.turn >= max - 0.01) {
+              g.strain += dt;
+              if (g.strain > 0.8) {
+                g.slipped += 1;
+                g.strain = 0;
+                g.turn = 0;
+                g.holding = false;
+                k.delete("Space"); k.delete("KeyW"); k.delete("ArrowUp");
+                say(g.slipped >= plan.misses ? "The pick slips once too often" : "The pick slips");
+                if (g.slipped >= plan.misses) finish({ won: false, done: 0 });
+              }
+            }
+          } else {
+            g.turn = Math.max(0, g.turn - 3 * dt);
+            g.strain = Math.max(0, g.strain - 2 * dt);
+          }
+        } else g.t += dt;
+      }
+      redraw((n) => (n + 1) % 1e6);
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keyup", up, true);
+    };
+  }, []);
+  const g = s.current;
+  const aim = (e: React.PointerEvent) => {
+    const box = dial.current?.getBoundingClientRect();
+    if (!box || g.turn >= 0.05) return;
+    g.pick = Math.max(-90, Math.min(90, ((e.clientX - box.left) / box.width - 0.5) * 200));
+  };
+  const flash = g.flash && performance.now() - g.flashAt < 900 ? g.flash : "";
+  const btn: React.CSSProperties = { ...base, padding: "8px 16px", background: "rgba(255,255,255,0.15)" };
+  const cursor = barAt({ ...plan, speed: g.speed }, g.t);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 90, pointerEvents: "none" }}>
+      <div role="dialog" aria-label={HANDS_TITLE[plan.kind]} data-testid="hands-game" data-kind={plan.kind} style={{ pointerEvents: "auto", width: "min(360px, calc(100vw - 32px))", background: "rgba(10,14,22,0.86)", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 10, padding: 12, color: "#fff", font: "600 13px sans-serif", textAlign: "center", touchAction: "none", userSelect: "none" }}>
+        <div style={{ color: "#fde68a" }}>{HANDS_TITLE[plan.kind]}: {what}</div>
+        {plan.kind === "pick" ? (
+          <>
+            <svg ref={dial} viewBox="-120 -110 240 130" style={{ width: "100%", height: 150, display: "block", marginTop: 6, cursor: "ew-resize" }} onPointerDown={(e) => { (e.currentTarget as Element).setPointerCapture?.(e.pointerId); aim(e); }} onPointerMove={(e) => (e.buttons || e.pointerType === "mouse") && aim(e)} data-testid="hands-dial">
+              {/* the lock's face, turned by how far the cylinder has gone (a quarter turn opens it), and the keyhole */}
+              <g transform={`rotate(${g.turn * 90 + (g.strain > 0 ? Math.sin(performance.now() / 25) * 2.5 * g.strain : 0)})`}>
+                <circle r={62} fill="#334155" stroke="#94a3b8" strokeWidth={3} />
+                <circle r={40} fill="#1e293b" stroke="#64748b" strokeWidth={2} />
+                <rect x={-5} y={-26} width={10} height={30} rx={4} fill="#0f172a" />
+              </g>
+              {/* the pick, from the keyhole out at its angle */}
+              <line x1={0} y1={0} x2={Math.sin((g.pick * Math.PI) / 180) * 104} y2={-Math.cos((g.pick * Math.PI) / 180) * 104} stroke={g.strain > 0.3 ? "#f87171" : "#e5e7eb"} strokeWidth={3} strokeLinecap="round" />
+              <path d="M-104 0 A104 104 0 0 1 104 0" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
+            </svg>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>Slips left: {Math.max(0, plan.misses - g.slipped)}</div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 6 }}>
+              <button style={{ ...btn, background: "rgba(250,204,21,0.45)" }} data-testid="hands-turn"
+                onPointerDown={(e) => { e.preventDefault(); g.holding = true; }} onPointerUp={() => { g.holding = false; }} onPointerCancel={() => { g.holding = false; }} onPointerLeave={() => { g.holding = false; }}>Turn (hold)</button>
+              <button style={btn} data-testid="hands-cancel" onClick={() => finish(null)}>Stop (Esc)</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ position: "relative", height: 28, margin: "12px 4px 6px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 5, overflow: "hidden" }} onPointerDown={(e) => { e.preventDefault(); press(); }} data-testid="hands-bar">
+              <div style={{ position: "absolute", top: 0, bottom: 0, left: `${(g.at - plan.window / 2) * 100}%`, width: `${plan.window * 100}%`, background: "rgba(74,222,128,0.6)" }} />
+              <div style={{ position: "absolute", top: -2, bottom: -2, left: `calc(${cursor * 100}% - 2px)`, width: 4, background: "#fde68a", boxShadow: "0 0 4px #000" }} />
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              {Array.from({ length: plan.nodes }, (_, i) => (i < g.done ? "●" : "○")).join(" ")} · misses left {Math.max(0, plan.misses - g.misses)}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 6 }}>
+              <button style={{ ...btn, background: "rgba(74,222,128,0.45)" }} data-testid="hands-now" onPointerDown={(e) => { e.preventDefault(); press(); }}>Now</button>
+              <button style={btn} data-testid="hands-cancel" onClick={() => finish(null)}>Stop (Esc)</button>
+            </div>
+          </>
+        )}
+        <div style={{ minHeight: 16, marginTop: 4, color: /Got|Done/.test(flash) ? "#86efac" : "#fca5a5" }}>{flash}</div>
+        <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.75 }}>{HANDS_HINT[plan.kind]}</div>
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PersonSheet, TalkPanel } from "@/components/Play/TalkPanel";
+import { HandsGame, type HandsResult } from "@/components/Map/interiors/ShooterHud";
 import { CommsPanel, type CommsContact, type CommsMate } from "@/components/Play/CommsPanel";
 import { COMMS_ISSUE, canCall, commsOf, needsComms } from "@shared/logic/comms";
 import { NemesisPanel } from "@/components/Play/NemesisPanel";
@@ -21,7 +22,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, useP
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, handsKindOf, handsMargin, handsPlan, handsTotal, type HandsKind, type HandsPlan, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -813,9 +814,34 @@ export default function GameBoard() {
     let best = { roller: "me", skill: null as string | null, bonus: -99 };
     for (const r of rollers) for (const o of r.options) if (o.bonus > best.bonus) best = { roller: r.id, skill: o.skill, bonus: o.bonus };
     const meBest = [...rollers[0].options].sort((a, b) => b.bonus - a.bonus)[0];
+    // (the shooter does by hand what is done with the hands in the moment: a lock, slicing, a strain, quick fingers; shooter.ts handsKindOf)
+    const kind = playMode === "shooter" ? handsKindOf(plan.what) : undefined;
+    if (kind) return handsCheck(plan, meBest, kind);
     if (unasked) return Promise.resolve(performCheck(plan, "me", meBest.skill));
     return new Promise((resolve) => setCheckAsk({ request: { what: plan.what, dc: plan.dc, rollers, best: { roller: best.roller, skill: best.skill } }, plan, resolve }));
   };
+  // Done by hand in the shooter (house rule, shooter.ts handsPlan): the game sized by how the passive check stands to the DC, advantage and
+  // disadvantage as the tabletop has them (a rest aboard, heavy load, exhaustion); null when it is stopped
+  const [hands, setHands] = useState<{ what: string; plan: HandsPlan; resolve: (r: HandsResult | null) => void; key: number } | null>(null);
+  const handsCheck = async (plan: CheckPlan, option: CheckOption, kind: HandsKind): Promise<CheckResult | null> => {
+    const rested = !!play.firstCheck && (play.firstCheck === "any" || (!!option.skill && play.firstCheck.includes(option.skill)) || (!!plan.tool && play.firstCheck.includes("tool")));
+    const burdened = (loadNow().disadvantage && ["strength", "dexterity", "constitution"].includes(option.ability)) || (character.exhaustionLevel ?? 0) >= 1;
+    const up = option.edge || rested;
+    const edge = up && !burdened ? 1 : burdened && !up ? -1 : 0;
+    const bonus = option.bonus + (plan.extra ?? 0);
+    const game = handsPlan(kind, handsMargin(bonus, plan.dc, edge));
+    const r = await new Promise<HandsResult | null>((resolve) => setHands({ what: plan.what, plan: game, resolve, key: Date.now() }));
+    if (!r) return null;
+    if (rested) setTimeout(() => patchPlay({ firstCheck: undefined }), 0);
+    toast[r.won ? "success" : "error"](`${plan.what}: ${r.won ? "done." : "failed."}`);
+    return { success: r.won, total: handsTotal(plan.dc, r.won, r.done), roll: 0, bonus };
+  };
+  // (a fight that begins meanwhile stops it)
+  useEffect(() => {
+    if (!hands || !inCombat) return;
+    hands.resolve(null);
+    setHands(null);
+  }, [inCombat, !!hands]);
   // Roll it: d20 (two, the higher, with advantage) + the chosen bonus (+ the substance's d3 for the character)
   const performCheck = async (plan: CheckPlan, rollerId: string, skill: string | null): Promise<CheckResult> => {
     const option = optionsFor(rollerId, plan).find((o) => o.skill === skill) ?? optionsFor(rollerId, plan)[0];
@@ -855,7 +881,10 @@ export default function GameBoard() {
     }
     const success = total >= plan.dc;
     const who = mine ? "" : `${(character.companionData?.party ?? []).find((c: Companion) => c.id === rollerId)?.name}: `;
-    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${passive ? "passive " : ""}${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}${maneuverNote}. ${success ? "Success." : "Failed."}`);
+    // (the shooter rolls nothing: the check is a threshold, the character's passive total against what is needed, as Fallout: New Vegas shows
+    // it: [Persuasion 14/16])
+    if (passive) toast[success ? "success" : "error"](`${who}${plan.what} [${option.skill ? option.label : option.ability.charAt(0).toUpperCase() + option.ability.slice(1)} ${total}/${plan.dc}]: ${success ? "success." : "not enough."}`);
+    else toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}${maneuverNote}. ${success ? "Success." : "Failed."}`);
     return { success, total, roll, bonus };
   };
   const finishCheck = async (rollerId: string | null, skill: string | null) => {
@@ -7027,7 +7056,9 @@ export default function GameBoard() {
     const live = withPresence(latestWorld() ?? world, now);
     const watching = (live.areas[roomId]?.occupants ?? []).some((o) => o.id === keeper.id);
     let seen = false;
-    if (watching) {
+    // (in the shooter: a keeper looking the party's way just now, as the eye shows, sees it; one who is not leaves it to quick hands)
+    if (watching && playMode === "shooter" && seenDoing(["people"])) seen = true;
+    else if (watching) {
       const dc = 10 + (keeper.saves?.wisdom ?? 0);
       const unnoticed = await abilityCheck("Sleight of Hand (the shopkeeper's eyes)", dc, ["dexterity"], skilled("sleight of hand"));
       if (cancelledCheck.current) return;
@@ -9448,6 +9479,7 @@ export default function GameBoard() {
         )}
         {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
         {stopPanel()}
+        {hands && <HandsGame key={hands.key} what={hands.what} plan={hands.plan} onDone={(r) => { hands.resolve(r); setHands(null); }} />}
         {askMode && world && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="mode-dialog" role="dialog" aria-label="How to play this campaign">
             <div className="max-h-full w-full max-w-2xl space-y-3 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm">

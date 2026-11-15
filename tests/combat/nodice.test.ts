@@ -66,3 +66,44 @@ test("awareness fills to 1 and stays, and empties out of range", () => {
   assert.ok(fading < 0.5);
   assert.deepEqual(stepNotice({ gone: 0.7 }, [], sneaker(), 0.1), {}, "those who left are dropped");
 });
+
+// Done by hand in the shooter (2026-11-15): which checks are games, and how the character's numbers size them (shooter.ts handsPlan)
+import { barAt, handsKindOf, handsMargin, handsPlan, handsTotal, lockTurn } from "../../shared/logic/shooter";
+
+test("locks are a dial, slicing a bar of three, a strain a bar of one, quick hands of two; talk is not a game", () => {
+  assert.equal(handsKindOf("Lock (after hours)"), "pick");
+  assert.equal(handsKindOf("Window lock"), "pick");
+  assert.equal(handsKindOf("Loop the camera"), "slice");
+  assert.equal(handsKindOf("Hotwiring Speeder"), "slice");
+  assert.equal(handsKindOf("Break the glass"), "strain");
+  assert.equal(handsKindOf("Sleight of Hand (the shopkeeper's eyes)"), "nimble");
+  assert.equal(handsKindOf("Persuasion"), undefined);
+  assert.equal(handsKindOf("Search"), undefined);
+  assert.equal(handsPlan("slice", 0).nodes, 3);
+});
+
+test("the better the passive check stands over the DC, the wider the window; advantage widens it", () => {
+  assert.equal(handsMargin(3, 15, 0), -2);
+  assert.equal(handsMargin(3, 15, 1), 3);
+  assert.ok(handsPlan("pick", 4).window > handsPlan("pick", 0).window);
+  assert.ok(handsPlan("pick", -20).window >= 2.5, "never shut");
+  assert.ok(handsPlan("slice", 5).window > handsPlan("slice", -5).window);
+});
+
+test("a lock turns all the way in the sweet spot, part of the way beside it, and only jiggles beyond", () => {
+  const plan = handsPlan("pick", 0);
+  assert.equal(lockTurn(plan, 10, 10 + plan.window / 2), 1);
+  const part = lockTurn(plan, 10, 10 + plan.window + plan.partial / 2);
+  assert.ok(part > 0.4 && part < 0.6);
+  assert.equal(lockTurn(plan, -80, 80), 0.08);
+});
+
+test("the bar's cursor goes back and forth, and the end is told as a total", () => {
+  const plan = handsPlan("strain", 0);
+  assert.equal(barAt(plan, 0), 0);
+  assert.ok(Math.abs(barAt(plan, 1 / plan.speed) - 1) < 1e-9);
+  assert.ok(Math.abs(barAt(plan, 1.5 / plan.speed) - 0.5) < 1e-9);
+  assert.equal(handsTotal(14, true, 1), 14);
+  assert.equal(handsTotal(14, false, 0), 9);
+  assert.equal(handsTotal(14, false, 2), 13);
+});
