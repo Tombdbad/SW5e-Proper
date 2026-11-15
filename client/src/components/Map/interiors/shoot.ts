@@ -58,7 +58,8 @@ export interface Hud {
 export const blankHud = (): Hud => ({ hp: 0, maxHp: 1, weapon: "gun", hasGun: false, hasBlade: false, saber: false, left: 0, mag: 0, reserve: 0, reloading: false, grenades: 0, items: 0, belt: 0, poisoned: false, burning: false, blinded: false, temp: 0, dangerAt: 0, focus: 0, focusMax: 1, blocking: false, foes: 0, points: 0, powers: [], crouching: false, hitAt: 0, headAt: 0, hurtAt: 0, killAt: 0, deflectAt: 0, page: 0, pages: 1, buffs: [], states: [], sensed: 0, zoom: 0, range: 0, ads: 0, scope: 0, pings: [] });
 
 // How far the party's gun is at the shoulder, 0 to 1, each frame (the walk reads it: aiming slows the party)
-export const ADS = { k: 0 };
+// (and the zoom the camera is at, 1 for none: a look turns by less the further in it is)
+export const ADS = { k: 0, zoom: 1 };
 
 interface ShootStore {
   session: Session | null;

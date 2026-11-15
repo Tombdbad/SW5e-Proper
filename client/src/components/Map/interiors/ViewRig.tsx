@@ -165,9 +165,9 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       if (!drag.looking && Math.hypot(dx, dy) < 8) return;
       drag.looking = true;
       [drag.x, drag.y] = [e.clientX, e.clientY];
-      yaw.current -= dx * 0.006;
+      yaw.current -= (dx * 0.006) / ADS.zoom;
       const [lo, hi] = PITCH[mode];
-      pitch.current = Math.max(lo, Math.min(hi, pitch.current - dy * 0.005));
+      pitch.current = Math.max(lo, Math.min(hi, pitch.current - (dy * 0.005) / ADS.zoom));
     };
     const up = () => { drag = null; };
     // In a shooter fight (shared/logic/shooter.ts) a mouse looks by pointer lock (the first click takes the pointer; Esc gives it back), the
@@ -190,9 +190,9 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     };
     const shooterLook = (e: PointerEvent) => {
       if (!fighting() || document.pointerLockElement !== el) return;
-      yaw.current -= e.movementX * 0.0024;
+      yaw.current -= (e.movementX * 0.0024) / ADS.zoom;
       const [lo, hi] = PITCH[mode];
-      pitch.current = Math.max(lo, Math.min(hi, pitch.current - e.movementY * 0.002));
+      pitch.current = Math.max(lo, Math.min(hi, pitch.current - (e.movementY * 0.002) / ADS.zoom));
     };
     const swallow = (e: Event) => { if (fighting() && (e as PointerEvent).pointerType !== "touch") e.stopPropagation(); };
     const unlocked = () => { if (document.pointerLockElement !== el) { useShoot.getState().up("fire"); useShoot.getState().up("block"); useShoot.getState().up("sights"); } };
@@ -326,7 +326,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       marker.current.visible = mode === "shoulder" && a.kind !== "none";
       marker.current.position.copy(a.blocked ?? a.point);
       marker.current.quaternion.copy(camera.quaternion);
-      marker.current.scale.setScalar(Math.max(0.05, a.distance * 0.018));
+      marker.current.scale.setScalar(Math.max(0.05, (a.distance * 0.018) / Math.max(1, ADS.zoom)));
       (marker.current.material as THREE.MeshBasicMaterial).color.set(shown.current.blocked ? "#f87171" : a.kind === "target" ? "#4ade80" : "#ffffff");
     }
   });
