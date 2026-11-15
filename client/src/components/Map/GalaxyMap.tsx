@@ -81,6 +81,8 @@ export function Probe({ locate }: { locate: (key: string) => [number, number, nu
       },
       // Where something is in the scene itself (not on the screen), for measuring how far it has moved
       world: (key: string) => locate(key) ?? null,
+      // Where the camera is and the point it looks at, and its near plane (for checking that it keeps over the ground)
+      view: () => ({ at: camera.position.toArray(), target: rigControls.current?.target.toArray() ?? null, near: (camera as THREE.PerspectiveCamera).near }),
       // What the last frame cost, for judging how heavy a scene is
       info: () => ({ calls: gl.info.render.calls, triangles: gl.info.render.triangles, geometries: gl.info.memory.geometries }),
       // Puts the camera at a point looking at another, for a close look at something (it stays until the map is turned or flies on)
@@ -105,7 +107,12 @@ export function Probe({ locate }: { locate: (key: string) => [number, number, nu
 type V3 = [number, number, number];
 // The controls of the camera that is up, for the probe's close looks
 const rigControls: { current: any; hold?: boolean } = { current: null };
-export function Rig({ target, offset, min, max, fov = 75, follow }: { target: V3; offset: V3; min: number; max: number; fov?: number; follow?: { current: V3 | null } }) {
+// (2026-11-15, the user: the overhead camera "does not follow terrain height changes") `ground`: the height of the ground under a point of the scene, where
+// it rises and falls (a district on rolling land). The followed point's height is eased into (a step up a kerb does not jolt the view), the camera is kept
+// over the ground under it, and it is lifted where a rise between it and what it looks at would stand in the way; its near plane follows its distance.
+const CAMERA_CLEAR = 1.2; // how far over the ground the camera keeps, and over the line of the land between it and the point looked at (scene units, squares)
+const FOLLOW_EASE = 6; // how quickly the followed height is taken up, a second
+export function Rig({ target, offset, min, max, fov = 75, follow, ground }: { target: V3; offset: V3; min: number; max: number; fov?: number; follow?: { current: V3 | null }; ground?: (x: number, z: number) => number }) {
   const controls = useRef<any>(null);
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
   const fly = useRef(0);
@@ -125,6 +132,7 @@ export function Rig({ target, offset, min, max, fov = 75, follow }: { target: V3
   }, [view, fov]);
   useEffect(() => () => {
     camera.fov = 75;
+    camera.near = 0.1;
     camera.updateProjectionMatrix();
   }, []);
   useFrame((_, delta) => {
@@ -132,18 +140,50 @@ export function Rig({ target, offset, min, max, fov = 75, follow }: { target: V3
       fly.current = Math.max(0, fly.current - delta * 1.8);
       place(1 + 1.2 * fly.current * fly.current);
     } else if (follow?.current && controls.current && !rigControls.hold) {
-      const [dx, dy, dz] = [follow.current[0] - controls.current.target.x, follow.current[1] - controls.current.target.y, follow.current[2] - controls.current.target.z];
-      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) < 0.0005) return;
-      camera.position.set(camera.position.x + dx, camera.position.y + dy, camera.position.z + dz);
-      controls.current.target.set(...follow.current);
-      controls.current.update();
+      // (along the ground at once, up and down eased)
+      const ease = 1 - Math.exp(-FOLLOW_EASE * Math.min(delta, 0.1));
+      const [dx, dy, dz] = [follow.current[0] - controls.current.target.x, (follow.current[1] - controls.current.target.y) * (Math.abs(follow.current[1] - controls.current.target.y) < 0.01 ? 1 : ease), follow.current[2] - controls.current.target.z];
+      if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) >= 0.0005) {
+        camera.position.set(camera.position.x + dx, camera.position.y + dy, camera.position.z + dz);
+        controls.current.target.set(controls.current.target.x + dx, controls.current.target.y + dy, controls.current.target.z + dz);
+        controls.current.update();
+      }
     }
+    if (ground && controls.current && !rigControls.hold) clearGround(camera, controls.current, ground);
   });
   useEffect(() => {
     rigControls.current = controls.current;
     return () => { if (rigControls.current === controls.current) rigControls.current = null; };
   });
   return <OrbitControls ref={controls} enableZoom enablePan enableRotate minDistance={min} maxDistance={max} maxPolarAngle={Math.PI / 2.15} />;
+}
+
+// Keeps the camera over the ground and with nothing of the land between it and the point it looks at: lifted (about that point, at the same distance as far as
+// it can) by the most the ground under it or under the line of sight stands in the way; the near plane a small share of the distance, so the land up close is not cut
+function clearGround(camera: THREE.PerspectiveCamera, controls: { target: THREE.Vector3; update: () => void }, ground: (x: number, z: number) => number) {
+  const t = controls.target;
+  const p = camera.position;
+  let lift = 0;
+  for (let i = 1; i <= 12; i++) {
+    const k = i / 12;
+    const [x, y, z] = [t.x + (p.x - t.x) * k, t.y + (p.y - t.y) * k, t.z + (p.z - t.z) * k];
+    // (near the point looked at the line may pass low over the ground: it is the camera's own end that must clear it)
+    const need = ground(x, z) + CAMERA_CLEAR * k - y;
+    if (need > lift) lift = need / k;
+  }
+  const dist = p.distanceTo(t);
+  if (lift > 0.01) {
+    p.y += lift;
+    // (back to the distance it was at, so that the lift turns the view down rather than drawing it out)
+    p.sub(t).setLength(dist).add(t);
+    if (p.y < ground(p.x, p.z) + CAMERA_CLEAR) p.y = ground(p.x, p.z) + CAMERA_CLEAR;
+    controls.update();
+  }
+  const near = Math.min(0.5, Math.max(0.1, dist * 0.004));
+  if (Math.abs(camera.near - near) > 0.02) {
+    camera.near = near;
+    camera.updateProjectionMatrix();
+  }
 }
 
 interface GalaxyMapProps {

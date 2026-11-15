@@ -4570,7 +4570,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         flame.current.visible = pose.burning;
         if (pose.burning) flame.current.scale.y = 0.8 + 0.5 * Math.abs(Math.sin(performance.now() / 45));
       }
-      eye.current = outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+      eye.current = outside && planned ? [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz] : null;
       return;
     }
     if (rope.current?.visible || flame.current?.visible) {
@@ -4654,7 +4654,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
       if (sit.current && into > 0.3) token.current.rotation.y = sit.current.face;
     }
-    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, duelHigh(duelRef.current.z, (duelRef.current.x ?? 0) + 0.5, (duelRef.current.y ?? 0) + 0.5), (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, duelHigh(duelRef.current.z, (duelRef.current.x ?? 0) + 0.5, (duelRef.current.y ?? 0) + 0.5), (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz] : null;
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
@@ -5856,7 +5856,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       {mode !== "overhead" && viewing ? (
         <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (
-        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
+        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} ground={reliefGround ? (x, z) => groundY(x + cx, z + cz) : undefined} />
       )}
       <DistanceDetail />
       <Sky indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
