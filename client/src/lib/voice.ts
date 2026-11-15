@@ -398,7 +398,18 @@ const SPOKEN_CUES: Record<string, string> = { chuckle: "Heh heh.", laugh: "Ha ha
 let playing: { stop: () => void } | null = null;
 // (people of the world talking among themselves, heard in the background: `ambient`)
 let ambient: { stop: () => void } | null = null;
-export const stopSpeaking = () => { playing?.stop(); playing = null; ambient?.stop(); ambient = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+// (`halt` stops what is playing; `stopSpeaking` also drops what was queued behind it by `speakQueued`)
+let queueEpoch = 0;
+let queueTail: Promise<void> = Promise.resolve();
+const halt = () => { playing?.stop(); playing = null; ambient?.stop(); ambient = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+export const stopSpeaking = () => { queueEpoch++; halt(); };
+// A reply spoken as it is written (2026-11-15): each finished sentence is queued here as the server sends it and is said after the one before, in the
+// same voice, without cutting it off. The first plays within about a second of its arrival; `stopSpeaking` drops the rest. Resolves when this one has been said.
+export function speakQueued(text: string, speaker: VoiceSpeaker, o: { comms?: boolean } = {}): Promise<void> {
+  const epoch = queueEpoch;
+  queueTail = queueTail.then(() => (epoch === queueEpoch ? speak(text, speaker, o) : undefined)).catch(() => undefined);
+  return queueTail;
+}
 
 // Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped. `ambient`: two people of
 // the world talking to each other (2026-11-02), at `gain` (quieter the further off they are): never over a reply to the party (it is not
@@ -408,7 +419,7 @@ export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: bo
     if (playing) return;
     ambient?.stop();
     ambient = null;
-  } else stopSpeaking();
+  } else halt();
   const c = audio();
   // (talk in the background is not heard before the page may play sound: a browser holds it back until the player has touched the page)
   if (o.ambient && (!c || c.state !== "running")) return;

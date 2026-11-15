@@ -61,9 +61,32 @@ export const COMMS_ITEM = /^(commlink|holocomm)/i;
 export const COMMS_ISSUE = "Commlink";
 export const commsOf = (names: string[] | undefined): string | undefined => (names ?? []).find((n) => COMMS_ITEM.test(n));
 export const needsComms = (c: { kind: string }) => c.kind !== "beast" && c.kind !== "droid";
-export function canCall(opts: { fromPlanet?: string; toPlanet?: string; fromHas: boolean; toHas: boolean }): { ok: boolean; why: string } {
+// (2026-11-15) House rule: while the party is aboard a ship (`transceiver`: its name), the ship's transceiver reaches anyone with a commlink on any world
+// the party knows of, the call being thin and with some static (`via`: "transceiver"). Off the ship the commlink's own reach is the planet.
+export function canCall(opts: { fromPlanet?: string; toPlanet?: string; fromHas: boolean; toHas: boolean; transceiver?: string }): { ok: boolean; why: string; via?: "commlink" | "transceiver" } {
   if (!opts.fromHas) return { ok: false, why: "You carry no commlink." };
   if (!opts.toHas) return { ok: false, why: "They carry no commlink." };
-  if (!opts.fromPlanet || opts.fromPlanet !== opts.toPlanet) return { ok: false, why: "No signal between worlds without a ship's transceiver." };
-  return { ok: true, why: "" };
+  if (opts.fromPlanet && opts.fromPlanet === opts.toPlanet) return { ok: true, why: "", via: "commlink" };
+  if (opts.transceiver) return { ok: true, why: "", via: "transceiver" };
+  return { ok: false, why: "No signal between worlds without a ship's transceiver." };
+}
+
+// ---- A call that comes in (2026-11-15) -----------------------------------------------------------------------------------------------
+// House rule: a person the party is warm to (regard 40 or more) who carries a commlink rings now and then, about one day in six each, at an hour of their
+// own between 8 and 20, to say why: work they have, news they heard, or just to ask how the party is. At most one call a day, and the page offers it:
+// answered or not, it does not ring again that day. Pure and worked out from the day and the person's id alone.
+export const RING_REGARD = 40;
+export const RING_ODDS = 6;
+const unit = (text: string) => (Array.from(text).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0) % 10000 / 10000;
+export interface Ringer { id: string; regard: number; reasons: string[] }
+export interface Ring { id: string; reason: string; hour: number }
+export function incomingCall(day: number, minutes: number, people: Ringer[]): Ring | null {
+  const hour = Math.floor(minutes / 60) % 24;
+  const due = people
+    .filter((p) => p.regard >= RING_REGARD && unit(`${p.id}|${day}|rings`) < 1 / RING_ODDS)
+    .map((p) => ({ p, at: 8 + Math.floor(unit(`${p.id}|${day}|hour`) * 12) }))
+    .sort((a, b) => a.at - b.at || a.p.id.localeCompare(b.p.id))[0];
+  if (!due || hour < due.at) return null;
+  const reasons = due.p.reasons.length ? due.p.reasons : ["to ask how you are getting on"];
+  return { id: due.p.id, reason: reasons[Math.floor(unit(`${due.p.id}|${day}|why`) * reasons.length)], hour: due.at };
 }
