@@ -202,7 +202,8 @@ export function HandsGame({ what, plan, onDone }: { what: string; plan: HandsPla
     let last = performance.now();
     let raf = 0;
     const frame = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      // (real time, even at a few frames a second: a slow phone's lock turns as fast as a fast one's; a long gap, a hidden tab, is cut short)
+      const dt = Math.min(0.2, (now - last) / 1000);
       last = now;
       const g = s.current;
       if (!g.over) {
@@ -213,7 +214,7 @@ export function HandsGame({ what, plan, onDone }: { what: string; plan: HandsPla
           const holding = g.holding || k.has("Space") || k.has("KeyW") || k.has("ArrowUp");
           const max = lockTurn(plan, g.pick, g.spot);
           if (holding) {
-            g.turn = Math.min(max, g.turn + 1.5 * dt);
+            g.turn = Math.min(max, g.turn + 2.2 * dt);
             if (g.turn >= 0.999) finish({ won: true, done: 1 });
             else if (g.turn >= max - 0.01) {
               g.strain += dt;
