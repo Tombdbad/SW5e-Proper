@@ -3,6 +3,8 @@
 // phone's buttons for the shots (fire, grenade, the item and the next one, reload, swap, block). Drawn inside the eye views'
 // own overlay (ViewRig.tsx), where the stick and the Use button are. interiors/shoot.ts has the keys.
 import { useShoot, type ShootKey } from "./shoot";
+import { useNotice } from "./aim";
+import { NOTICE } from "@shared/logic/shooter";
 
 const base: React.CSSProperties = { borderRadius: 40, border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 12px sans-serif", pointerEvents: "auto", touchAction: "none", userSelect: "none", cursor: "pointer" };
 const fresh = (at: number, ms: number) => at > 0 && performance.now() - at < ms;
@@ -99,6 +101,42 @@ export function ShooterHud() {
           </div>
         )}
         {hud.note && <div style={{ fontSize: 12, color: "#fde68a" }}>{hud.note}</div>}
+      </div>
+    </div>
+  );
+}
+
+// The eye over the crosshair (2026-11-15, the user: Skyrim's opening eye; house rule, shooter.ts NOTICE): shut while nobody is aware of the
+// party, opening as the most aware watcher fills, amber once it is looking (`caution`), wide and red once it has seen the party. Shown while
+// sneaking, and whenever someone who matters is looking; not in a fight (the fight has begun).
+export function NoticeEye() {
+  const { level, show, who } = useNotice();
+  const fighting = useShoot((s) => !!s.session);
+  if (!show || fighting) return null;
+  const k = Math.max(0, Math.min(1, level));
+  const seen = k >= 1;
+  const looking = k >= NOTICE.caution;
+  const colour = seen ? "#ef4444" : looking ? "#fbbf24" : "#e5e7eb";
+  // (the lids part by how aware the watcher is: a slit when nobody is, wide open when seen)
+  const lid = 1.5 + 13 * k;
+  const shape = `M11 20 Q32 ${20 - lid * 1.4} 53 20 Q32 ${20 + lid * 1.4} 11 20 Z`;
+  return (
+    <div style={{ position: "absolute", left: "50%", top: "calc(50% - 74px)", transform: "translateX(-50%)", textAlign: "center", pointerEvents: "none", filter: "drop-shadow(0 0 2px #000)" }} data-testid="notice-eye" data-level={k.toFixed(2)} data-state={seen ? "seen" : looking ? "looking" : "hidden"}>
+      <svg width={64} height={40} viewBox="0 0 64 40" style={{ display: "block", margin: "0 auto", opacity: 0.55 + 0.43 * k }}>
+        <defs>
+          <clipPath id="notice-eye-clip"><path d={shape} /></clipPath>
+        </defs>
+        {/* the brackets, as Skyrim's: they close in on the eye as it opens */}
+        <path d={`M${2 + 3 * k + 6} 6 L${2 + 3 * k} 20 L${2 + 3 * k + 6} 34`} fill="none" stroke={colour} strokeWidth={2} opacity={0.8} />
+        <path d={`M${62 - 3 * k - 6} 6 L${62 - 3 * k} 20 L${62 - 3 * k - 6} 34`} fill="none" stroke={colour} strokeWidth={2} opacity={0.8} />
+        <path d={shape} fill="rgba(0,0,0,0.45)" stroke={colour} strokeWidth={2} />
+        <g clipPath="url(#notice-eye-clip)">
+          <circle cx={32} cy={20} r={8} fill={colour} opacity={0.85} />
+          <circle cx={32} cy={20} r={3.5} fill="#111" />
+        </g>
+      </svg>
+      <div style={{ font: "600 11px sans-serif", color: colour, textShadow: "0 0 3px #000, 0 0 3px #000", marginTop: 2 }}>
+        {seen ? `Seen${who ? ` by ${who}` : ""}` : looking ? `${who ?? "Someone"} is looking` : "Hidden"}
       </div>
     </div>
   );

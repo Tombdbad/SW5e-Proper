@@ -105,6 +105,57 @@ export const passiveDamage = (dice: number, sides: number, half = false) => {
   return half ? Math.floor(total / 2) : total;
 };
 
+// ---- Being noticed (2026-11-15) ---------------------------------------------------------------------------------------------------------
+// The user: the shooter mode "should not be mixing the tabletop checks with shooter mechanics"; Skyrim's eye was the model. HOUSE RULE: no
+// Stealth check is made in the shooter. Each watcher's awareness of the party fills from 0 to 1 while it can see or hear the party, and empties
+// when it cannot. It fills faster the nearer the party is, the more of it shows (standing, crouched, prone), the louder it moves (still, walking,
+// running, flying; armour that is bulky or obtrusive is louder and silent armour quieter: the book's Stealth disadvantage and advantage), in the
+// light, in front of the watcher rather than behind it, and by how far the watcher's passive Perception is over the party's own passive
+// Stealth (10 + the Stealth bonus): each point 20% faster or slower. Heard but not seen, a fifth of what sight would give (Skyrim's sound and
+// sight factors). Full, the watcher has seen the party; over `caution` it is looking for it (the eye half open).
+export const NOTICE = {
+  range: 16, // squares a watcher notices anything within
+  fill: 0.9, // a second's awareness at point-blank range, standing, walking, in the light, in front, at even numbers
+  fade: 0.22, // a second's loss once the watcher neither sees nor hears anything
+  caution: 0.4,
+  perPoint: 1.2,
+  behind: 0.35, // what sight gives behind a watcher's shoulders (it still hears)
+  heard: 0.2, // what noise gives out of sight
+  dark: 0.55,
+  posture: [1, 0.5, 0.3, 0.6] as const, // standing, crouched, prone, swimming
+};
+export interface Watcher { id: string; x: number; y: number; perception: number; face?: number; seeing?: boolean }
+export interface Sneaker { x: number; y: number; speed: number; posture: 0 | 1 | 2 | 3; air: boolean; stealth: number; edge: number; dark: boolean; unseen?: boolean }
+// How loud the party moves: still, at a walk (under 3 squares a second), running, or flying a pack (house rule); crouched or prone, half
+export function noiseOf(p: Pick<Sneaker, "speed" | "posture" | "air" | "edge">): number {
+  const base = p.air ? 1.5 : p.speed < 0.2 ? 0.1 : p.speed < 3 ? 0.6 : 1.2;
+  return base * (p.posture === 1 || p.posture === 2 ? 0.5 : 1) * (p.edge < 0 ? 1.5 : p.edge > 0 ? 0.6 : 1);
+}
+// A watcher's awareness gained a second (0 when it is out of range)
+export function noticeRate(w: Watcher, p: Sneaker): number {
+  const d = Math.hypot(w.x - p.x, w.y - p.y);
+  if (d > NOTICE.range) return 0;
+  const near = Math.pow(1 - d / NOTICE.range, 1.5);
+  // (in front: within 70 degrees of where it faces; a face of the angle atan2(dx, dy), as the map turns its figures)
+  const ahead = w.face === undefined || d < 0.8 ? 1 : Math.cos(Math.atan2(p.x - w.x, p.y - w.y) - w.face) > Math.cos(1.22) ? 1 : NOTICE.behind;
+  const seen = w.seeing === false || p.unseen ? 0 : NOTICE.posture[p.posture] * (p.dark ? NOTICE.dark : 1) * ahead;
+  const heard = noiseOf(p) * (w.seeing === false ? NOTICE.heard : 1) * 0.5;
+  const odds = clamp(Math.pow(NOTICE.perPoint, w.perception - (10 + p.stealth)), 0.12, 6);
+  return NOTICE.fill * near * (seen + heard) * odds;
+}
+// Every watcher's awareness `dt` seconds on (those no longer there are dropped); a watcher that has seen the party stays at 1 until it is told
+// otherwise
+export function stepNotice(levels: Record<string, number>, watchers: Watcher[], p: Sneaker, dt: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const w of watchers) {
+    const was = levels[w.id] ?? 0;
+    if (was >= 1) { out[w.id] = 1; continue; }
+    const gain = noticeRate(w, p);
+    out[w.id] = clamp(gain > 0.02 ? was + gain * dt : was - NOTICE.fade * dt, 0, 1);
+  }
+  return out;
+}
+
 // ---- Weapons ---------------------------------------------------------------------------------------------------------------------
 export interface Gun {
   name: string;

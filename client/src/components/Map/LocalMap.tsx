@@ -89,6 +89,9 @@ export const usePartySpot = create<{ areaId: string | null; x: number; y: number
   y: 0,
   stand: (areaId, x, y) => set({ areaId, x, y }),
 }));
+// Where the party is at this frame, on the same grid, and how fast it is going (squares a second, eased): read by the shooter's watchers (Play's
+// notice loop, shooter.ts stepNotice); `area` is the room it is in, or the place on whose map it walks
+export const partyLive = { area: null as string | null, x: 0, y: 0, speed: 0, at: 0 };
 
 // The party going up to a roof or down from it (shared/logic verticalMove; the path is interiors/transit.ts): Play asks for it and waits
 // until it is over, the scene carries the figure along it, and only then does Play move the party to the roof or the street
@@ -2132,6 +2135,9 @@ function followSpot(open: (x: number, y: number) => boolean, lead: Sq, from: Sq,
 // Where everyone in the room the party is in is drawn just now, by plan asset, in the room's squares
 const drawnAt = new Map<string, Sq>();
 export const whereNow = (assetId: string): Sq | undefined => drawnAt.get(assetId);
+// And the way each faces (the figure's turn, atan2(dx, dy)): a watcher sees what is in front of it (shooter.ts noticeRate)
+const drawnFace = new Map<string, number>();
+export const facingNow = (assetId: string): number | undefined => drawnFace.get(assetId);
 
 // What a musician plays, held in front of them
 function Instrument({ name = "" }: { name?: string }) {
@@ -2732,7 +2738,10 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       group.position.set(px + 0.5, (onStage ? setting.stageHeight : 0) + (setting.stands?.(squareOf(a)) ?? 0) + (setting.ground?.(px + 0.5, py + 0.5) ?? 0) + (playingNow ? Math.abs(Math.sin(state.clock.elapsedTime * 5 + a.phase)) * 0.07 : 0), py + 0.5);
       // A droid wiping a table turns on the spot
       if (a.brain === "droid" && a.doing === "cleaning" && !a.path.length) group.rotation.y += dt * 3;
-      if (record) drawnAt.set(a.key, squareOf(a));
+      if (record) {
+        drawnAt.set(a.key, squareOf(a));
+        drawnFace.set(a.key, group.rotation.y);
+      }
       claimSquare(`life:${a.key}`, a.doing === "gone" ? null : mapSq(a.goal ?? squareOf(a)));
     }
     if (agents.some((a) => a.doing === "gone")) {
@@ -4610,6 +4619,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       // (the figure bends and lies down by itself: its joints, told by the party's motion)
       const pm = partyMotion.current;
       const gr = useRun.getState();
+      {
+        const now = performance.now();
+        const gap = Math.max(1e-3, Math.min(0.25, (now - partyLive.at) / 1000));
+        const went = Math.hypot(feet.current.x - partyLive.x, feet.current.y - partyLive.y) / gap;
+        partyLive.speed += ((went < 20 ? went : 0) - partyLive.speed) * Math.min(1, gap * 6);
+        Object.assign(partyLive, { area: inside?.id ?? hereId, x: feet.current.x, y: feet.current.y, at: now });
+      }
       if (!inside) lastOut.current = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
       pm.posture = swimNow() ? 3 : shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
       pm.air = air.current.mode !== "ground";

@@ -175,5 +175,9 @@ function castAim(ray: THREE.Raycaster, floorY: FloorY, muzzle: THREE.Vector3 | u
 // What the crosshair says now, for the overlay (a DOM element over the canvas): kept in a store so that the 3D scene need not render it
 export interface Reticle { kind: Aimed["kind"]; label?: string; feet?: number; blocked: boolean; note?: string }
 export const useReticle = create<Reticle>(() => ({ kind: "none", blocked: false }));
+// The shooter's eye (2026-11-15, the user: Skyrim's opening eye): how aware the most aware watcher is of the party (0 to 1), who it is, and
+// whether the eye is shown (sneaking, or someone who matters is looking); Play's notice loop writes it, ShooterHud's NoticeEye draws it
+export interface Notice { level: number; who?: string; show: boolean }
+export const useNotice = create<Notice>(() => ({ level: 0, show: false }));
 // Squares are five feet across
 export const FEET_PER_SQUARE = 5;

@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { DEAD, groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
-import { ShootButtons, ShooterHud } from "./ShooterHud";
+import { NoticeEye, ShootButtons, ShooterHud } from "./ShooterHud";
 import { ADS, useShoot } from "./shoot";
 import { SHOOT } from "@shared/logic/shooter";
 
@@ -71,6 +71,7 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
       </button>
       <AirButtons right={112} bottom={22} />
       <ShooterHud />
+      <NoticeEye />
       <ShootButtons />
       <button
         data-testid="run-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggle(); }}

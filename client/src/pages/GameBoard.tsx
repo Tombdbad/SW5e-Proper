@@ -15,13 +15,13 @@ import { Loader2 } from "lucide-react";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
-import { stance, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
+import { partyMotion, stance, useNotice, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, usePlacing, whereNow, facingNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -75,7 +75,7 @@ import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare, isLowFuel, fuelAfter, LIMP_FACTOR, tankerCall,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
-  advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
+  advanceSearch, retireSquad, SEARCH_STEP, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
@@ -349,10 +349,12 @@ export default function GameBoard() {
     useDice.getState().setPassive(playMode === "shooter");
     return () => useDice.getState().setPassive(false);
   }, [playMode]);
+  // (asked of whoever opens the campaign first; a co-op guest only joins a campaign whose mode is chosen, CoopJoin)
   useEffect(() => { if (campaign?.galaxyMap && !modeChosen) setAskMode(true); }, [!!campaign?.galaxyMap, modeChosen]);
+  // (chosen once, when the campaign begins, and fixed after: 2026-11-15, the user; the server refuses a change too, server/routes.ts)
   const chooseMode = (mode: PlayMode) => {
     setAskMode(false);
-    if (mode === playMode && modeChosen) return;
+    if (modeChosen) return;
     queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, specialRules: { ...(old?.specialRules ?? {}), mode } }));
     fetch(`/api/campaigns/${campaignId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ specialRules: { ...(campaign?.specialRules ?? {}), mode } }) })
       .then((r) => { if (!r.ok) toast.error("Could not save the mode"); });
@@ -989,15 +991,20 @@ export default function GameBoard() {
     const sneak = (character as any)?.itemSenses?.stealth ?? 0;
     return { ...traits, stealthAdvantage: traits.stealthAdvantage || sneak > 0, stealthDisadvantage: traits.stealthDisadvantage || sneak < 0 };
   };
-  const stealthRoll = () => {
-    // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor that is bulky or flagged, a shield that
-    // is obtrusive: disadvantage; silent armor: advantage; a mix cancels (the book's armor properties)
+  // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor that is bulky or flagged, a shield that
+  // is obtrusive: disadvantage; silent armor: advantage; a mix cancels (the book's armor properties). The shooter's watchers read the same
+  // (shooter.ts noticeRate: louder or quieter, and the party's passive Stealth)
+  const stealthEdge = () => {
     const field = ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n));
     const traits = wornTraits();
-    const mode = stealthMode({ stealthDisadvantage: traits.stealthDisadvantage, stealthAdvantage: traits.stealthAdvantage || field });
+    return stealthMode({ stealthDisadvantage: traits.stealthDisadvantage, stealthAdvantage: traits.stealthAdvantage || field });
+  };
+  const stealthBonus = () => modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
+  const stealthRoll = () => {
+    const mode = stealthEdge();
     const a = d20();
     const roll = playMode === "shooter" ? passiveD20(mode) : mode > 0 ? Math.max(a, d20()) : mode < 0 ? Math.min(a, d20()) : a;
-    const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
+    const bonus = stealthBonus();
     return { roll, bonus, total: roll + bonus };
   };
   // Lying low takes ten minutes; the officers search the district and the party is caught or it is called off
@@ -1073,6 +1080,14 @@ export default function GameBoard() {
   // A miss puts them one step further on.
   const unseen = (what: string) => {
     if (!world || !here) return false;
+    // (the shooter: seen if one of them is looking at the party just now, the eye half open or more; then they have seen it)
+    if (playMode === "shooter") {
+      const who = seenDoing(["hostile"]);
+      if (!who) return true;
+      toast.error(`${what}: ${who} sees you!`);
+      setWatch(ALERT.confronting);
+      return false;
+    }
     const dc = watchDC(world, here.id);
     const { roll, bonus, total } = stealthRoll();
     const made = total >= dc;
@@ -1112,6 +1127,14 @@ export default function GameBoard() {
     // (the lawmen on patrol who are here now count: the world shown is the world as the clock has it)
     const live = world && here ? withPresence(latestWorld() ?? world, clockNow()) : undefined;
     if (!world || !here || !live || !lawmenAt(live, here.id).length) return true;
+    // (the shooter: seen if a lawman is looking at the party just now, as the eye shows)
+    if (playMode === "shooter") {
+      const who = seenDoing(["law"]);
+      if (!who) return true;
+      toast.error(`${what}: ${who} sees you! They turn on you.`);
+      void callTheLaw(here.id, crime);
+      return false;
+    }
     const dc = lawWatchDC(live, here.id);
     const { roll, bonus, total } = stealthRoll();
     const made = total >= dc;
@@ -1257,7 +1280,14 @@ export default function GameBoard() {
       explore(target.id, changes);
     } else {
       // Whoever is hostile there notices the party, or not, by how it comes in
-      if (watchersOf(target).length) {
+      if (watchersOf(target).length && playMode === "shooter") {
+        // (the shooter rolls nothing at the door: come in sneaking (Move quietly, or crouched) and nobody there has seen the party yet, and
+        // the eye shows whether they do (the notice loop); walk in openly and they have)
+        const quiet = exit.secret || sneaking || useRun.getState().crouch || useRun.getState().prone;
+        const level = arrivalAlert(world, target.id, quiet ? "secret" : "open");
+        changes.galaxyMap = setAlert(world, target.id, level);
+        toast[level <= ALERT.suspicious ? "success" : "error"](quiet ? (level <= ALERT.suspicious ? "You slip in: nobody has seen you yet. Keep out of their sight." : `Coming in: ${WATCH_NOTE[level]}`) : `Walking in openly: ${WATCH_NOTE[level]}`);
+      } else if (watchersOf(target).length) {
         const approach = exit.secret ? "secret" : sneaking ? "sneak" : "open";
         const { roll, bonus, total } = approach === "sneak" ? stealthRoll() : { roll: 0, bonus: 0, total: 0 };
         const level = arrivalAlert(world, target.id, approach, total);
@@ -2796,6 +2826,16 @@ export default function GameBoard() {
         }
         if (!step.sighted) break;
         const { squad, area, dc } = step.sighted;
+        // (the shooter mode makes no Stealth check, not even a passive one: a passive 10 + bonus always met the DC of 10, and the squad
+        // "walked in" unseen again and again. There the squad stands at the way in for the minutes it searches the room, as watchers of the
+        // notice loop with the DC as their passive Perception (a sheltered party is harder to find): seen, they close in; not, they move on)
+        if (playMode === "shooter") {
+          if (!searchers.current.some((s) => s.squad.id === squad.id)) {
+            searchers.current = [...searchers.current, { squad, area, perception: dc, until: clockNow() + SEARCH_STEP }];
+            toast.warning(`${squad.count} ${squad.heavy ? "troopers" : "constables"} come in to search ${world.areas[area]?.name ?? "the place"}: keep out of their sight.`);
+          }
+          continue;
+        }
         const check = stealthRoll();
         if (check.total >= dc) {
           toast.success(`${squad.count} ${squad.heavy ? "troopers" : "constables"} walk in (Stealth ${check.total} against ${dc}): you keep out of their sight.`);
@@ -2813,6 +2853,119 @@ export default function GameBoard() {
       searching.current = false;
     });
   }, [clockMinutes, here?.id, pursuit?.pursuit.squads?.length, inCombat, !!character]);
+
+  // ---- The shooter's watchers (2026-11-15, the user: no tabletop checks in the shooter; Skyrim's eye) ----
+  // Who could notice the party where it is, each with its awareness (shooter.ts stepNotice), run ten times a second while the shooter is not
+  // fighting: the hostiles here who have not seen it yet (full, they have: the fight begins), the lawmen in sight (full, a crime done under
+  // their eyes is seen), a search squad standing in the way in (full, they close in), and the people of the place (a theft from a shop is seen
+  // by its keeper). Out of the shooter it does nothing: the tabletop rolls.
+  const searchers = useRef<{ squad: Squad; area: string; perception: number; until: number }[]>([]);
+  const noticeLevels = useRef<Record<string, number>>({});
+  const noticeKinds = useRef<Record<string, "hostile" | "law" | "squad" | "people">>({});
+  const noticeNames = useRef<Record<string, string>>({});
+  const noticeArea = useRef<string | null>(null);
+  const noticeTick = useRef<() => void>(() => {});
+  // The most aware watcher of these kinds, and their name
+  const mostAware = (kinds: ("hostile" | "law" | "squad" | "people")[]) => {
+    let best = { level: 0, id: "" };
+    for (const [id, level] of Object.entries(noticeLevels.current)) if (kinds.includes(noticeKinds.current[id]) && level > best.level) best = { level, id };
+    return { level: best.level, who: noticeNames.current[best.id] };
+  };
+  const engagingSquad = useRef(false);
+  noticeTick.current = () => {
+    // (the map has the party standing in this place: what it draws is where the watchers are)
+    if (playMode !== "shooter" || !world || !here || !character || inCombat || dead || character.currentHp <= 0 || useShoot.getState().session || partyLive.area !== here.id) {
+      if (useNotice.getState().show) useNotice.setState({ level: 0, show: false, who: undefined });
+      return;
+    }
+    // (a new place: nobody there has been watching the party yet; squads searching elsewhere are left behind)
+    if (noticeArea.current !== here.id) {
+      noticeArea.current = here.id;
+      noticeLevels.current = {};
+      searchers.current = searchers.current.filter((s) => s.area === here.id);
+    }
+    const now = clockNow();
+    searchers.current = searchers.current.filter((s) => s.until > now);
+    const layout = here.layout;
+    const origin = layout ? { x: layout.x, y: layout.y } : { x: 0, y: 0 };
+    const party = { x: partyLive.x, y: partyLive.y };
+    // Where someone of the place stands: as the map draws them (the room the party is in), else their square in the plan, else a little off
+    const placed = (o: Occupant, far = 6) => {
+      const asset = layout?.assets.find((a) => a.kind === "npc" && a.ref === o.id);
+      const live = asset ? whereNow(asset.id) : undefined;
+      const sq = live ?? (asset ? { x: asset.x, y: asset.y } : undefined);
+      return sq ? { x: sq.x + origin.x, y: sq.y + origin.y, face: asset ? facingNow(asset.id) : undefined } : { x: party.x + far, y: party.y, face: undefined };
+    };
+    // (the alarm up through the building: +5, as watchDC)
+    const alarm = !!(here.kind === "room" && here.parentId && world.areas[here.parentId]?.alarm);
+    const watchers: Watcher[] = [];
+    const kinds: Record<string, "hostile" | "law" | "squad" | "people"> = {};
+    const names: Record<string, string> = {};
+    const add = (id: string, kind: "hostile" | "law" | "squad" | "people", name: string, w: Omit<Watcher, "id">) => {
+      watchers.push({ id, ...w });
+      kinds[id] = kind;
+      names[id] = name;
+    };
+    if (hostiles.length && !allowed && alert < ALERT.confronting) {
+      for (const o of watchersOf(here)) add(`h:${o.id}`, "hostile", o.name, { ...placed(o), perception: 10 + (o.saves?.wisdom ?? 0) + (alarm ? 5 : 0) });
+      for (const r of exposedRooms(world, here.id)) for (const o of watchersOf(r)) add(`h:${o.id}`, "hostile", o.name, { x: party.x + 8, y: party.y, perception: 10 + (o.saves?.wisdom ?? 0) });
+    }
+    const live = withPresence(latestWorld() ?? world, now);
+    for (const o of lawmenAt(live, here.id)) add(`l:${o.id}`, "law", o.name, { ...placed(o, 5), perception: 10 + (o.saves?.wisdom ?? 0) + (alarm ? 5 : 0) });
+    for (const o of here.occupants.filter(isCivilian)) add(`p:${o.id}`, "people", o.name, { ...placed(o), perception: 10 + (o.saves?.wisdom ?? 0) });
+    const door = layout?.assets.find((a) => a.kind === "door");
+    for (const s of searchers.current) add(`s:${s.squad.id}`, "squad", `the ${s.squad.heavy ? "troopers" : "constables"}`, { ...(door ? { x: door.x + origin.x, y: door.y + origin.y } : { x: party.x + 5, y: party.y }), perception: s.perception });
+    const pm = partyMotion.current;
+    const hour = Math.floor(now / 60) % 24;
+    const outdoors = !layout || openAir(here);
+    const sneaker: Sneaker = { x: party.x, y: party.y, speed: partyLive.speed, posture: pm.posture, air: pm.air, stealth: stealthBonus(), edge: stealthEdge(), dark: outdoors && (hour < 6 || hour >= 20) };
+    const before = noticeLevels.current;
+    noticeLevels.current = stepNotice(before, watchers, sneaker, 0.1);
+    noticeKinds.current = kinds;
+    noticeNames.current = names;
+    // Those who have just seen the party act on it
+    for (const [id, level] of Object.entries(noticeLevels.current)) {
+      if (level < 1 || (before[id] ?? 0) >= 1) continue;
+      if (kinds[id] === "hostile") {
+        toast.error(`${names[id]} sees you!`);
+        setWatch(ALERT.confronting);
+      } else if (kinds[id] === "squad" && !engagingSquad.current) {
+        const s = searchers.current.find((x) => `s:${x.squad.id}` === id);
+        if (!s) continue;
+        engagingSquad.current = true;
+        searchers.current = searchers.current.filter((x) => x !== s);
+        void lawBlock(s.squad.heavy || pursuit?.pursuit.cartel ? "trooper" : "officer-junior").then((block) => {
+          const base = latestWorld();
+          if (!block || !base) return;
+          toast.error(`${s.squad.count} ${s.squad.heavy ? "troopers" : "constables"} spot you: they close in.`);
+          saveCampaign({ galaxyMap: engageOfficers(retireSquad(base, s.squad.id), s.area, block, clockNow(), s.squad.count) });
+        }).finally(() => { engagingSquad.current = false; });
+      }
+    }
+    // The eye: shown while sneaking (crouched, prone, or moving quietly) and whenever a hostile or a search squad is looking
+    const danger = mostAware(["hostile", "squad"]);
+    const all = mostAware(["hostile", "squad", "law", "people"]);
+    const quiet = pm.posture === 1 || pm.posture === 2 || sneaking;
+    const shown = quiet ? all : danger;
+    const show = quiet ? watchers.length > 0 : danger.level > 0.02;
+    const cur = useNotice.getState();
+    if (cur.show !== show || Math.abs(cur.level - shown.level) > 0.01 || cur.who !== shown.who) useNotice.setState({ level: shown.level, who: shown.who, show });
+  };
+  useEffect(() => {
+    if (playMode !== "shooter") return;
+    const timer = setInterval(() => noticeTick.current(), 100);
+    return () => {
+      clearInterval(timer);
+      useNotice.setState({ level: 0, show: false, who: undefined });
+    };
+  }, [playMode]);
+  // Doing something not meant to be seen, in the shooter: seen if any of these watchers is looking at the party now (over `caution`); those who
+  // see it have seen the party (their awareness is full)
+  const seenDoing = (kinds: ("hostile" | "law" | "squad" | "people")[]): string | undefined => {
+    const looking = Object.entries(noticeLevels.current).filter(([id, level]) => kinds.includes(noticeKinds.current[id]) && level >= NOTICE.caution);
+    for (const [id] of looking) noticeLevels.current[id] = 1;
+    return looking.length ? noticeNames.current[looking.sort((a, b) => b[1] - a[1])[0][0]] ?? "someone" : undefined;
+  };
 
   // How a fight ended, whichever way it did. The fallen leave the area and their gear stays
   // behind; those still standing keep the hit points they have, so that leaving, being knocked
@@ -9299,7 +9452,7 @@ export default function GameBoard() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="mode-dialog" role="dialog" aria-label="How to play this campaign">
             <div className="max-h-full w-full max-w-2xl space-y-3 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm">
               <h2 className="text-lg font-semibold text-yellow-300">How will this campaign be played?</h2>
-              <p className="text-gray-300">The world is ready. Choose how fights are played. You can change it later from the Mode button.</p>
+              <p className="text-gray-300">The world is ready. Choose how this campaign is played. <span className="font-semibold text-yellow-200">The choice is final:</span> the mode cannot be changed once the campaign has begun, and players who join it in co-op play in the same mode.</p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <button className={`rounded border p-3 text-left hover:bg-gray-800 ${playMode === "tabletop" && modeChosen ? "border-yellow-400" : "border-gray-600"}`} data-testid="mode-tabletop" onClick={() => chooseMode("tabletop")}>
                   <div className="font-semibold text-sky-300">Tabletop RPG</div>
@@ -9366,9 +9519,9 @@ export default function GameBoard() {
               </section>
               <section className="space-y-2">
                 <h3 className="font-semibold text-sky-300">Play</h3>
-                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" data-testid="mode-toggle" title="How the campaign is played: the tabletop (dice, turns) or the real-time shooter" onClick={() => { setOptionsOpen(false); setAskMode(true); }}>
-                  Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"}
-                </Button>
+                <p className="text-xs text-gray-300" data-testid="mode-toggle" title="How the campaign is played: chosen when it began, and fixed">
+                  Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"} (fixed for this campaign)
+                </p>
               </section>
             </div>
           </div>
@@ -9849,11 +10002,11 @@ export default function GameBoard() {
                       </div>
                     );
                   })}
-                  {hostiles.length > 0 && !allowed && <p className="text-xs text-red-400">Watching you: {alert >= ALERT.questioning ? "they can see you; slipping past takes a Stealth check." : "a Stealth check to slip past."}</p>}
+                  {hostiles.length > 0 && !allowed && <p className="text-xs text-red-400">Watching you: {playMode === "shooter" ? "keep out of their sight (the eye over the crosshair shows how near they are to seeing you)." : alert >= ALERT.questioning ? "they can see you; slipping past takes a Stealth check." : "a Stealth check to slip past."}</p>}
                   {!!world && !!here && blockadeAt(world, settlementOf(world, here.id), clockMinutes) && <p className="text-xs text-red-400" data-testid="blockade">Blockade: the officers hold the ways out of the settlement and its vehicles until the search is called off.</p>}
                   <label className="flex items-center gap-2 text-sm" data-testid="play-sneak">
                     <input type="checkbox" checked={sneaking} onChange={(e) => setSneaking(e.target.checked)} />
-                    Move quietly (Stealth against whoever is watching)
+                    {playMode === "shooter" ? "Move quietly (or crouch: C): the eye shows who is noticing you" : "Move quietly (Stealth against whoever is watching)"}
                   </label>
                 </div>
 
@@ -9861,10 +10014,14 @@ export default function GameBoard() {
                   <Button size="sm" variant="outline" onClick={search} disabled={inCombat || dead || hostiles.length > 0}>
                     Search
                   </Button>
-                  {pursuit?.here && pursuit.phase === "searching" && (
+                  {pursuit?.here && pursuit.phase === "searching" && playMode !== "shooter" && (
                     <Button size="sm" variant="destructive" onClick={lieLowNow} disabled={inCombat || dead} data-testid="lie-low">
                       Lie low (Stealth)
                     </Button>
+                  )}
+                  {/* (the shooter lies low by doing it: out of the squads' sight until the search ends) */}
+                  {pursuit?.here && pursuit.phase === "searching" && playMode === "shooter" && (
+                    <p className="w-full text-xs text-red-300" data-testid="lie-low">Searching for you for {pursuit.minutes} more minutes: keep out of the squads' sight until then, or find someone to hide you.</p>
                   )}
                   {pursuit?.here && pursuit.phase === "searching" && shelterOwnerHere && hideouts.map((exit) => (
                     <Button key={`shelter-${exit.to}`} size="sm" variant="outline" disabled={inCombat || dead} onClick={() => askShelter(exit)} data-testid="ask-shelter">
