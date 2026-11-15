@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import glsl from "vite-plugin-glsl";
+import { optimizeDistPlugin } from "./tools/optimizeDist.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,6 +12,7 @@ export default defineConfig({
   plugins: [
     react(),
     glsl(), // Add GLSL shader support
+    optimizeDistPlugin(), // meshopt for the models, .br/.gz for every file, the service worker's build id
   ],
   resolve: {
     alias: {

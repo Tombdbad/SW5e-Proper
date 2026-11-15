@@ -12,3 +12,11 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </BrowserRouter>
 );
+
+// The service worker (public/sw.js) keeps the scripts, models and textures of a build on the phone. Only in the built site, and
+// only where the browser allows one (https, or localhost)
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}

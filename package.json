@@ -22,7 +22,8 @@
     "audit:items": "node --import tsx tools/item-audit.ts",
     "build:items": "node tools/build-item-assets.mjs",
     "test:items": "node --import tsx --test tests/items/*.test.ts",
-    "test:coop": "node --import tsx --test tests/server/coop.test.ts"
+    "test:coop": "node --import tsx --test tests/server/coop.test.ts",
+    "build:icons": "node tools/build-icons.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "9.33.1",
@@ -153,7 +154,9 @@
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vite": "^5.4.14"
+    "vite": "^5.4.14",
+    "sharp": "^0.32.6",
+    "meshoptimizer": "^0.18.1"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"

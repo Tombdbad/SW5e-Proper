@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { useTexture } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { newGLTFLoader } from "../../lib/gltf";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
 import { treeCorner, type Clear } from "./interiors/architecture";
@@ -712,7 +712,7 @@ const FILES = new Map<string, Promise<THREE.BufferGeometry | null>>();
 function loadFile(path: string): Promise<THREE.BufferGeometry | null> {
   let found = FILES.get(path);
   if (!found) {
-    found = new GLTFLoader()
+    found = newGLTFLoader()
       .loadAsync(path)
       .then((gltf) => {
         gltf.scene.updateMatrixWorld(true);

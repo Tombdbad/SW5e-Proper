@@ -2,7 +2,7 @@
 // can stand a biome's rocks too without importing the ground.
 import { useEffect, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { newGLTFLoader } from "../../lib/gltf";
 import { ECOLOGY } from "@shared/logic";
 
 // The Megascans pack of a biome (public/megascans/<pack>.glb, tools/blender/build-megascans-pack.py): pieces named <piece>__<variant>. The files are NOT in the
@@ -17,7 +17,7 @@ function loadPack(name: string): Promise<MegaPack | null> {
   let p = PACKS.get(name);
   if (!p) {
     p = new Promise((done) => {
-      new GLTFLoader().load(
+      newGLTFLoader().load(
         `/megascans/${name}.glb`,
         (g) => {
           const pack: MegaPack = new Map();
