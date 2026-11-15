@@ -11,7 +11,7 @@
 #   4 livery (stripes, the faction's accent), 5 metal (gunmetal: guns, struts, greebles)
 # and `_AO` per vertex. The code's axes (y up; the bow is +x; +z starboard); the origin is the middle of the ship on the ground under it (for a
 # ship that never lands, under its lowest point). Original shapes after the references (inspiration only): CC0.
-import bpy, bmesh, math, os, sys, json, random
+import bpy, bmesh, math, os, sys, json, random, time
 from mathutils import Vector, Matrix, Euler, bvhtree
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +43,14 @@ class Hull:
         self.dl = self.bm.faces.layers.int.new("decal")
         self.stack = [Matrix.Identity(4)]
         self.tree, self.tree_at = None, None
+        # (data for the inside's outline, not geometry: the helm and the ramp a ship's function names, the hangar mouths `bay` lays on)
+        self.marks, self.bays, self.plan = {}, [], None
+
+    def mark(self, kind, p, side=None):
+        """a place the inside's outline is told about (in the code's axes, under the stack): 'cockpit' (the helm), 'ramp' (with the wall it
+        opens in: 'n' port, 's' starboard, 'e' bow, 'w' stern, 'down' the belly)"""
+        c = self.stack[-1] @ Vector(p)
+        self.marks[kind] = ((c.x, c.y, c.z), side)
 
     # `with h.at(pos, rot, scale):` places what is built inside it
     def at(self, pos=(0, 0, 0), rot=(0, 0, 0), scale=1.0):
@@ -272,13 +280,18 @@ class Hull:
             self.face(rings[0][::-1])
             self.face(rings[-1])
 
-    def finish(self, reach):
+    def finish(self, reach, measure=False):
         bm = self.bm
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
         loose = [v for v in bm.verts if not v.link_faces]
         if loose:
             bmesh.ops.delete(bm, geom=loose, context="VERTS")
         bmesh.ops.recalc_face_normals(bm, faces=[f for f in bm.faces if not f[self.dl]])
+        if measure:
+            # (the inside's outline is read off the finished mesh; it changes nothing of it)
+            t = time.time()
+            self.plan = measure_hull(self)
+            print("MEASURED", self.name, round(time.time() - t, 1), "s")
         # Smooth shading where neighbouring faces meet at less than SMOOTH (a round hull reads round), a hard edge elsewhere (and at every
         # decal's rim); the exporter splits the vertices only along the hard edges, which also keeps the file smaller than all-flat faces
         for f in bm.faces:
@@ -452,6 +465,9 @@ def spine_lines(h, x0, x1, zs, n, w, region=PANEL):
 
 def bay(h, o, d, w, hgt, up=(0, 1, 0)):
     """a hangar mouth: a dark opening in a lit rim, where the ray from o along d meets the hull"""
+    hit = h.cast(o, d)
+    if hit:
+        h.bays.append(((hit[0].x, hit[0].z, -hit[0].y), tuple(d)))
     h.sticks([(o, d, w, hgt, GLOW, up)])
     h.sticks([(o, d, w * 0.94, hgt * 0.86, GLASS, up)])
 
@@ -608,6 +624,8 @@ def ship_imperial_tiny(h):
 
 def ship_imperial_small(h):
     # the line fighter: ball between two hexagonal wings, standing on the wings' lower edges; 6.3 x 6.4 x 7.5 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (0, 3.75, 0))
     imp_ball(h, (0, 3.75, 0), 1.55)
     def side(s):
         imp_pylon(h, (0, 3.75, 1.3), 0.45, 1.6)
@@ -619,6 +637,9 @@ def ship_imperial_small(h):
 
 def ship_imperial_small_shuttle(h):
     # a shuttle: a boxy cockpit at the bow, a tall dorsal fin and two wings folded down for landing; 14 x 11 x 7 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (4.8, 3.0, 0))
+    h.mark("ramp", (-6.0, 2.2, 0), "w")
     h.loft_x([(-6.5, 2.6, 0, 1.2, 1.6, 3), (-5, 2.6, 0, 1.6, 2.0, 4), (3, 2.6, 0, 1.5, 1.9, 4), (5.5, 2.4, 0, 1.0, 1.3, 3), (7.2, 2.2, 0, 0.35, 0.5, 2.5)], 10, HULL)
     h.box((4.6, 3.3, 0), (2.4, 0.8, 2.4), GLASS, top=(1.6, 1.8))
     h.plate([(-6, 4.0), (-1.5, 4.0), (-3.0, 7.0), (-5.2, 7.0)], -0.12, 0.12, HULL)
@@ -634,6 +655,9 @@ def ship_imperial_small_shuttle(h):
 
 def ship_imperial_medium(h):
     # a transport: a long hull with a ball bridge and a dark keel of clamps (the Gozanti's line); 34 x 14 x 9 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (12.5, 5.4, 0))
+    h.mark("ramp", (-4.0, 1.5, 0), "down")
     h.loft_x([(-16, 4.2, 0, 2.8, 4.0, 3), (-10, 4.4, 0, 3.4, 5.0, 3.5), (6, 4.4, 0, 3.2, 4.6, 3.5), (13, 4.0, 0, 2.2, 2.6, 3), (16.5, 3.6, 0, 0.7, 0.9, 2.5)], 12, HULL)
     imp_dagger(h, 20, 9, 2.2, 1, x=-1, y=7.4)
     imp_ball(h, (12.5, 5.4, 0), 1.6)
@@ -648,6 +672,9 @@ def ship_imperial_medium(h):
 
 def ship_imperial_large(h):
     # a corvette: the dagger in little, a squat tower aft and a cluster of engines; 100 x 36 x 22 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-31.5, 19.4, 0))
+    h.mark("ramp", (-5.0, 5.0, -18.0), "n")
     top = imp_dagger(h, 100, 36, 14, 2, y=3.0)
     imp_tower(h, -32, top, 10, 8)
     greebles(h, -20, 30, -6, 6, top - 1.0, 18, 3, 1.6)
@@ -664,6 +691,9 @@ def ship_imperial_large(h):
 
 def ship_imperial_huge(h):
     # the star destroyer: a dagger over a lower dagger, stepped decks, the tower astern with its domes; 1200 x 640 x 300 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-465, 214, 0))
+    h.mark("ramp", (60, -150, 0), "down")
     with h.at((0, 0, 0)):  # (the keel: a dagger under the waterline)
         wedge(h, 1150, 600, -110, 0, region=HULL)
         wedge(h, 900, 300, -150, -110, region=PANEL)
@@ -685,6 +715,9 @@ def ship_imperial_huge(h):
 
 def ship_imperial_gargantuan(h):
     # the dreadnought: a long narrow dagger, a city of decks along its spine, a tall tower and a wall of engines; 3300 x 900 x 300 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-1375, 317, 0))
+    h.mark("ramp", (600, -60, 0), "down")
     with h.at((0, 0, 0)):  # (the keel: a dagger under the waterline)
         wedge(h, 3200, 860, -60, 0, region=HULL)
     top = imp_dagger(h, 3300, 900, 160, 2, y=0)
@@ -787,6 +820,8 @@ def ship_rebel_tiny(h):
 def ship_rebel_small(h):
     # the strike fighter: a needle fuselage, four S-foils opened into an X with a cannon at each tip, four nacelles, a bubble canopy and an astromech;
     # 12.5 x 11 x 3.4 m on its gear
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (0.6, 2.3, 0))
     y = 1.7
     reb_fuselage(h, -5.0, 7.5, y, 0.75)
     canopy(h, 0.6, y + 0.6, 0, 2.6, 1.0, 0.55)
@@ -798,6 +833,9 @@ def ship_rebel_small(h):
 
 def ship_rebel_medium(h):
     # a troop transport: a squared fuselage with a long nose, side doors, two wings swept forward at the stern and big engines at their roots; 24 x 18 x 5 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (9.0, 3.0, 0))
+    h.mark("ramp", (0.0, 2.6, -2.15), "n")
     y = 2.6
     h.loft_x([(-9, y, 0, 1.6, 1.9, 4), (-6, y, 0, 1.9, 2.2, 4.5), (4, y, 0, 1.8, 2.0, 4.5), (8.5, y - 0.2, 0, 1.0, 1.0, 3), (12, y - 0.5, 0, 0.3, 0.35, 2.5)], 12, HULL)
     canopy(h, 9.0, y + 0.55, 0, 3.0, 1.4, 0.6)
@@ -814,6 +852,9 @@ def ship_rebel_medium(h):
 
 def ship_rebel_large(h):
     # the corvette: the hammerhead bow, a long ribbed neck, the turrets and a dish, and a wide bank of engines astern; 110 x 30 x 26 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (50.0, 13.9, 0))
+    h.mark("ramp", (5.0, 11.0, -5.0), "n")
     y = 12
     reb_hammer(h, 38, y, 24, 16, 30)
     h.loft_x([(-30, y, 0, 6, 6.5, 3), (0, y + 0.5, 0, 4.5, 5.5, 3), (24, y, 0, 6, 8, 3)], 12, HULL)
@@ -849,6 +890,8 @@ def mon_cal_dress(h, x0, x1, yc, height, n, seed):
 
 def ship_rebel_huge(h):
     # a Mon Calamari star cruiser: a swollen, lobed hull with pods and ports, built by a people not a yard; 1200 x 320 x 260 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (380, 230, 0))
     mon_cal(h, 1200, 320, 260, 5, 2)
     # (the bridge: a low dome forward on the back, a fin behind it)
     h.sphere((380, 230, 0), 40, GLASS, 12, 6, (1.6, 0.5, 1))
@@ -857,6 +900,8 @@ def ship_rebel_huge(h):
 
 def ship_rebel_gargantuan(h):
     # a heavy cruiser of the fleet's line: two lobed hulls one over the other, a fin of a bridge; 3200 x 700 x 500 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-450, 640, 0))
     mon_cal(h, 3200, 700, 380, 6, 5)
     with h.at((-200, 300, 0)):
         mon_cal(h, 1800, 260, 200, 3, 9)
@@ -901,6 +946,8 @@ def ship_republic_tiny(h):
 
 def ship_republic_small(h):
     # a light interceptor: a delta with a ridge, the canopy off to port, an astromech to starboard, red at the wing roots; 8 x 4.4 x 2.4 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (0.4, 1.65, -0.55))
     y = 0.9
     rep_delta(h, 0, y, 8.0, 4.4, 0.42)
     canopy(h, 0.4, y + 0.75, -0.55, 1.8, 0.8, 0.45)
@@ -912,6 +959,9 @@ def ship_republic_small(h):
 
 def ship_republic_small_shuttle(h):
     # an attack shuttle: a rounded body, a long cockpit nose, wings folded down to land and a fin; 14 x 10 x 6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (5.2, 2.6, 0))
+    h.mark("ramp", (-6.0, 2.3, 0), "w")
     y = 2.3
     h.loft_x([(-6, y, 0, 1.4, 1.5, 3), (-3, y + 0.1, 0, 1.8, 1.9, 3.5), (3, y, 0, 1.6, 1.7, 3.5), (6.5, y - 0.3, 0, 0.8, 0.9, 2.5), (7.8, y - 0.4, 0, 0.2, 0.2, 2)], 12, HULL)
     canopy(h, 5.2, y + 0.55, 0, 2.6, 1.3, 0.55)
@@ -929,6 +979,9 @@ def ship_republic_small_shuttle(h):
 def ship_republic_medium(h):
     # a gunship: a boxy troop bay with sliding doors, the glazed nose of two cockpits, ball turrets on its flanks, short wings with missile pods,
     # its engines on the tail; 18 x 17 x 6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (8.0, 2.8, 0))
+    h.mark("ramp", (0.0, 2.5, -1.8), "n")
     y = 2.4
     h.box((0, y + 0.3, 0), (12, 3.0, 3.6), HULL, top=(11, 3.0), front=(2.4, 3.0))
     h.loft_x([(5.5, y + 0.4, 0, 1.4, 1.6, 3), (8, y + 0.2, 0, 1.0, 1.2, 2.6), (9.6, y, 0, 0.3, 0.3, 2)], 10, HULL)
@@ -950,6 +1003,9 @@ def ship_republic_medium(h):
 
 def ship_republic_large(h):
     # a diplomatic cruiser: a separable hammerhead salon at the bow painted the Republic's red, a long body and a tall engine block; 110 x 34 x 24 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (53.0, 12.5, 0))
+    h.mark("ramp", (0.0, 10.0, -7.0), "n")
     y = 11
     with h.at((40, y, 0)):
         h.loft_x([(-14, 0, 0, 6, 10, 3, LIVERY), (-6, 0, 0, 8, 16, 3.5, LIVERY), (10, 0, 0, 7, 15, 3.5, LIVERY), (15, -0.5, 0, 4.5, 9, 3, LIVERY)], 14, LIVERY)
@@ -972,6 +1028,8 @@ def ship_republic_large(h):
 
 def ship_republic_huge(h):
     # the attack cruiser: the arrowhead with its flight deck, twin bridge towers astern, red bands; 1137 x 548 x 268 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-397, 207, 0))
     with h.at((0, 0, 0)):  # (the keel: a dagger under the waterline)
         wedge(h, 1100, 520, -80, 0, region=HULL)
     top = rep_arrow(h, 1137, 548, 160)
@@ -989,6 +1047,9 @@ def ship_republic_huge(h):
 
 def ship_republic_gargantuan(h):
     # a siege dreadnought: a long, narrow arrowhead with a keel, a tower amidships and heavy guns along its spine; 3200 x 800 x 260 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-1195, 285, 0))
+    h.mark("ramp", (-200, 30, -380), "n")
     with h.at((0, 0, 0)):  # (the keel: a dagger under the waterline)
         wedge(h, 3000, 700, -90, 0, region=HULL)
     top = rep_arrow(h, 3200, 800, 150, deck=False)
@@ -1041,6 +1102,8 @@ def ship_separatist_tiny(h):
 
 def ship_separatist_small(h):
     # a heavy fighter: a pointed fuselage with a domed canopy, two long engine pods on outriggers; 12 x 7 x 3 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (0.6, 2.4, 0))
     y = 1.5
     h.loft_x([(-5.5, y, 0, 0.8, 1.2, 2.4), (-1, y + 0.1, 0, 1.0, 1.3, 2.6), (3.5, y, 0, 0.6, 0.7, 2.2), (6.5, y - 0.2, 0, 0.1, 0.1, 2)], 10, HULL)
     h.sphere((0.6, y + 0.9, 0), 0.75, GLASS, 10, 5, (1.4, 0.7, 0.9))
@@ -1054,6 +1117,9 @@ def ship_separatist_small(h):
 
 def ship_separatist_medium(h):
     # an insect shuttle: a segmented, curving body with an eyed head, swept antennae and four arching legs to land on; 24 x 12 x 7 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (9.5, 3.8, 0))
+    h.mark("ramp", (-3.0, 1.5, 0), "down")
     y = 3.6
     sep_head(h, 8.5, y + 0.2, 7.0, 1.6)
     h.loft_x([(-12, y + 0.8, 0, 1.0, 1.4, 2.2), (-9, y + 0.4, 0, 2.2, 2.8, 2.4), (-3, y, 0, 2.4, 3.0, 2.4), (2, y + 0.1, 0, 2.0, 2.4, 2.4), (5.5, y + 0.2, 0, 1.4, 1.6, 2.2)], 12, HULL)
@@ -1066,6 +1132,9 @@ def ship_separatist_medium(h):
 
 def ship_separatist_large(h):
     # a frigate in little: a long spine with a tall bow of comm arrays, a bulbous hull under it and engines aft; 110 x 30 x 28 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (44.0, 18.0, 0))
+    h.mark("ramp", (-5.0, 8.0, -8.0), "n")
     y = 12
     sep_spine(h, -50, 40, y, 4, 9, 5.2)
     h.loft_x([(-35, y - 3, 0, 4, 9, 2.2), (-5, y - 4, 0, 6, 13, 2.4), (25, y - 3, 0, 4, 8, 2.2)], 12, HULL)
@@ -1085,6 +1154,8 @@ def ship_separatist_large(h):
 
 def ship_separatist_huge(h):
     # a light destroyer: a long ribbed spine forking at the bow, a tall dorsal fin of batteries and a hull of bronze ribs; 1187 x 240 x 300 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (280, 120, 0))
     y = 120
     sep_spine(h, -560, 300, y, 40, 12, 70)
     h.loft_x([(-500, y - 30, 0, 50, 90, 2.4), (-100, y - 40, 0, 70, 110, 2.4), (250, y - 30, 0, 40, 70, 2.2)], 12, HULL)
@@ -1107,6 +1178,8 @@ def ship_separatist_huge(h):
 
 def ship_separatist_gargantuan(h):
     # the core ship: a great ring open at the bow, a sphere at its heart and the docking arms between; 3170 m across, 900 m high
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (600, 450, 0))
     y = 450
     h.torus((0, y, 0), 1300, 280, HULL, 32, 8, 0.12 * math.pi, 1.88 * math.pi, 1.6)
     h.sphere((0, y, 0), 700, HULL, 18, 10, (1, 0.9, 1))
@@ -1165,6 +1238,8 @@ def ship_mandalorian_tiny(h):
 
 def ship_mandalorian_small(h):
     # a fang fighter: a narrow fuselage with a pilot's pod, two crescent-blade wings standing up at the stern; 10 x 7 x 4 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-2.0, 1.7, 0))
     y = 1.4
     h.loft_x([(-4.5, y, 0, 0.55, 0.6, 3), (0, y, 0, 0.6, 0.65, 3.2), (3.8, y - 0.1, 0, 0.35, 0.35, 2.6), (5.5, y - 0.2, 0, 0.08, 0.08, 2)], 8, HULL)
     h.sphere((-2.0, y + 0.3, 0), 0.9, HULL, 10, 6, (1.3, 0.9, 0.9))
@@ -1181,6 +1256,9 @@ def ship_mandalorian_small(h):
 
 def ship_mandalorian_medium(h):
     # a gauntlet: an upright central slab, the T-visor at its bow, two great blade wings turned up for landing, engines at the wing roots; 30 x 18 x 10 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (10.0, 5.4, 0))
+    h.mark("ramp", (-3.0, 2.5, 0), "down")
     y = 4.8
     man_slab(h, -13, 10, y - 2.6, y + 2.6, 4.2, 0.5)
     man_visor(h, 10.5, y + 0.6, 3.6, 3.4)
@@ -1197,6 +1275,9 @@ def ship_mandalorian_medium(h):
 
 def ship_mandalorian_large(h):
     # an assault cruiser: stacked slabs stepping back from an angular prow, the T bridge on top, blade fins and a broad stern; 100 x 40 x 26 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-10.0, 23.0, 0))
+    h.mark("ramp", (0.0, 6.0, -14.0), "n")
     y = 9
     man_slab(h, -48, 40, 3, 15, 28, 0.35)
     man_slab(h, -44, 22, 15, 21, 20, 0.5)
@@ -1218,6 +1299,8 @@ def ship_mandalorian_large(h):
 
 def ship_mandalorian_huge(h):
     # a dreadnought: a long slab with a blade prow, ranks of fins, the T bridge aft; 900 x 260 x 220 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-305, 190, 0))
     y = 0
     man_slab(h, -450, 450, 0, 110, 220, 0.3)
     man_slab(h, -400, 200, 110, 170, 140, 0.5)
@@ -1244,6 +1327,8 @@ def ship_mandalorian_huge(h):
 
 def ship_mandalorian_gargantuan(h):
     # a war city: three dreadnought slabs side by side under one deck, a tower of a bridge; 3100 x 900 x 400 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (-295, 430, 0))
     for z in (-300, 0, 300):
         with h.at((0 if z == 0 else -200, 0, z)):
             man_slab(h, -1400, 1500 if z == 0 else 1100, 0, 220, 260, 0.3)
@@ -1300,6 +1385,8 @@ def ship_criminal_tiny(h):
 
 def ship_criminal_small(h):
     # a viper: a needle with a swollen cockpit, four blade wings swept back to the stern (two up, two down) with engines at their roots; 12 x 8 x 4 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (1.2, 2.55, 0))
     y = 2.0
     crim_yacht(h, -5, 7, y, 0.75)
     h.sphere((1.2, y + 0.55, 0), 0.6, GLASS, 10, 5, (1.6, 0.7, 0.8))
@@ -1311,6 +1398,9 @@ def ship_criminal_small(h):
 
 def ship_criminal_medium(h):
     # a luxury yacht: a long swollen hull with a gold band, a glazed lounge, swept fins and three engines; 36 x 16 x 9 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (12.0, 5.8, 0))
+    h.mark("ramp", (-4.0, 2.0, 0), "down")
     y = 4.2
     crim_yacht(h, -16, 20, y, 3.2)
     h.box((6, y + 2.6, 0), (9, 1.4, 3.6), GLASS, top=(7, 2.6))
@@ -1322,6 +1412,9 @@ def ship_criminal_medium(h):
 
 def ship_criminal_large(h):
     # a Hutt cruiser: a great bulb of a hull with a throne dome on top, golden fins and a swollen stern of engines; 100 x 44 x 28 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (5.0, 22.0, 0))
+    h.mark("ramp", (0.0, 8.0, -10.0), "n")
     y = 12
     crim_yacht(h, -46, 54, y, 10, 1.1)
     h.sphere((5, y + 10.5, 0), 5, GLASS, 12, 6, (1.4, 0.7, 1.2))
@@ -1340,6 +1433,8 @@ def ship_criminal_large(h):
 
 def ship_criminal_huge(h):
     # a pleasure barge of a crime lord: a yacht hull swollen to a carrier, with pods slung either side and fins like sails; 850 x 400 x 260 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (80, 230, 0))
     y = 120
     crim_yacht(h, -400, 450, y, 110, 1.2)
     h.pair(lambda s: (h.rod((0, y, 80), (0, y - 20, 160), 18, PANEL), crim_yacht(h, -300, 200, y - 20, 55)))
@@ -1360,6 +1455,9 @@ def ship_criminal_huge(h):
 
 def ship_criminal_gargantuan(h):
     # a pirate city-ship: hulls of every make welded together round a long spine of containers, scaffolds and lights; 3000 x 1000 x 600 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (1550, 340, 0))
+    h.mark("ramp", (0, 300, -100), "n")
     y = 300
     h.box((0, y, 0), (2800, 160, 200), PANEL)
     rnd = random.Random(31)
@@ -1429,6 +1527,8 @@ def ship_civilian_tiny(h):
 
 def ship_civilian_small(h):
     # a courier: a wedge hull with the cockpit in its middle, engines at its broad stern and a dorsal turret; 14 x 11 x 4 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (3.5, 2.95, 0))
     y = 1.4
     h.prism([(7, 0), (3, -2.2), (-6, -5.2), (-7, -4.6), (-7, 4.6), (-6, 5.2), (3, 2.2)], y, y + 1.6, HULL, inset=0.12)
     h.prism([(6, 0), (-5, -1.6), (-5, 1.6)], y + 1.6, y + 1.75, LIVERY)
@@ -1441,6 +1541,9 @@ def ship_civilian_small(h):
 def ship_civilian_medium(h):
     # a light freighter: the saucer, two mandibles forward, the cockpit on its tube to starboard, a dish on top, a band of engine glow round the
     # stern and quad guns above and below; 34 x 26 x 8 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (11.0, 3.4, 12.2))
+    h.mark("ramp", (3.0, 1.3, 3.0), "down")
     y = 3.6
     R = 12.8
     civ_saucer(h, -3, y, R, 4.6)
@@ -1457,6 +1560,9 @@ def ship_civilian_medium(h):
 
 def ship_civilian_large(h):
     # a bulk freighter: a long spine carrying container stacks, a bridge block at the bow and an engine block astern; 105 x 22 x 22 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (49.0, 15.0, 0))
+    h.mark("ramp", (44.0, 10.0, -6.0), "n")
     y = 9
     h.box((0, y, 0), (100, 3, 4), PANEL)
     h.box((44, y + 3, 0), (14, 12, 12), HULL, top=(10, 9), front=(8, 8))
@@ -1480,6 +1586,9 @@ def ship_civilian_large(h):
 
 def ship_civilian_huge(h):
     # a colony hauler: a kilometre of spine carrying rows of habitat and cargo drums, a bow of a bridge and a ring of engines; 950 x 300 x 260 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (480, 150, 0))
+    h.mark("ramp", (440, 140, -70), "n")
     y = 130
     h.cyl((0, y, 0), "x", 30, 900, PANEL, 10)
     h.box((440, y + 20, 0), (90, 120, 140), HULL, top=(70, 100), front=(80, 100))
@@ -1505,6 +1614,9 @@ def ship_civilian_huge(h):
 
 def ship_civilian_gargantuan(h):
     # a mobile metropolis: a broad plate of a city with towers, a dome and docks, carried on a hull of engines; 3400 x 1600 x 900 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (200, 520, 0))
+    h.mark("ramp", (0, 300, -790), "n")
     y = 260
     h.loft_x([(-1700, y, 0, 200, 700, 3), (-1200, y, 0, 260, 800, 3.5), (1100, y, 0, 240, 780, 3.5), (1700, y - 40, 0, 120, 420, 2.6)], 16, HULL)
     rnd = random.Random(17)
@@ -1559,20 +1671,550 @@ KIT = {
                  ("side_cockpit", lambda h: civ_cockpit(h, 0, 1.5, 4, 5, 1.3)), ("container", lambda h: civ_container(h, 0, 3, 0, 10, 5, 6, 1))],
 }
 
+# ---- The inside's outline (2026-11-15; the user: a ship's inside must match its outside): for each hull, the squares of the map that are inside
+# it on each deck, and where its helm, ramp, engines and windows are, written to shared/art/shipHulls.json (HullPlan in shared/logic/starshipInterior.ts;
+# tools/refs/ships.md, "The inside's outline"). Data only: the mesh is not changed.
+import numpy as np
+
+CELL = 1.702 / 1.21                 # metres a square of the map (1 / UNITS_PER_M)
+PITCH, HEAD, SKIN = 3.0, 2.4, 0.3   # deck to deck, the clear height over a floor, the hull's skin
+DECK_CAP = {"tiny": 1, "small": 1, "medium": 3, "large": 5}
+FOLD = {"huge": (84, 19, 5), "gargantuan": (120, 30, 6)}   # the planner's section frames (FRAMES): L, B, decks
+SIDE_STEP = {"n": (0, -1), "s": (0, 1), "e": (1, 0), "w": (-1, 0)}
+
+def _sweep(parts, o, d, length, eps, axis, at):
+    """the hull along a line from o (Blender's axes) along d: the stretches inside it, [(t0, t1)] from o. The hulls are many closed parts
+    overlapping (and touching face to face), not one solid, so a ray's parity says nothing of the whole: each part has a tree of its own, the
+    line is cast against every part whose box it crosses, that part's parity gives the stretches inside it, and the stretches of all are
+    joined. `axis` (0 x, 1 y, 2 z, the code's) is the line's direction and `at` its other two coordinates (code axes, in order)."""
+    trees, lo, hi = parts
+    o2 = [k for k in range(3) if k != axis]
+    sel = np.nonzero((lo[:, o2[0]] <= at[0]) & (hi[:, o2[0]] >= at[0]) & (lo[:, o2[1]] <= at[1]) & (hi[:, o2[1]] >= at[1]))[0]
+    spans = []
+    o = Vector(o)
+    for p in sel:
+        tree = trees[p]
+        ts, t = [], 0.0
+        while t < length:
+            loc, nor, idx, dist = tree.ray_cast(o + d * t, d, length - t)
+            if loc is None:
+                break
+            ts.append(t + dist)
+            t += dist + eps
+        spans += [(ts[k], ts[k + 1]) for k in range(0, len(ts) - 1, 2)]
+    return _join(spans, eps * 4)
+
+def _join(spans, tol):
+    out = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1] + tol:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+def _ok(spans, off, pts, skin):
+    """points along a line inside one of its stretches, at least `skin` from either end; and the distance on to the stretch's end (0 outside)"""
+    if not spans:
+        return np.zeros(len(pts), bool), np.zeros(len(pts))
+    st = np.array([a for a, b in spans]) + off
+    en = np.array([b for a, b in spans]) + off
+    idx = np.searchsorted(st, pts, side="right") - 1
+    k = np.maximum(idx, 0)
+    inn = (idx >= 0) & (pts < en[k])
+    da = np.where(inn, en[k] - pts, 0.0)
+    return inn & (pts - st[k] >= skin) & (da >= skin), da
+
+def _lattice(parts, xs, ys, zs, box, skin, vskin, eps):
+    """inside[iy, ix, iz] of the points (xs, ys, zs) (the code's axes): inside the hull along x, along z and along y alike, the walls at least
+    `skin` away, the floor and ceiling `vskin`; and up[iy, ix, iz], the clear height over each point"""
+    x0, y0, z0, x1, y1, z1 = box
+    nx, ny, nz = len(xs), len(ys), len(zs)
+    okx = np.zeros((ny, nx, nz), bool)
+    okz = np.zeros((ny, nx, nz), bool)
+    oky = np.zeros((ny, nx, nz), bool)
+    up = np.zeros((ny, nx, nz))
+    lx, ly, lz = x1 - x0 + 2, y1 - y0 + 2, z1 - z0 + 2
+    for iy, y in enumerate(ys):
+        for iz, z in enumerate(zs):
+            okx[iy, :, iz] = _ok(_sweep(parts, (x0 - 1, -z, y), Vector((1, 0, 0)), lx, eps, 0, (y, z)), x0 - 1, xs, skin)[0]
+        for ix, x in enumerate(xs):
+            # (the code's +z is Blender's -y)
+            okz[iy, ix, :] = _ok(_sweep(parts, (x, -(z0 - 1), y), Vector((0, -1, 0)), lz, eps, 2, (x, y)), z0 - 1, zs, skin)[0]
+    for ix, x in enumerate(xs):
+        for iz, z in enumerate(zs):
+            ok, da = _ok(_sweep(parts, (x, -z, y0 - 1), Vector((0, 0, 1)), ly, eps, 1, (x, z)), y0 - 1, ys, vskin)
+            oky[:, ix, iz] = ok
+            up[:, ix, iz] = da
+    return okx & okz & oky, up
+
+def _squares(a, fn):
+    """a lattice of 3 points a square each way -> per square: fn over its middle and four inset corners"""
+    return fn([a[:, 1::3, 1::3], a[:, 0::3, 0::3], a[:, 2::3, 0::3], a[:, 0::3, 2::3], a[:, 2::3, 2::3]])
+
+def _pieces(m):
+    """the 4-connected pieces of a mask [L, B], biggest first (each a list of squares)"""
+    L, B = m.shape
+    seen = np.zeros_like(m)
+    out = []
+    for i in range(L):
+        for j in range(B):
+            if m[i, j] and not seen[i, j]:
+                seen[i, j] = True
+                todo, piece = [(i, j)], []
+                while todo:
+                    a, b = todo.pop()
+                    piece.append((a, b))
+                    for da, db in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        u, v = a + da, b + db
+                        if 0 <= u < L and 0 <= v < B and m[u, v] and not seen[u, v]:
+                            seen[u, v] = True
+                            todo.append((u, v))
+                out.append(piece)
+    out.sort(key=lambda p: (-len(p), p[0]))
+    return out
+
+def _biggest(m):
+    pieces = _pieces(m)
+    out = np.zeros_like(m)
+    if pieces:
+        for a, b in pieces[0]:
+            out[a, b] = True
+    return out
+
+def _bridged(m):
+    """a folded deck: its pieces joined to the biggest by a straight passage across (or along) the gap, where the piece is worth keeping (a drum,
+    a ring's arm, a pod); crumbs are dropped"""
+    pieces = _pieces(m)
+    if not pieces:
+        return m
+    out = np.zeros_like(m)
+    for a, b in pieces[0]:
+        out[a, b] = True
+    for piece in pieces[1:]:
+        if len(piece) < max(4, 0.03 * len(pieces[0])):
+            continue
+        best = None
+        for a, b in piece:
+            for da, db in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                u, v, n = a + da, b + db, 1
+                while 0 <= u < m.shape[0] and 0 <= v < m.shape[1] and not out[u, v]:
+                    u, v, n = u + da, v + db, n + 1
+                if 0 <= u < m.shape[0] and 0 <= v < m.shape[1] and (best is None or n < best[0]):
+                    best = (n, a, b, da, db)
+        if best is None:
+            continue
+        n, a, b, da, db = best
+        for k in range(n):
+            out[a + da * k, b + db * k] = True
+        for a, b in piece:
+            out[a, b] = True
+    return out
+
+def _runs(m):
+    """rows[y] = flat half-open runs [x0, x1, ...] of a mask [L, B]"""
+    rows = []
+    for j in range(m.shape[1]):
+        col, runs, i = m[:, j], [], 0
+        while i < len(col):
+            if col[i]:
+                k = i
+                while k < len(col) and col[k]:
+                    k += 1
+                runs += [i, k]
+                i = k
+            else:
+                i += 1
+        rows.append(runs)
+    return rows
+
+def _face_sets(h, bm, pick):
+    """the connected sets of faces `pick(face, region, decal)` chooses: (area, area-weighted centre in the code's axes, faces)"""
+    chosen = [f for f in bm.faces if pick(f, int(round(f.verts[0][h.rl])), bool(f[h.dl]))]
+    by_vert = {}
+    for k, f in enumerate(chosen):
+        for v in f.verts:
+            by_vert.setdefault(v.index, []).append(k)
+    seen, out = [False] * len(chosen), []
+    for k in range(len(chosen)):
+        if seen[k]:
+            continue
+        seen[k] = True
+        todo, group = [k], []
+        while todo:
+            q = todo.pop()
+            group.append(chosen[q])
+            for v in chosen[q].verts:
+                for r in by_vert[v.index]:
+                    if not seen[r]:
+                        seen[r] = True
+                        todo.append(r)
+        area = sum(f.calc_area() for f in group) or 1e-9
+        c = sum((f.calc_center_median() * f.calc_area() for f in group), Vector()) / area
+        out.append((area, (c.x, c.z, -c.y), group))
+    out.sort(key=lambda g: (-g[0], g[1]))
+    return out
+
+def measure_hull(h):
+    """the HullPlan of a hull (see the head of this section): its grid, decks, and marks"""
+    bm = h.bm
+    name = h.name
+    size = name.split("_")[2]
+    bm.verts.index_update()
+    bm.faces.index_update()
+    cos = [v.co for v in bm.verts]
+    # (the box in the code's axes; the decals are left out of the rays: they are flat quads standing off the hull)
+    box = (min(c.x for c in cos), min(c.z for c in cos), min(-c.y for c in cos), max(c.x for c in cos), max(c.z for c in cos), max(-c.y for c in cos))
+    x0, y0, z0, x1, y1, z1 = box
+    faces = [f for f in bm.faces if not f[h.dl]]
+    # (the parts: the faces joined edge to edge)
+    of = {f.index: k for k, f in enumerate(faces)}
+    part, n = [-1] * len(faces), 0
+    for k0 in range(len(faces)):
+        if part[k0] >= 0:
+            continue
+        part[k0] = n
+        todo = [faces[k0]]
+        while todo:
+            f = todo.pop()
+            for e in f.edges:
+                for g in e.link_faces:
+                    k = of.get(g.index)
+                    if k is not None and part[k] < 0:
+                        part[k] = n
+                        todo.append(g)
+        n += 1
+    trees, lo, hi = [], [], []
+    groups = [[] for _ in range(n)]
+    for k, f in enumerate(faces):
+        groups[part[k]].append(f)
+    for g in groups:
+        vid = {}
+        pts, polys = [], []
+        for f in g:
+            poly = []
+            for v in f.verts:
+                if v.index not in vid:
+                    vid[v.index] = len(pts)
+                    pts.append(v.co.copy())
+                poly.append(vid[v.index])
+            polys.append(poly)
+        trees.append(bvhtree.BVHTree.FromPolygons(pts, polys))
+        # (its box in the code's axes)
+        lo.append((min(p.x for p in pts), min(p.z for p in pts), min(-p.y for p in pts)))
+        hi.append((max(p.x for p in pts), max(p.z for p in pts), max(-p.y for p in pts)))
+    parts = (trees, np.array(lo), np.array(hi))
+    extent = max(x1 - x0, y1 - y0, z1 - z0)
+    eps = max(1e-4, extent * 2e-6)
+    folded = size in FOLD
+    if folded:
+        L, B, D = FOLD[size]
+        cell = ((x1 - x0) / L, (z1 - z0) / B)
+        ox, oz = x0, z0
+        skin = vskin = 0.3 * min(cell) / CELL
+        ins = (0.3 * cell[0], 0.3 * cell[1])
+        ny = 96
+        ys = np.array([y0 + (k + 0.5) * (y1 - y0) / ny for k in range(ny)])
+    else:
+        L, B = int(math.ceil((x1 - x0) / CELL - 1e-6)), int(math.ceil((z1 - z0) / CELL - 1e-6))
+        cell = (CELL, CELL)
+        # (the grid centred on the box, so the squares lie the same on both sides of the centre line)
+        ox, oz = (x0 + x1) / 2 - L * CELL / 2, (z0 + z1) / 2 - B * CELL / 2
+        skin, vskin = SKIN, 0.15
+        ins = (CELL / 2 - 0.25, CELL / 2 - 0.25)
+        ny = int(math.floor((y1 - y0) / 0.1)) + 1
+        ys = np.array([y0 + 0.1 * k for k in range(ny)])
+    xs = np.array([ox + (i + 0.5) * cell[0] + d for i in range(L) for d in (-ins[0], 0.0, ins[0])])
+    zs = np.array([oz + (j + 0.5) * cell[1] + d for j in range(B) for d in (-ins[1], 0.0, ins[1])])
+    inside, up = _lattice(parts, xs, ys, zs, box, skin, vskin, eps)
+    S = _squares(inside, lambda ps: ps[0] & ps[1] & ps[2] & ps[3] & ps[4])
+    decks = []   # (floor, head, mask[L, B])
+    if folded:
+        counts = S.reshape(ny, -1).sum(1)
+        top = counts.max() if len(counts) else 0
+        if top:
+            keep = [k for k in range(ny) if counts[k] >= 0.15 * top]
+            step = (y1 - y0) / ny
+            lo, hi = ys[keep[0]] - step / 2, ys[keep[-1]] + step / 2
+        else:
+            lo, hi = y0, y1
+        hd = (hi - lo) / D
+        for k in range(D):
+            f = lo + k * hd
+            m = np.ones((L, B), bool)
+            for t in (0.25, 0.5, 0.75):
+                m &= S[int(np.argmin(np.abs(ys - (f + hd * t))))]
+            decks.append([f, hd, m])
+        # (every deck one piece with a passage down the centre line from the stern to the bow: the section a crew walks)
+        mids = [B // 2] if B % 2 else [B // 2 - 1, B // 2]
+        for d in decks:
+            m = d[2]
+            xs_c = [i for i in range(L) if any(m[i, j] for j in mids)] or [i for i in range(L) if m[i].any()]
+            if xs_c:
+                for j in mids:
+                    m[min(xs_c):max(xs_c) + 1, j] = True
+            d[2] = _bridged(m)
+        big = max(int(d[2].sum()) for d in decks)
+        # (a deck with hardly any room is given its neighbour's outline: the deck below's, or the one above for the bottom deck)
+        for k in list(range(1, D)) + [0]:
+            if decks[k][2].sum() < 0.15 * big:
+                src = decks[k - 1] if k else decks[1]
+                decks[k][2] = src[2].copy()
+    else:
+        cap = DECK_CAP.get(size, 1)
+
+        def pick(S, U, head, at):
+            """the floor base (0.1 m steps over a pitch) and the run of at most `cap` decks that hold the most squares; a deck with under 15 per
+            cent of the run's biggest ends the run (the stairs climb through every deck)"""
+            best = None
+            for b in range(int(round(PITCH / 0.1))):
+                floors = []
+                k = 0
+                while b + 30 * k + at[-1] < ny:
+                    l = b + 30 * k
+                    m = S[l + at[0]] & S[l + at[1]] & S[l + at[2]] & (U[min(l + 1, ny - 1)] >= head)
+                    floors.append((l, m, int(m.sum())))
+                    k += 1
+                for s in range(max(1, len(floors) - cap + 1)):
+                    win = floors[s:s + cap]
+                    if not win:
+                        continue
+                    mx = max(w[2] for w in win)
+                    segs, cur = [], []
+                    for w in win:
+                        if w[2] < 0.15 * mx:
+                            segs.append(cur)
+                            cur = []
+                        else:
+                            cur.append(w)
+                    segs.append(cur)
+                    for seg in segs:
+                        tot = sum(w[2] for w in seg)
+                        if seg and (best is None or tot > best[0]):
+                            best = (tot, seg)
+            return best
+
+        best = pick(S, _squares(up, lambda ps: np.minimum.reduce(ps)), HEAD, (3, 12, 22))
+        head = HEAD
+        # (a tight hull, whose decks hold under half its plan at full height and skin: measured again with a thinner skin and a lower head)
+        foot = int(inside[:, 1::3, 1::3].any(0).sum())
+        if size != "tiny" and (best is None or max(int(m.sum()) for l, m, n in best[1]) < 0.5 * foot):
+            inside2, up2 = _lattice(parts, xs, ys, zs, box, SKIN / 2, 0.1, eps)
+            S2 = _squares(inside2, lambda ps: ps[0] & ps[1] & ps[2] & ps[3] & ps[4])
+            tight = pick(S2, _squares(up2, lambda ps: np.minimum.reduce(ps)), 2.1, (3, 11, 19))
+            if tight and (best is None or tight[0] > best[0] * 1.3):
+                best, head = tight, 2.1
+        if best and best[0]:
+            decks = [[float(ys[l]), head, _biggest(m)] for l, m, n in best[1]]
+        else:
+            # (no room for a person: one empty deck at the helm's height, so the marks have a deck)
+            cy = h.marks.get("cockpit", ((0, (y0 + y1) / 2 + 1.0, 0), None))[0][1]
+            decks = [[cy - 1.0, HEAD, np.zeros((L, B), bool)]]
+    masks = [d[2] for d in decks]
+
+    def grid(x, z):
+        return (x - ox) / cell[0], (z - oz) / cell[1]
+
+    def deck_at(y):
+        return min(range(len(decks)), key=lambda k: (max(decks[k][0] - y, 0, y - decks[k][0] - decks[k][1]), k))
+
+    def nearest(k, x, z):
+        m = masks[k]
+        gi, gj = grid(x, z)
+        sq = np.argwhere(m)
+        if not len(sq):
+            return (k, int(min(L - 1, max(0, gi))), int(min(B - 1, max(0, gj))))
+        d2 = ((sq[:, 0] + 0.5 - gi) * cell[0]) ** 2 + ((sq[:, 1] + 0.5 - gj) * cell[1]) ** 2
+        a, b = sq[int(np.argmin(d2))]
+        return (k, int(a), int(b))
+
+    def edge(k, x, z, side, reach=None):
+        """the square inside at the outline's edge on `side` along the line of squares through (x, z) (then the lines beside it, unless `reach`)"""
+        m = masks[k]
+        gi, gj = grid(x, z)
+        i0, j0 = int(min(L - 1, max(0, math.floor(gi)))), int(min(B - 1, max(0, math.floor(gj))))
+        di, dj = SIDE_STEP[side]
+        span = range(0, 1) if reach is not None else range(0, max(L, B))
+        for off in span:
+            for sgn in ((1,) if off == 0 else (1, -1)):
+                i, j = (i0, j0 + sgn * off) if di else (i0 + sgn * off, j0)
+                if not (0 <= i < L and 0 <= j < B):
+                    continue
+                # (walk outward to the last square inside; from outside, inward to the first)
+                if m[i, j]:
+                    while 0 <= i + di < L and 0 <= j + dj < B and m[i + di, j + dj]:
+                        i, j = i + di, j + dj
+                    if reach is not None and (abs(i - gi) > reach + 1 or abs(j - gj) > reach + 1):
+                        return None
+                    return (k, i, j)
+                n = 0
+                while 0 <= i < L and 0 <= j < B and not m[i, j] and (reach is None or n <= reach):
+                    i, j, n = i - di, j - dj, n + 1
+                if 0 <= i < L and 0 <= j < B and m[i, j] and (reach is None or n <= reach):
+                    return (k, i, j)
+        return None
+
+    def mk(t, side=None):
+        out = {"deck": int(t[0]), "x": int(t[1]), "y": int(t[2])}
+        if side:
+            out["side"] = side
+        return out
+
+    def side_of(nx, nz):
+        return ("e" if nx > 0 else "w") if abs(nx) > abs(nz) else ("s" if nz > 0 else "n")
+
+    # the helm: the ship's mark, else the front of its biggest pane of glass
+    if "cockpit" in h.marks:
+        cp = h.marks["cockpit"][0]
+    else:
+        glass = _face_sets(h, bm, lambda f, r, dec: r == GLASS and not dec)
+        if glass:
+            fr = max(glass[0][2], key=lambda f: f.calc_center_median().x)
+            cp = (fr.calc_center_median().x, glass[0][1][1], glass[0][1][2])
+        else:
+            cp = ((x0 + x1) / 2, (y0 + y1) / 2, 0.0)
+    cockpit = mk(nearest(deck_at(cp[1]), cp[0], cp[2]))
+    # the hangar mouths (Huge and Gargantuan) and the ramp: the ship's mark, else a mouth in the belly or the port flank, always on deck 0
+    bays = []
+    for p, d in h.bays:
+        dv = Vector(d)
+        side = "down" if abs(dv.y) > max(abs(dv.x), abs(dv.z)) else side_of(-dv.x, -dv.z)
+        bays.append((p, side))
+    if "ramp" in h.marks:
+        rp, rs = h.marks["ramp"]
+        ramp_src = None
+    else:
+        pick = [b for b in bays if b[1] == "down"] + [b for b in bays if b[1] == "n"] + bays
+        ramp_src = pick[0] if pick else None
+        rp, rs = ramp_src if ramp_src else ((x0 + 1, 0, (z0 + z1) / 2), "w")
+    if rs == "down":
+        ramp = mk(nearest(0, rp[0], rp[2]), "down")
+    else:
+        ramp = mk(edge(0, rp[0], rp[2], rs) or nearest(0, rp[0], rp[2]), rs)
+    hatches, seen = [], set()
+    for p, side in bays:
+        if (p, side) == ramp_src:
+            continue
+        k = deck_at(p[1])
+        t = nearest(k, p[0], p[2]) if side == "down" else (edge(k, p[0], p[2], side) or nearest(k, p[0], p[2]))
+        if (t, side) not in seen and masks[k].any():
+            seen.add((t, side))
+            hatches.append(mk(t, side))
+    # the engines: the glow of each bell facing aft, its row's stern-most square inside on the nearest deck
+    glow = _face_sets(h, bm, lambda f, r, dec: r == GLOW and not dec and f.normal.x < -0.7)
+    engines, seen = [], set()
+    if glow:
+        for area, c, faces in glow:
+            if area < 0.15 * glow[0][0]:
+                continue
+            k = deck_at(c[1])
+            if not masks[k].any():
+                continue
+            t = edge(k, x0, c[2], "w")
+            if t and t not in seen:
+                seen.add(t)
+                engines.append(mk(t, "w"))
+    engines.sort(key=lambda e: (e["deck"], e["y"], e["x"]))
+    # the windows: glass (and the lit ports laid on the hull) at a deck's height, beside a square inside at the outline's edge, looking out of it
+    cands = [set() for _ in decks]
+    for f in bm.faces:
+        r = int(round(f.verts[0][h.rl]))
+        if not (r == GLASS or (r == GLOW and f[h.dl])):
+            continue
+        n = f.normal
+        nx, nz = n.x, -n.y
+        if math.hypot(nx, nz) < 0.4:
+            continue
+        c = f.calc_center_median()
+        x, y, z = c.x, c.z, -c.y
+        for k, (fl, hd, m) in enumerate(decks):
+            if fl - 0.2 <= y <= fl + hd + 0.2 and m.any():
+                side = side_of(nx, nz)
+                t = edge(k, x, z, side, reach=5)
+                if t:
+                    cands[k].add((t[1], t[2], side))
+    windows = []
+    for k, cs in enumerate(cands):
+        cs = sorted(cs)
+        if len(cs) > 40:
+            # (spread round the deck: by the angle from its middle, then every n-th)
+            ci, cj = np.argwhere(masks[k]).mean(0)
+            cs.sort(key=lambda w: (math.atan2(w[1] - cj, w[0] - ci), w))
+            cs = [cs[int(q * len(cs) / 40)] for q in range(40)]
+            cs.sort()
+        windows += [{"deck": k, "x": int(a), "y": int(b), "side": s} for a, b, s in cs]
+    return {"cell": [round(cell[0], 5), round(cell[1], 5)], "origin": [round(ox, 3), round(oz, 3)], "L": L, "B": B, "folded": folded,
+            "decks": [{"level": k, "floor": round(fl, 2), "head": round(hd, 2), "rows": _runs(m)} for k, (fl, hd, m) in enumerate(decks)],
+            "cockpit": cockpit, "ramp": ramp, "engines": engines, "windows": windows, "hatches": hatches}
+
+def plan_picture(name, plan):
+    """an ASCII picture of each deck (the stern on the left, the port side on top): # inside, C the helm, R the ramp, E an engine, W a window, H a hatch"""
+    lines = [f"HULLPLAN {name} {plan['L']}x{plan['B']} cell {plan['cell']} folded {plan['folded']}"]
+    for d in plan["decks"]:
+        g = [["." for _ in range(plan["L"])] for _ in range(plan["B"])]
+        for y, runs in enumerate(d["rows"]):
+            for a, b in zip(runs[0::2], runs[1::2]):
+                for x in range(a, b):
+                    g[y][x] = "#"
+        for key, ch in (("windows", "W"), ("hatches", "H"), ("engines", "E")):
+            for m in plan[key]:
+                if m["deck"] == d["level"]:
+                    g[m["y"]][m["x"]] = ch
+        for key, ch in (("ramp", "R"), ("cockpit", "C")):
+            m = plan[key]
+            if m["deck"] == d["level"]:
+                g[m["y"]][m["x"]] = ch
+        n = sum(b - a for runs in d["rows"] for a, b in zip(runs[0::2], runs[1::2]))
+        lines.append(f" deck {d['level']} floor {d['floor']} head {d['head']} squares {n}")
+        lines += ["  " + "".join(row) for row in g]
+    return "\n".join(lines)
+
+def write_hulls(plans):
+    """shared/art/shipHulls.json: compact, a deck's rows to a line, the hulls in name order"""
+    dump = lambda v: json.dumps(v, separators=(",", ":"))
+    out = ['{"units":' + dump("squares of the map (1.4066 m at real size; a folded hull's cell is its own): x from the stern, y from the port side; "
+                              "floor and head in metres of the kit; see tools/refs/ships.md, The inside's outline") + ',"hulls":{']
+    names = sorted(plans)
+    for n, name in enumerate(names):
+        p = plans[name]
+        head = {k: p[k] for k in ("cell", "origin", "L", "B", "folded")}
+        out.append(dump(name) + ":" + dump(head)[:-1] + ',"decks":[')
+        for k, d in enumerate(p["decks"]):
+            out.append(dump(d) + ("," if k + 1 < len(p["decks"]) else ""))
+        tail = {k: p[k] for k in ("cockpit", "ramp", "engines", "windows", "hatches")}
+        out.append("]," + dump(tail)[1:] + ("," if n + 1 < len(names) else ""))
+    out.append("}}")
+    with open(os.path.join(ROOT, "shared", "art", "shipHulls.json"), "w", newline="\n") as fh:
+        fh.write("\n".join(out) + "\n")
+
 def code_box(ob):
     lo = [min(v.co[i] for v in ob.data.vertices) for i in range(3)]
     hi = [max(v.co[i] for v in ob.data.vertices) for i in range(3)]
     # (Blender's (x, y, z) are the code's (x, -z, y))
     return [round(v, 3) for v in (lo[0], lo[2], -hi[1], hi[0], hi[2], -lo[1])]
 
+# (the ships whose deck pictures the full build prints, to see that the outlines look like the hulls' plans; --only prints every ship's)
+PICTURES = {"ship_civilian_medium", "ship_imperial_medium", "ship_rebel_medium", "ship_imperial_large", "ship_imperial_small_shuttle", "ship_imperial_huge"}
+PLANS = {}
+
 def build(name, fn):
     h = Hull(name)
     fn(h)
+    measure = HI and name.startswith("ship_") and "--nohulls" not in sys.argv
     # (the AO's reach is a ship's own scale)
     lo = [min((v.co[i] for v in h.bm.verts), default=0) for i in range(3)]
     hi = [max((v.co[i] for v in h.bm.verts), default=0) for i in range(3)]
     size = max(hi[i] - lo[i] for i in range(3))
-    return h.finish(max(0.25, size * 0.06))
+    ob = h.finish(max(0.25, size * 0.06), measure)
+    if h.plan:
+        PLANS[name] = h.plan
+        p = h.plan
+        sq = [sum(b - a for runs in d["rows"] for a, b in zip(runs[0::2], runs[1::2])) for d in p["decks"]]
+        print("HULL", name, f"{p['L']}x{p['B']}", "decks", sq, "cockpit", p["cockpit"], "ramp", p["ramp"], "engines", len(p["engines"]), "windows", len(p["windows"]),
+              "hatches", len(p["hatches"]))
+        if name in PICTURES or arg("--only"):
+            print(plan_picture(name, p))
+    return ob
 
 def export(objs, path):
     for o in bpy.context.selected_objects:
@@ -1601,6 +2243,8 @@ def main():
     if not only and HI:
         with open(os.path.join(ROOT, "shared", "art", "shipKit.json"), "w") as fh:
             json.dump({"units": "metres; x the bow, y up, z starboard; box [x0, y0, z0, x1, y1, z1]", "ships": data}, fh, indent=1)
+        if PLANS:
+            write_hulls(PLANS)
     kit_dir = arg("--kit")
     if kit_dir:
         parts = []
