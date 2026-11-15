@@ -5354,13 +5354,15 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             return top >= up - 0.01 ? up : top;
           };
           const roof = hue(room.id);
-          const crown = crownOf(family, roof, Math.min(l.width, l.height));
+          // (the look its district chose for the building, so that neighbours agree: shared/logic/stalberg.ts)
+          const chosen = districtPlan?.looks?.[room.parentId ?? ""];
+          const crown = crownOf(family, roof + (chosen?.crown ?? 0), Math.min(l.width, l.height));
           const prop = pack ? roofPropOf(pack, roof, Math.min(l.width, l.height)) : null;
           // (where a roof prop or crown stands: the middle, or a corner, drawn in over the roof when its corner is rounded away: modular.ts roofSpot)
           // (a dome on a round or oval room crowns it, at the middle and at the size of the middle one: the corner dome is for a rectangular roof, and off to one side of a drum it reads as misplaced)
           const crowned = !!l.shape && ((!!prop?.corner && /dome/.test(prop.piece)) || (!!crown?.corner && /dome/.test(crown.piece)));
           const propSpot = (corner: boolean, size: number, y: number): V3 => { const [sx, sz] = roofSpot(l.width, l.height, radiiOf(room), corner ? [l.width * (roof % 2 ? 0.25 : 0.75), l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, l.height / 2], size / 2); return [sx, y, sz]; };
-          const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
+          const wallColor = new THREE.Color(wall).multiplyScalar((opened ? 0.45 : 1) * (1 - 0.06 * (chosen?.trim ?? 0))).getStyle();
           const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
           const rail = (sides = "nesw") => (
             <>
