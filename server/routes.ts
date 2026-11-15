@@ -238,6 +238,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const campaignId = parseInt(req.params.id);
       const campaignData = insertCampaignSchema.partial().parse(req.body);
+      // The play mode (tabletop or shooter) is chosen once, when the campaign starts, and cannot be changed after (2026-11-15, the user):
+      // a different mode is refused, and new house rules sent without a mode keep the one the campaign has
+      if (campaignData.specialRules !== undefined) {
+        const [stored] = await db.select({ specialRules: campaigns.specialRules }).from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
+        const fixed = (stored?.specialRules as { mode?: string } | null | undefined)?.mode;
+        const asked = (campaignData.specialRules as { mode?: string } | null | undefined)?.mode;
+        if (fixed && asked && asked !== fixed) return res.status(409).json({ message: `This campaign is played in the ${fixed} mode; the mode cannot be changed once the campaign has begun.` });
+        if (fixed) campaignData.specialRules = { ...((campaignData.specialRules as object | null) ?? {}), mode: fixed };
+      }
       const result = await db
         .update(campaigns)
         .set({ ...campaignData, updatedAt: new Date() })

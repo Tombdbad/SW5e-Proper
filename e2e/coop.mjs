@@ -62,6 +62,8 @@ try {
   await guest.goto(`${BASE}/coop`, { waitUntil: "domcontentloaded" });
   await guest.getByTestId("coop-code-input").fill(code);
   await guest.getByTestId(`coop-pick-${bo.id}`).click();
+  // (the campaign's mode is shown and confirmed before the join)
+  await guest.getByTestId("coop-mode-join").click();
   await guest.getByRole("heading", { name: bo.name }).waitFor({ timeout: 120000 });
   await sleep(4000);
   say("guest is playing", bo.name, "at", guest.url());

@@ -454,7 +454,9 @@ export function registerCoopRoutes(app: Express) {
   app.get("/api/coop/code/:code", (req, res) => {
     const s = byCode.get(String(req.params.code).toUpperCase());
     if (!s) return res.status(404).json({ message: "No co-op game has that code" });
-    res.json({ campaignId: s.campaignId, name: s.name, full: s.members.size >= MAX_PLAYERS, members: membersOf(s).map((m) => ({ name: m.name, characterId: m.characterId, connected: m.connected })) });
+    // (the campaign's play mode, which a player who joins plays in too: CoopJoin shows it before the join; null while the host has not chosen it)
+    const mode = (s.campaign.specialRules as { mode?: string } | null | undefined)?.mode ?? null;
+    res.json({ campaignId: s.campaignId, name: s.name, mode, full: s.members.size >= MAX_PLAYERS, members: membersOf(s).map((m) => ({ name: m.name, characterId: m.characterId, connected: m.connected })) });
   });
 }
 

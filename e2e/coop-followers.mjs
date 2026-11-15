@@ -45,6 +45,8 @@ try {
   await guest.goto(`${BASE}/coop`, { waitUntil: "domcontentloaded" });
   await guest.getByTestId("coop-code-input").fill(code);
   await guest.getByTestId(`coop-pick-${bo.id}`).click();
+  // (the campaign's mode is shown and confirmed before the join)
+  await guest.getByTestId("coop-mode-join").click();
   await guest.getByRole("heading", { name: bo.name }).waitFor({ timeout: 120000 });
   await sleep(8000);
   const spots = (page) => page.evaluate(() => ({ me: window.__street?.().party, followers: Object.fromEntries(Object.entries(window.__followers ?? {}).map(([k, v]) => [k, { x: +v.x.toFixed(1), y: +v.y.toFixed(1) }])) }));

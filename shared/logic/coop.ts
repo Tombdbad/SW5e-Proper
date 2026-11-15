@@ -116,6 +116,8 @@ export function applyChanges<T extends Record<string, any>>(campaign: T, changes
     const before = out?.[key];
     let after = applyOps(before, ops);
     if (key === "timeElapsed" && Number(before?.total) > Number(after?.total)) after = before;
+    // (the play mode is fixed once chosen: no member's change can switch it, see updateCampaign in server/routes.ts)
+    if (key === "specialRules" && before?.mode && after?.mode !== before.mode) after = { ...(after ?? {}), mode: before.mode };
     if (after !== before) out = { ...out, [key]: after };
   }
   return out;
