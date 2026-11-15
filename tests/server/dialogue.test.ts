@@ -40,7 +40,9 @@ before(async () => {
       if (req.url === "/api/chat" && !body.stream) {
         // the prime (a system message alone) and speech to text (a user message with audio)
         const stt = body.messages?.some((m: any) => m.images);
-        return void res.end(JSON.stringify({ message: { content: stt ? transcript : "" }, done: true }));
+        // a bark (its card says IN A FIGHT): more words than it may have, to see them cut
+        const bark = String(body.messages?.[1]?.content ?? "").includes("IN A FIGHT");
+        return void res.end(JSON.stringify({ message: { content: stt ? transcript : bark ? "Get down, I will cover you, now run for the door please everyone!" : "" }, done: true }));
       }
       res.setHeader("Content-Type", "application/x-ndjson");
       for (const part of reply) res.write(`${JSON.stringify({ message: { content: part }, done: false })}\n`);
@@ -128,6 +130,62 @@ test("POST /api/dialogue streams {delta} lines and ends with {done, text}, the t
   assert.equal(chat[0].body.model, "fake-model");
   assert.equal(chat[0].body.messages[0].role, "system");
   assert.match(chat[0].body.messages[1].content, /PLAYER SAYS: "Which berth is the Lark in\?"/);
+});
+
+test("cardText: what the speaker knows, what was said earlier, a call and a shout", async () => {
+  const { cardText } = await import("../../server/dialogue");
+  const card = cardText({ ...talk, knows: { wares: ["blaster pistol (150 cr)", "medpac (50 cr)"], jobs: ["Bounty: a smuggler in Dock Nine"], rumours: ["The patrol is searching ships."] }, history: [{ asked: "Hello", said: "Welcome." }, { asked: "Any work?", said: "Maybe." }] });
+  assert.match(card, /WHAT YOU SELL[^\n]*blaster pistol \(150 cr\); medpac/);
+  assert.match(card, /WORK YOU CAN OFFER[^\n]*smuggler/);
+  assert.match(card, /WHAT YOU HAVE HEARD: The patrol is searching ships\./);
+  assert.match(card, /EARLIER[^\n]*\n  They: "Hello"  You: "Welcome\."\n  They: "Any work\?"  You: "Maybe\."\n/);
+  assert.ok(!/YOU SAID LAST/.test(card), "the memory replaces the last reply, it does not repeat it");
+  assert.equal(cardText({ ...talk, history: [1, 2, 3, 4, 5].map((n) => ({ asked: "q" + n, said: "a" + n })) }).split("They:").length - 1, 3, "three exchanges at most");
+  const ring = cardText({ ...talk, line: "(answers)", call: { from: "them", via: "transceiver", ship: "Lark", reason: "the patrol has your ship's name" } });
+  assert.match(ring, /YOU ARE CALLING ZEL, by a call between worlds by ship's transceiver \(the Lark\)[^\n]*because the patrol has your ship's name\. You speak first/);
+  assert.match(ring, /ZEL ANSWERS: "\(answers\)"$/);
+  assert.match(cardText({ ...talk, call: { via: "commlink" } }), /A CALL: a call over commlinks\. You cannot see each other\.\nPLAYER SAYS/);
+  const shout = cardText({ ...talk, line: "", fight: { event: "you were hit", foe: "a trooper" } });
+  assert.match(shout, /IN A FIGHT: you were hit \(against a trooper\)/);
+  assert.ok(!/PLAYER SAYS/.test(shout));
+  assert.match(cardText({ ...talk, speaker: { name: "Vee", kind: "party" } }), /HOW YOU TALK: as a companion/);
+});
+
+test("speechOnly: a sentence that names the speaker or the player and does something is narration, in any tense", async () => {
+  const { speechOnly } = await import("../../server/dialogue");
+  const names = ["Hessa Marl", "Zel"];
+  assert.equal(speechOnly("Hessa shrugs. No idea, friend.", names), "No idea, friend.");
+  assert.equal(speechOnly("Hessa Marl leaned in and whispered to you. Bay nine.", names), "Bay nine.");
+  assert.equal(speechOnly("Zel's eyes narrow. You look like trouble.", names), "You look like trouble.");
+  assert.equal(speechOnly("She looks at you. Bay nine.", names), "Bay nine.");
+  assert.equal(speechOnly("It looks bad for you. Bay nine.", names), "It looks bad for you. Bay nine.");
+  assert.equal(speechOnly("Zel, you want bay nine. Hessa is busy.", names), "Zel, you want bay nine. Hessa is busy.");
+});
+
+test("POST /api/dialogue sends each finished sentence as it is made, with narration left out, and the memory reaches the model", async () => {
+  const keep = reply;
+  reply = ["Hessa shrugs. ", "Bay nine, friend. ", "Mind the pa", "trol. Don't be", " late."];
+  seen.length = 0;
+  const r = await post("/api/dialogue", { ...talk, speaker: { ...talk.speaker, name: "Hessa Marl" }, history: [{ asked: "Hello", said: "Welcome aboard." }], knows: { rumours: ["A patrol is about."] } });
+  const rows = (await r.text()).trim().split("\n").map((l) => JSON.parse(l));
+  const deltas = rows.filter((x) => "delta" in x).map((x) => x.delta as string);
+  assert.deepEqual(deltas.map((d) => d.trim()), ["Bay nine, friend.", "Mind the patrol.", "Don't be late."]);
+  assert.equal(rows[rows.length - 1].text, "Bay nine, friend. Mind the patrol. Don't be late.");
+  assert.equal(deltas.join("").trim(), rows[rows.length - 1].text, "the sentences sent make up the whole reply");
+  const card = seen.filter((s) => s.url === "POST /api/chat" && s.body.stream === true)[0].body.messages[1].content;
+  assert.match(card, /EARLIER/);
+  assert.match(card, /You: "Welcome aboard\."/);
+  assert.match(card, /WHAT YOU HAVE HEARD: A patrol is about\./);
+  reply = keep;
+});
+
+test("POST /api/bark: a short shout when the model is idle, none too soon after the last", async () => {
+  assert.equal((await post("/api/bark", { speaker: { name: "Rook" } })).status, 400);
+  const shout = (await (await post("/api/bark", { speaker: talk.speaker, event: "you were hit", foe: "a trooper", scene: "A quay." })).json()) as any;
+  assert.ok(shout.text.length > 0, "a bark");
+  assert.ok(shout.text.replace(/\.\.\.$/, "").split(/\s+/).length <= 10, `ten words or fewer: ${shout.text}`);
+  const again = (await (await post("/api/bark", { speaker: talk.speaker, event: "you were hit" })).json()) as any;
+  assert.equal(again.text, "", "not twice within a few seconds");
 });
 
 test("a player's reply does not wait for a line of background chatter: the chatter is cut off", async () => {
