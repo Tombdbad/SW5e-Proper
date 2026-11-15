@@ -37,9 +37,8 @@ Audited 2026-11-07 from the repo at `main` (a658f7b), the 3 older docs (`HANDOFF
 4. **Zero warnings and zero type errors**: `npx tsc --noEmit` clean (tests included), `vite build` prints nothing (user: "even silent ones").
 5. No secrets in git (`.env`, PAT). Commit as `Tombdbad`; never force-push. The user's own `client/src/components/ui/Alert.tsx` edit must never be committed.
 6. Ask first: exposing ports/internet, API-based game master (Phase 5), changing storage, removing large code, `HOST=0.0.0.0`.
-7. No AI-generated meshes in the game without the user's word and a `CREDITS.md` line. Original/CC0 assets only.
-8. Don't build while `npm run e2e` runs; new DB column ⇒ migrate service DB **and** `sw5e_test` before restart.
-9. Verify in a real browser, not curl (module/API checks passed while UI was broken three times).
+7. Don't build while `npm run e2e` runs; new DB column ⇒ migrate service DB **and** `sw5e_test` before restart.
+8. Verify in a real browser, not curl (module/API checks passed while UI was broken three times).
 
 ## 4. State of the game (what exists)
 All of the following is implemented and tested unless listed in §11.

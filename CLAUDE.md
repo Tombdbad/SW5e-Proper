@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Read `REVIVAL_NOTES.md` first. It is the living record of the revival: current state, verified findings, decisions, what is next. Update it as you go and commit it.
+Read `SW5E_AI_GUIDE.md` first (current orientation, 2026-11-07). `REVIVAL_NOTES.md`, `HANDOFF.md` and `ITEM_TODO.md` now live in `Archive/`: use the notes as a history to search by heading, not as a briefing; the old Oracle-VM, systemd and Phase 1-3 text in them is out of date.
 
 ## Project
-Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React client, Postgres via drizzle). Goal: playable from a phone browser, hosted on this Oracle free-tier VM and reached over the user's Tailscale tailnet (their choice; public HTTPS is only a possible later development). The GitHub repo is Tombdbad/SW5e-Proper. Ignore the empty Tombdbad/Sw5e repo.
+Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React client, Postgres via drizzle). Goal: playable from a phone browser, hosted on the user's Windows 11 PC (moved from the Oracle VM on 2026-10-23) and reached over the user's Tailscale tailnet (their choice; public HTTPS is only a possible later development). The GitHub repo is Tombdbad/SW5e-Proper. Ignore the empty Tombdbad/Sw5e repo.
 
 ## Rules
-- Work on branch `revive`. Small commits with clear messages, push to origin. Never force-push; no destructive git commands.
-- No git identity is configured. Commit with `git -c user.name=Tombdbad -c user.email=<the user's account email> commit ...`.
+- Work on `main` unless the user names another branch (the `revive` branch is old; `audit` is the 2026-11 audit branch). Small commits with clear messages, push to origin. Never force-push; no destructive git commands.
+- The repo's git identity is already set (Tombdbad). Do not commit `client/src/components/ui/Alert.tsx`: it holds the user's own uncommitted edit.
 - Prefer minimal fixes in code that is actually used. Do not rewrite for style. Ask before removing large amounts of code.
 - Ask the user before: exposing anything to the internet or opening ports (Phase 3), building an API-based game master (Phase 5), or changing the storage choice.
 - Never print or commit secrets. `.env` (DATABASE_URL) and `~/.git-credentials` (GitHub PAT) hold them.
@@ -23,10 +23,10 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 ## Running it
 - Dev: `npm run dev` (tsx server/index.ts, Vite middleware, port 5000, no reload of server code). Needs `.env` with DATABASE_URL (loaded by dotenv).
 - The server listens on loopback only unless `HOST` is set. The app has no login; do not set `HOST=0.0.0.0` without the user's go-ahead.
-- Production runs as the systemd service `sw5e` (unit files in `deploy/`), which owns port 5000. After `npm run build`, run `sudo systemctl restart sw5e`; do not start `node dist/index.js` by hand. The package is ESM (`"type": "module"`).
+- Production and the test copy start with `deploy\windows-start.ps1 -Mode prod` (port 5000, database `sw5e`) or `-Mode test` (port 5002, database `sw5e_test`), optionally `-Lan`. Per the AI guide, restarting production needs an Administrator shell. The Linux files in `deploy/` (`sw5e.service`, backup timer, `backup.sh`, `test-*.sh`) are historical; there is no nightly backup on the PC yet. Do not start `node dist/index.js` by hand. The package is ESM (`"type": "module"`).
 - A build replaces the files a running browser test is loading, so do not build while `npm run e2e` runs.
-- DB: Postgres 16 on this VM. Schema is `shared/schema.ts`; migrations in `migrations/` are generated with `npx drizzle-kit generate` and applied with `npx drizzle-kit migrate`.
-- `npx tsc --noEmit` (also `npm run check`) reports nothing, tests and tools included, and `vite build` prints no warnings (2026-11-02, the user: no warnings or errors, even silent ones). Keep it so: Vite does not typecheck, so run `tsc` before committing and fix what it says. To look at build warnings, build to a scratch folder (`npx vite build --outDir <absolute path> --emptyOutDir`), not into `dist`, which the service serves.
+- DB: Postgres on this PC. Schema is `shared/schema.ts`; migrations in `migrations/` are generated with `npx drizzle-kit generate` and applied with `npx drizzle-kit migrate`.
+- `npx tsc --noEmit` (also `npm run check`) reports nothing, tests and tools included, and `vite build` prints no warnings (2026-11-02, the user: no warnings or errors, even silent ones). Keep it so: Vite does not typecheck, so run `tsc` before committing and fix what it says. To look at build warnings, build to a scratch folder (`npx vite build --outDir <absolute path> --emptyOutDir`), not into `dist`, which production serves.
 - A new database column needs its migration applied to the service's database (`npx drizzle-kit migrate` with the service's DATABASE_URL) before the new build is restarted, and to `sw5e_test` for the test copy (`deploy/test-copy.sh` does not do it).
 - Check changes in a real browser, not with curl: with the production server running, `npm run e2e` plays the acceptance test through the UI in headless Chromium (details in REVIVAL_NOTES.md, "Play-through test"). Module checks and API calls passed while the UI was broken in three places.
 
@@ -34,10 +34,10 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 Create a character (saves, reloads); create a campaign with the local generator; open Play with that character and campaign; move between locations; run a combat encounter; HP changes persist after reload.
 
 ## Phases
-0 baseline, 1 boots, 2 core loop and game depth, 3 deploy (systemd service, nightly DB backup, Tailscale Serve): see REVIVAL_NOTES.md for status. 4 phone UI. 5 GM (manual copy-paste loop stays for now). If public access is ever asked for: Caddy HTTPS reverse proxy, a login, and note that Oracle blocks inbound twice (VCN security list in the console and iptables on the VM).
+0 baseline, 1 boots, 2 core loop and game depth are done; 3 deploy is now Windows plus Tailscale Serve (HTTPS), with backups still to do; 4 phone UI; 5 GM (a local Gemma 4 model writes NPC dialogue and transcribes speech; the manual copy-paste GM loop stays; an API-based GM still needs the user's go-ahead). Status detail: `SW5E_AI_GUIDE.md` sections 4 and 11. If public access is ever asked for: Caddy HTTPS reverse proxy and a login, after asking.
 
-## Handoff (the user reaches this VM over a flaky ssh app, which ends the session when it drops)
-- `HANDOFF.md` in the repo root is the handoff report for the next agent. Read it right after `REVIVAL_NOTES.md` at the start of a session, to see what the last session was doing.
+## Handoff (a session can end at any moment)
+- `HANDOFF.md` is the handoff report for the next agent. It is currently in `Archive/` (deleted from the root on 2026-11-07); whether it returns to the root is the user's call, so until then write the handoff to `Archive/HANDOFF.md` only if the user asks. Read it at the start of a session to see what the last session was doing.
 - Keep it current as you work, not only at the end: update it after each commit, before starting anything long (a build, the e2e run, a conversion), and whenever the user answers or decides something. A session can end at any moment, so what is not in the file is lost.
 - Overwrite it; do not append. The next agent replaces it with its own. Keep it short enough to read in two minutes (under about 80 lines).
 - It holds: the date and branch and the last commit; what was done this session (and which commits); what is running or half done (background units such as `sw5e-e2e`, uncommitted files, a test copy built from which commit); outstanding TODOs and next steps in order; open questions and decisions the user has not made; anything learned that the next agent would otherwise rediscover (a failing test and its cause, a command that works).

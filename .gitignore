@@ -21,3 +21,7 @@ client/public/textures/leaves/forest_leaves_02/diffuse-cutout-megascans.*
 
 # Megascans wall maps (Fab Standard License: not committed)
 client/public/textures/**/*-megascans.*
+
+# the audit's scratch files, screenshots and logs (large, generated; the reports in AUDIT/*.md are committed)
+AUDIT/tmp/
+AUDIT/05_artifacts/
