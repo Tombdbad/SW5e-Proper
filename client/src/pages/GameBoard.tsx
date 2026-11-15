@@ -1081,18 +1081,19 @@ export default function GameBoard() {
   const callsHere = pursuit?.here ? (pursuit.pursuit.reports ?? []).filter((r) => r.area === here?.id && r.at > clockMinutes) : [];
   const shelterOwnerHere = world && here && pursuit?.here ? (hereNow ?? here).occupants.find(shelterOwner) : undefined;
   const hideouts = world && here && pursuit?.here && shelterOwnerHere ? shelterExits(world, here.id) : [];
+  const shelterDC = () => (world && here && shelterOwnerHere ? 12 + 2 * lawAt(world, here.id) + (shelterOwnerHere.disposition === "friendly" ? 0 : 2) : 12);
+  const talkDownDC = (who: string) => 10 + ((hereNow ?? here)?.occupants.find((o) => o.name === who)?.saves?.wisdom ?? 0);
   // Persuading the owner: Charisma against 12 + the law here; the way is opened for the search
   const askShelter = async (exit: Exit) => {
     if (!world || !here || !shelterOwnerHere) return;
-    if (!await abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id) + (shelterOwnerHere.disposition === "friendly" ? 0 : 2), ["charisma"], skilled("persuasion"))) return;
+    if (!await abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, shelterDC(), ["charisma"], skilled("persuasion"))) return;
     saveCampaign({ galaxyMap: grantShelter(world, here.id, exit) });
     toast.success(`${shelterOwnerHere.name} opens the ${world.areas[exit.to].name} for the party.`);
   };
   // A caller is talked down (Intimidate against 10 + their Wisdom): the call does not go through
   const talkDown = async (who: string) => {
     if (!world || !here) return;
-    const caller = (hereNow ?? here).occupants.find((o) => o.name === who);
-    if (await abilityCheck(`Intimidate ${who}`, 10 + (caller?.saves?.wisdom ?? 0), ["charisma"], skilled("intimidation"))) {
+    if (await abilityCheck(`Intimidate ${who}`, talkDownDC(who), ["charisma"], skilled("intimidation"))) {
       saveCampaign({ galaxyMap: interceptCall(world, here.id, who) });
       toast.info(`${who} drops the line.`);
     }
@@ -1180,9 +1181,17 @@ export default function GameBoard() {
   };
   // Talking to those who stopped you: Charisma against 10 + their Wisdom + how dangerous the
   // place is; threats work on those already facing you down, but are harder
+  const talkDC = () => (here ? 10 + Math.max(0, ...watchersOf(here).map((o) => o.saves?.wisdom ?? 0)) + here.danger + (alert >= ALERT.confronting ? 5 : 0) : 10);
+  // In the shooter a talk option shows its threshold before it is chosen, as Fallout: New Vegas does: [Persuasion 14/16] (the character's
+  // passive total, 10 + its best bonus with that skill, against the DC); the tabletop rolls, so it shows nothing
+  const skillGate = (skill: string, ability: string, dc: number) => {
+    if (playMode !== "shooter" || !character) return "";
+    const best = Math.max(...optionsFor("me", { what: skill, dc, abilities: [ability], skills: [skill] }).map((o) => o.bonus));
+    return ` [${skill.charAt(0).toUpperCase()}${skill.slice(1)} ${10 + best}/${dc}]`;
+  };
   const talk = async (skill: "deception" | "persuasion" | "intimidation") => {
     if (!here) return;
-    const dc = 10 + Math.max(0, ...watchersOf(here).map((o) => o.saves?.wisdom ?? 0)) + here.danger + (alert >= ALERT.confronting ? 5 : 0);
+    const dc = talkDC();
     const passed = await abilityCheck(skill.charAt(0).toUpperCase() + skill.slice(1), dc, ["charisma"], skilled(skill));
     if (cancelledCheck.current) return;
     if (passed) {
@@ -6160,15 +6169,15 @@ export default function GameBoard() {
           {alert === ALERT.questioning && (
             <>
               <Button size="sm" variant="outline" onClick={() => talk("deception")} disabled={inCombat || dead}>
-                Bluff
+                Bluff{skillGate("deception", "charisma", talkDC())}
               </Button>
               <Button size="sm" variant="outline" onClick={() => talk("persuasion")} disabled={inCombat || dead}>
-                Persuade
+                Persuade{skillGate("persuasion", "charisma", talkDC())}
               </Button>
             </>
           )}
           <Button size="sm" variant="outline" onClick={() => talk("intimidation")} disabled={inCombat || dead}>
-            Intimidate
+            Intimidate{skillGate("intimidation", "charisma", talkDC())}
           </Button>
         </>
       )}
@@ -7955,7 +7964,7 @@ export default function GameBoard() {
         <p className="font-semibold text-gray-200">{dealer ? "Off world, no questions" : "Tickets off world"}</p>
         <p className="text-gray-400">
           {dealer
-            ? `${Math.round(SMUGGLER_SHARE * 100)}% of the fare; ${law > 0 ? `Deception DC ${passageCheckDC("smuggler", law)} to fool the customs scan (a failure reports you), or Stealth DC ${passageCheckDC("stowaway", law)} to ride in the hold for free.` : "no customs here to fool."}`
+            ? `${Math.round(SMUGGLER_SHARE * 100)}% of the fare; ${law > 0 ? (playMode === "shooter" ? `fool the customs scan${skillGate("deception", "charisma", passageCheckDC("smuggler", law))} (a failure reports you), or slip into the hold for free by quick hands.` : `Deception DC ${passageCheckDC("smuggler", law)} to fool the customs scan (a failure reports you), or Stealth DC ${passageCheckDC("stowaway", law)} to ride in the hold for free.`) : "no customs here to fool."}`
             : "Berths on the liners, a half hour's wait to board. House rule: the books price no fares."}
         </p>
         {offers.map((offer) => {
@@ -8945,7 +8954,7 @@ export default function GameBoard() {
               {watchButtons}
               {o.contract && o.role === "bounty target" && cState.active.some((c) => c.id === o.contract) && (
                 <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => demandSurrender(o, holderId)} data-testid="contract-surrender">
-                  Demand surrender (Intimidation DC {cState.active.find((c) => c.id === o.contract)?.surrender ?? 15}): taken alive pays a quarter more
+                  Demand surrender{playMode === "shooter" ? skillGate("intimidation", "charisma", cState.active.find((c) => c.id === o.contract)?.surrender ?? 15) : ` (Intimidation DC ${cState.active.find((c) => c.id === o.contract)?.surrender ?? 15})`}: taken alive pays a quarter more
                 </Button>
               )}
               {o.role === "wildlife" && o.creature === "beast" && gentleSection(o)}
@@ -10057,13 +10066,13 @@ export default function GameBoard() {
                   )}
                   {pursuit?.here && pursuit.phase === "searching" && shelterOwnerHere && hideouts.map((exit) => (
                     <Button key={`shelter-${exit.to}`} size="sm" variant="outline" disabled={inCombat || dead} onClick={() => askShelter(exit)} data-testid="ask-shelter">
-                      Ask {shelterOwnerHere.name} to open the {world.areas[exit.to].name}
+                      Ask {shelterOwnerHere.name} to open the {world.areas[exit.to].name}{skillGate("persuasion", "charisma", shelterDC())}
                     </Button>
                   ))}
                   {callsHere.map((r) => (
                     <div key={`call-${r.who}`} className="flex w-full flex-wrap items-center gap-1 text-xs text-red-300" data-testid="call-to-security">
                       <span>{r.who} is calling security on the comm.</span>
-                      <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => talkDown(r.who)} data-testid="talk-down">Talk them down (Intimidate)</Button>
+                      <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => talkDown(r.who)} data-testid="talk-down">Talk them down{playMode === "shooter" ? skillGate("intimidation", "charisma", talkDownDC(r.who)) : " (Intimidate)"}</Button>
                       <Button size="sm" variant="destructive" className="h-6 px-2" disabled={inCombat || dead} onClick={() => silence(r.who)} data-testid="silence">Silence them</Button>
                     </div>
                   ))}
