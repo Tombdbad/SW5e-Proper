@@ -1782,7 +1782,7 @@ def _biggest(m):
             out[a, b] = True
     return out
 
-def _bridged(m):
+def _bridged(m, keep=False):
     """a folded deck: its pieces joined to the biggest by a straight passage across (or along) the gap, where the piece is worth keeping (a drum,
     a ring's arm, a pod); crumbs are dropped"""
     pieces = _pieces(m)
@@ -1792,7 +1792,7 @@ def _bridged(m):
     for a, b in pieces[0]:
         out[a, b] = True
     for piece in pieces[1:]:
-        if len(piece) < max(4, 0.03 * len(pieces[0])):
+        if not keep and len(piece) < max(4, 0.03 * len(pieces[0])):
             continue
         best = None
         for a, b in piece:
@@ -1805,11 +1805,37 @@ def _bridged(m):
         if best is None:
             continue
         n, a, b, da, db = best
+        # (the passage three squares wide, centred on the line)
         for k in range(n):
-            out[a + da * k, b + db * k] = True
+            for w in (-1, 0, 1):
+                u, v = a + da * k + db * w, b + db * k + da * w
+                if 0 <= u < m.shape[0] and 0 <= v < m.shape[1]:
+                    out[u, v] = True
         for a, b in piece:
             out[a, b] = True
     return out
+
+def _grow(m):
+    """a mask [L, B] grown by one square each way (a 3 x 3 block about each square), within the grid"""
+    p = np.pad(m, 1)
+    out = np.zeros_like(m)
+    for di in (0, 1, 2):
+        for dj in (0, 1, 2):
+            out |= p[di:di + m.shape[0], dj:dj + m.shape[1]]
+    return out
+
+def _shrink(m):
+    p = np.pad(m, 1)
+    out = np.ones_like(m)
+    for di in (0, 1, 2):
+        for dj in (0, 1, 2):
+            out &= p[di:di + m.shape[0], dj:dj + m.shape[1]]
+    return out
+
+def _widened(m):
+    """a folded deck with no strand narrower than three squares: every square not in a 3 x 3 block inside gets the block about it"""
+    strands = m & ~_grow(_shrink(m))
+    return m | _grow(strands)
 
 def _runs(m):
     """rows[y] = flat half-open runs [x0, x1, ...] of a mask [L, B]"""
@@ -1946,20 +1972,25 @@ def measure_hull(h):
                 m &= S[int(np.argmin(np.abs(ys - (f + hd * t))))]
             decks.append([f, hd, m])
         # (every deck one piece with a passage down the centre line from the stern to the bow: the section a crew walks)
-        mids = [B // 2] if B % 2 else [B // 2 - 1, B // 2]
+        # (three rows wide about the centre line)
+        mids = [B // 2 - 1, B // 2, B // 2 + 1]
         for d in decks:
             m = d[2]
             xs_c = [i for i in range(L) if any(m[i, j] for j in mids)] or [i for i in range(L) if m[i].any()]
             if xs_c:
                 for j in mids:
                     m[min(xs_c):max(xs_c) + 1, j] = True
-            d[2] = _bridged(m)
+            d[2] = _widened(_bridged(m))
         big = max(int(d[2].sum()) for d in decks)
         # (a deck with hardly any room is given its neighbour's outline: the deck below's, or the one above for the bottom deck)
         for k in list(range(1, D)) + [0]:
             if decks[k][2].sum() < 0.15 * big:
                 src = decks[k - 1] if k else decks[1]
                 decks[k][2] = src[2].copy()
+        # (a column of 4 x 4 squares inside on every deck at the middle of the length, on the centre line: room for a stair or a lift)
+        for d in decks:
+            d[2][L // 2 - 2:L // 2 + 2, B // 2 - 2:B // 2 + 2] = True
+            d[2] = _widened(_bridged(_widened(d[2]), keep=True))
     else:
         cap = DECK_CAP.get(size, 1)
 
