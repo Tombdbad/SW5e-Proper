@@ -15,7 +15,7 @@
  * enhanced items, starship equipment, travel times) and run where it is loaded: on the server.
  * The edit and travel functions need only the world itself and run anywhere.
  */
-import { looksFor, type BuildingLook } from "./stalberg";
+import { looksWithReport, type BuildingLook } from "./stalberg";
 import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
 import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay } from "./caves";
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
@@ -10852,6 +10852,9 @@ export interface DistrictPlan {
   levels?: Record<string, number>;
   // Each building's look (crown, trim, band), chosen together so that neighbours agree where they should and differ where they should (shared/logic/stalberg.ts)
   looks?: Record<string, BuildingLook>;
+  // Neighbours whose looks came out with the same crown (where three crowns could not colour the street, 2026-11-15): the map marks the join between them with a
+  // pilaster on each facing wall, so that they read as two houses (`seamMarks`)
+  seams?: [string, string][];
 }
 
 // ---- The lie of the land (2026-11-12, the user: "I want LARGE natural hills/cliffs/ravines to exist within relevant locations and to have our buildings/entrances/
@@ -10923,6 +10926,38 @@ export function districtWaysIn(world: World, district: Pick<District, "id" | "bu
         const [x, y, dx, dy] = gate.side === "w" ? [wall.x - 1, wall.y + gate.at + i, -1, 0] : gate.side === "e" ? [wall.x + wall.width, wall.y + gate.at + i, 1, 0] : gate.side === "n" ? [wall.x + gate.at + i, wall.y - 1, 0, -1] : [wall.x + gate.at + i, wall.y + wall.height, 0, 1];
         out.push({ x, y, dx, dy, floor, name: `gate in the ${gate.side} wall` });
       }
+    }
+  }
+  return out;
+}
+// Where the map marks a seam between two neighbours that came out with the same crown (DistrictPlan `seams`): on each of the two walls that face each other across the
+// way, the middle of the stretch they share (of a round room, the middle of its side, where its curve meets its box), from the building's ground floor up to the top
+// of its highest room there. `x`, `y` the point on the wall line in squares of the district's grid, `side` the side of the building the wall is on, `from`/`to` heights
+// in squares. Cosmetic: nothing walks on a seam or is stopped by it.
+export interface SeamMark { building: string; x: number; y: number; side: Side; from: number; to: number }
+export function seamMarks(world: World, plan: Pick<DistrictPlan, "boxes" | "seams" | "levels">): SeamMark[] {
+  const out: SeamMark[] = [];
+  for (const [a, b] of plan.seams ?? []) {
+    const [A, B] = [plan.boxes[a], plan.boxes[b]];
+    if (!A || !B) continue;
+    const across = A.x + A.width <= B.x || B.x + B.width <= A.x;
+    const [lo, hi] = across ? [Math.max(A.y, B.y), Math.min(A.y + A.height, B.y + B.height)] : [Math.max(A.x, B.x), Math.min(A.x + A.width, B.x + B.width)];
+    if (hi <= lo) continue;
+    const mid = (lo + hi) / 2;
+    for (const [id, box, other] of [[a, A, B], [b, B, A]] as const) {
+      const side: Side = across ? (box.x < other.x ? "e" : "w") : box.y < other.y ? "s" : "n";
+      const rooms = childrenOf(world, id).filter((r) => r.kind === "room" && r.layout && !formOf(r) && (r.layout.level ?? 0) >= 0 && !r.layout.roof);
+      // (the rooms whose wall on that side spans the middle of the shared stretch; the one standing furthest out is the face)
+      const spans = rooms.filter((r) => { const l = r.layout!; return across ? l.y <= mid && mid <= l.y + l.height : l.x <= mid && mid <= l.x + l.width; });
+      if (!spans.length) continue;
+      const face = (r: Area) => { const l = r.layout!; return side === "e" ? l.x + l.width : side === "w" ? -l.x : side === "s" ? l.y + l.height : -l.y; };
+      const front = spans.reduce((p, q) => (face(q) > face(p) ? q : p));
+      const l = front.layout!;
+      const along = l.shape ? (across ? l.y + l.height / 2 : l.x + l.width / 2) : mid;
+      const at = side === "e" ? l.x + l.width : side === "w" ? l.x : side === "s" ? l.y + l.height : l.y;
+      const base = plan.levels?.[id] ?? 0;
+      const top = Math.max(...spans.filter((r) => face(r) === face(front)).map((r) => base + ((r.layout!.level ?? 0) + (r.layout!.tall ? 2 : 1)) * ARCH_LEVEL + (r.layout!.aloft ?? 0)));
+      out.push({ building: id, x: across ? at : along, y: across ? along : at, side, from: base + (l.aloft ?? 0), to: top });
     }
   }
   return out;
@@ -11600,8 +11635,8 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
   const grounds = siteGrounds(ctx, district, members, everyRoom(), width, height, edge, boxes, ways);
   // (2026-11-12, Stalberg's constraint solving; dice of their own, so the rest of the world is made as it was)
   let lookTry = 0;
-  const looks = looksFor(members.filter((b) => boxes[b.id]).map((b) => ({ id: b.id, box: boxes[b.id], grand: /^(palace|estates|manor house|temple|archive|arena)$/.test(b.type) })), () => createRandom(hashOf(`${district.id}|looks|${lookTry++}`)));
-  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, looks, ...(grounds ? { grounds } : {}), ...(lieAt ? { levels } : {}) };
+  const { looks, seams } = looksWithReport(members.filter((b) => boxes[b.id]).map((b) => ({ id: b.id, box: boxes[b.id], grand: /^(palace|estates|manor house|temple|archive|arena)$/.test(b.type) })), () => createRandom(hashOf(`${district.id}|looks|${lookTry++}`)));
+  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, looks, ...(seams.length ? { seams } : {}), ...(grounds ? { grounds } : {}), ...(lieAt ? { levels } : {}) };
   // Every room of a building stands at its level; and no window is left with the ground outside it over its sill
   if (lieAt) {
     for (const b of members) for (const room of roomsOf(b)) { if (levels[b.id]) room.layout!.base = levels[b.id]; else delete room.layout!.base; }

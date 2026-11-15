@@ -13,7 +13,7 @@ import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRA
 import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
-import { biomeSky, createRandom, unitOf, packedness, SQUARE_M, terrainSurface, type DistrictGround, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
+import { biomeSky, createRandom, unitOf, packedness, SQUARE_M, terrainSurface, type DistrictGround, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery, type SeamMark } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
 // The asset library of the sites (2026-10-18). A site's open ground is laid out by the shared logic
@@ -1139,6 +1139,27 @@ export function CurtainWall({ wall, biome }: { wall: NonNullable<SiteGrounds["wa
         <Model key={`t${i}`} id={`ctower:${stone}:${roof}`} build={(k) => { k.surfaces = { [stone]: "stone" }; wallTower(k, stone, roof); }} position={[t.x, 0, t.y]} />
       ))}
     </>
+  );
+}
+
+// The seam between two neighbours that came out with the same crown (shared/logic `seamMarks`, 2026-11-15): a pilaster on each of the facing walls, a shade darker than
+// the stone, a little proud of the wall, from the building's floor to the top of its wall there, with a plinth and a cap, so that the two read as two houses
+export function SeamPilaster({ mark, biome }: { mark: SeamMark; biome: string }) {
+  const stone = shade(paletteOf(biome).stone, 0.72);
+  const tall = Math.max(0.5, Math.round((mark.to - mark.from) * 10) / 10);
+  const out = mark.side === "e" ? [1, 0] : mark.side === "w" ? [-1, 0] : mark.side === "s" ? [0, 1] : [0, -1];
+  return (
+    <Model
+      id={`seam:${tall}:${stone}`}
+      build={(k) => {
+        k.surfaces = { [stone]: "stone" };
+        k.box([0.34, tall, 0.14], stone, { at: [0, tall / 2, 0] });
+        k.box([0.46, 0.3, 0.22], stone, { at: [0, 0.15, 0] });
+        k.box([0.46, 0.16, 0.22], stone, { at: [0, tall - 0.08, 0] });
+      }}
+      position={[mark.x + out[0] * 0.12, mark.from, mark.y + out[1] * 0.12]}
+      rotation={[0, out[0] ? Math.PI / 2 : 0, 0]}
+    />
   );
 }
 

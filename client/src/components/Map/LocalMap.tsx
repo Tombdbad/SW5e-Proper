@@ -32,7 +32,7 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf } from "@shared/logic";
+import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf, seamMarks } from "@shared/logic";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
@@ -45,7 +45,7 @@ import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { extPackOf, roofPropOf, roofSpot, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, SeamPilaster, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
@@ -3462,6 +3462,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // are drawn from the asset library and the squares they fill cannot be walked over
   const tier = useQuality((q) => q.tier);
   const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
+  const seams = useMemo(() => (districtPlan?.seams ? seamMarks(world, districtPlan) : []), [districtPlan]);
   // The rise and fall of the open ground under an open sky (2026-11-11, shared/logic districtGround): every building's box, room, garden, stall and curtain
   // wall stands on a level pad and the ways between them are graded to it, all at the street's level (y 0, where every room and door is drawn); the ground
   // between them and out to the rim of the map is the biome's land, a few metres up and down. None on the sea or under it, aboard a ship, on a station or a
@@ -5621,6 +5622,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
             {/* (a site's wall and gardens on their level pads: shared/logic districtGround) */}
             {districtPlan?.grounds?.wall && <group position={[0, groundY(districtPlan.grounds.wall.x + 1.5, districtPlan.grounds.wall.y + 1.5), 0]}><CurtainWall wall={districtPlan.grounds.wall} biome={biome} /></group>}
+            {/* (a seam between neighbours that came out alike: shared/logic seamMarks) */}
+            {seams.map((m) => <SeamPilaster key={`${m.building}-${m.x}-${m.y}`} mark={m} biome={biome} />)}
             {districtPlan?.grounds?.gardens?.map((r, i) => <group key={`garden-${i}`} position={[0, groundY(r.x + r.width / 2, r.y + r.height / 2), 0]}><GardenGround rects={[r]} biome={biome} /></group>)}
             <Scatter placed={stood.fixtures} biome={biome} />
             <Scatter placed={stood.ambient} biome={biome} />
