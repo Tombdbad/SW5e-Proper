@@ -551,6 +551,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const aimZoom = 1 + (((p.gun?.optic?.zoom ?? SHOOT.ads.iron) - 1) * (p.ads ?? 0));
     const want = Math.max(aimZoom, store.held.zoom && senses.zoom > 0 ? senses.zoom : 1);
     st.zoom += (want - st.zoom) * Math.min(1, dt * 8);
+    ADS.zoom = st.zoom;
     const cam = camera as THREE.PerspectiveCamera;
     if (Math.abs(cam.zoom - st.zoom) > 0.001) { cam.zoom = st.zoom; cam.updateProjectionMatrix(); }
     boltMeshes.current.forEach((m, i) => {
@@ -629,8 +630,11 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
       const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
       const r = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-      const at = camera.position.clone().add(r.multiplyScalar(0.3)).add(up.multiplyScalar(-0.26)).add(fwd.clone().multiplyScalar(0.7 - kick * 0.05));
-      if (blaster.current) { blaster.current.visible = st.weapon === "gun"; blaster.current.position.copy(at); blaster.current.quaternion.copy(camera.quaternion); blaster.current.scale.setScalar(0.55); }
+      // (aiming brings the gun from the hip to the middle of the view, its sights on the crosshair; behind a scope it is out of the picture)
+      const come = p.ads ?? 0;
+      const lift = come * come * (3 - 2 * come);
+      const at = camera.position.clone().add(r.multiplyScalar(0.3 * (1 - lift))).add(up.multiplyScalar(-0.26 + 0.2 * lift)).add(fwd.clone().multiplyScalar(0.7 - kick * 0.05));
+      if (blaster.current) { blaster.current.visible = st.weapon === "gun" && !(st.zoom >= 1.9 && come > 0.3); blaster.current.position.copy(at); blaster.current.quaternion.copy(camera.quaternion); blaster.current.scale.setScalar(0.55); }
       placeSaber(saber.current, saberBlade.current, at, camera.quaternion, st, p, now, true);
     } else {
       if (blaster.current) blaster.current.visible = false;
@@ -680,6 +684,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     return () => {
       mounted.current = false;
       stance.k = 0;
+      ADS.k = 0;
+      ADS.zoom = 1;
       stance.lunge = 0;
       stance.pace = 1;
       const cam = camera as THREE.PerspectiveCamera;

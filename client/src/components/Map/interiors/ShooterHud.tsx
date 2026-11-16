@@ -255,7 +255,7 @@ export function HandsGame({ what, plan, onDone }: { what: string; plan: HandsPla
   const cursor = barAt({ ...plan, speed: g.speed }, g.t);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 90, pointerEvents: "none" }}>
-      <div role="dialog" aria-label={HANDS_TITLE[plan.kind]} data-testid="hands-game" data-kind={plan.kind} style={{ pointerEvents: "auto", width: "min(360px, calc(100vw - 32px))", background: "rgba(10,14,22,0.86)", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 10, padding: 12, color: "#fff", font: "600 13px sans-serif", textAlign: "center", touchAction: "none", userSelect: "none" }}>
+      <div role="dialog" aria-label={HANDS_TITLE[plan.kind]} data-testid="hands-game" data-kind={plan.kind} style={{ pointerEvents: "auto", width: "min(360px, calc(100vw - 32px))", background: "rgba(10,14,22,0.97)", border: "1px solid rgba(255,255,255,0.35)", borderRadius: 10, padding: 12, color: "#fff", font: "600 13px sans-serif", textAlign: "center", touchAction: "none", userSelect: "none" }}>
         <div style={{ color: "#fde68a" }}>{HANDS_TITLE[plan.kind]}: {what}</div>
         {plan.kind === "pick" ? (
           <>
