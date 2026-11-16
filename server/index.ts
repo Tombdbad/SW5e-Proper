@@ -1,10 +1,14 @@
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import "dotenv/config";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { pool, ensureDefaultUser } from "./db";
 
 const app = express();
+// Answers that are not already compressed (the API: a generated world is a few hundred kB of JSON; the built files are
+// precompressed, see serveStatic) go out gzipped when the browser takes it
+app.use(compression({ filter: (req, res) => !/^audio\//.test(String(res.getHeader("Content-Type") ?? "")) && compression.filter(req, res) }));
 // Generated worlds are a few hundred kB of JSON
 app.use(express.json({ limit: "8mb" }));
 app.use(express.urlencoded({ extended: false }));

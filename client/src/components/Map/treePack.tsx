@@ -5,7 +5,7 @@
 // A piece is a few parts, each a mesh with one material, named <piece>__<A|B|C>__<bark|limb|needle|leaf>; the model is 1 unit a metre, standing on its foot.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { newGLTFLoader } from "../../lib/gltf";
 import { ECOLOGY } from "@shared/logic";
 import type { MegaPack } from "./packs";
 
@@ -14,7 +14,7 @@ export type TreePack = Map<string, TreePart[]>;
 const LOADED: { p?: Promise<TreePack | null> } = {};
 function loadTreePack(): Promise<TreePack | null> {
   LOADED.p ??= new Promise((done) => {
-    new GLTFLoader().load(
+    newGLTFLoader().load(
       "/megascans/trees.glb",
       (g) => {
         const pack: TreePack = new Map();

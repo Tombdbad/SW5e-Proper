@@ -6,7 +6,7 @@
 // person of bulk 1; `fit` bends it to the points a pose gives (a shoulder, an elbow, a hand), stretching it between joints and keeping the
 // ends (a hand, a boot) at their size. Pure but for THREE: tests/interiors/body.test.ts.
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { newGLTFLoader } from "../../../lib/gltf";
 import { useSyncExternalStore } from "react";
 
 export type PartName = "torso" | "arm" | "fore" | "thigh" | "shin" | "head";
@@ -35,7 +35,7 @@ function shelf<T>(file: string, read: (scene: THREE.Object3D) => T) {
   const get = () => loaded;
   const load = (): Promise<T | null> => {
     if (!pending) {
-      pending = new GLTFLoader().loadAsync(file).then((gltf) => {
+      pending = newGLTFLoader().loadAsync(file).then((gltf) => {
         loaded = read(gltf.scene);
         listeners.forEach((l) => l());
         return loaded;

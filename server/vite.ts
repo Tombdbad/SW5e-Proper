@@ -69,6 +69,18 @@ export async function setupVite(app: Express, server: Server) {
   });
 }
 
+// The built site is compressed when it is built (tools/optimizeDist.mjs leaves a .br and a .gz next to every script, style,
+// model and data file), so the answer for a browser that takes brotli or gzip is the file as it lies, with no work per request
+const PACKED = /\.(js|mjs|css|html|json|svg|webmanifest|txt|glb|gltf|wasm|xml|wav|bin)$/i;
+// Files of a build carry a hash of their content in the name and never change: kept for a year. The page, the worker and the
+// manifest are asked for again every time (a 304 when nothing changed); the other files (models, textures) are kept an hour
+const HASHED = /^\/assets\/.+-[A-Za-z0-9_-]{8}\.(js|css)$/;
+function cacheControl(urlPath: string): string {
+  if (HASHED.test(urlPath)) return "public, max-age=31536000, immutable";
+  if (urlPath === "/" || /^\/(index\.html|sw\.js|manifest\.webmanifest)$/.test(urlPath)) return "no-cache";
+  return "public, max-age=3600";
+}
+
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
 
@@ -78,7 +90,32 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    const url = req.path;
+    if (!PACKED.test(url) && url !== "/") return next();
+    res.setHeader("Vary", "Accept-Encoding");
+    const accepted = String(req.headers["accept-encoding"] ?? "");
+    const file = path.join(distPath, url === "/" ? "index.html" : decodeURIComponent(url));
+    if (!file.startsWith(distPath)) return next();
+    for (const [coding, suffix] of [["br", ".br"], ["gzip", ".gz"]] as const) {
+      if (!accepted.includes(coding) || !fs.existsSync(file + suffix)) continue;
+      // express.static keeps a Content-Type that is already set, so the file is typed by its own name, not by .br
+      res.type(path.extname(file));
+      res.setHeader("Content-Encoding", coding);
+      req.url = (url === "/" ? "/index.html" : url) + suffix + (req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "");
+      break;
+    }
+    next();
+  });
+
+  app.use(
+    express.static(distPath, {
+      setHeaders(res, file) {
+        res.setHeader("Cache-Control", cacheControl("/" + path.relative(distPath, file).replace(/\\/g, "/").replace(/\.(br|gz)$/, "")));
+      },
+    }),
+  );
 
   // a script of an older build is gone, not the home page
   app.use("/assets", (_req, res) => res.status(404).end());

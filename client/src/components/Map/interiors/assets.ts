@@ -3,7 +3,7 @@
 // and kept; one that cannot be had gives null and the caller draws what it builds in code.
 import { useEffect, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { newGLTFLoader } from "../../../lib/gltf";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { retone, type Tone } from "./tones";
 
@@ -70,7 +70,7 @@ export function loadModel(url: string, anchor: Anchor = "centre", tone?: Tone): 
   const key = `${anchor}:${url}`;
   let found = FILES.get(key);
   if (!found) {
-    found = new GLTFLoader().loadAsync(url).then((gltf) => geometryOf(gltf.scene, anchor)).catch(() => null);
+    found = newGLTFLoader().loadAsync(url).then((gltf) => geometryOf(gltf.scene, anchor)).catch(() => null);
     FILES.set(key, found);
   }
   if (!tone) return found;

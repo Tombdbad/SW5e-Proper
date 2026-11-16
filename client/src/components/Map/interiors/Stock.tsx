@@ -16,6 +16,9 @@ import { DEFAULT_TONE, KIT_MODELS, kitUrl, toneNameOf, type KitLook } from "./ki
 import { TONES, type Tone } from "./tones";
 
 const NEAR = 11;
+// Beyond this (scaled the same way) a piece of furniture shows no stock and fetches no model: nothing of it can be told apart
+const FAR = 40;
+type Level = "none" | "low" | "hero";
 // Which kinds of model are drawn matte
 const DULL = new Set<KitLook | undefined>(["kit", "medical", "prosthetic"]);
 
@@ -66,6 +69,10 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares, f
   const items = useMemo(() => stockLayout(holds, L, D, buildingType, roomName, seed, name, wares), [holds, L, D, buildingType, roomName, seed, name, key]);
   // Weapons are set on their middles, props (crates, clips, grenades) and the kits' models on their undersides. The Blaster Kit's
   // pieces keep their steel; the kits' models take the room's palette, or their own where the room has none
+  // Only the models of the detail level in use are fetched, and none until the first look at the camera (a shop or an armoury
+  // with fifty pieces of stock used to fetch and bake them all, both levels, the moment it was drawn)
+  const [level, setLevel] = useState<Level>("none");
+  const details: ("hero" | "low")[] = level === "none" ? [] : [level];
   const [weaponUrls, propUrls, kitUrls, itemUrls] = useMemo(() => {
     const [weapons, props] = [new Set<string>(), new Set<string>()];
     // The catalogue's models, by the look that says whether the room's palette applies
@@ -73,25 +80,25 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares, f
     const kits: Record<KitLook, { centre: Set<string>; base: Set<string> }> = Object.fromEntries((Object.keys(DEFAULT_TONE) as KitLook[]).map((l) => [l, { centre: new Set<string>(), base: new Set<string>() }])) as never;
     for (const it of items) {
       if (it.item) {
-        for (const detail of ["hero", "low"] as const) catalogue[lookOfModel(it.item)].add(modelUrl(it.item, detail)!);
+        for (const detail of details) catalogue[lookOfModel(it.item)].add(modelUrl(it.item, detail)!);
         continue;
       }
       if (it.model) {
         const look = KIT_MODELS[it.model];
-        for (const detail of ["hero", "low"] as const) kits[look].base.add(kitUrl(it.model, detail));
+        for (const detail of details) kits[look].base.add(kitUrl(it.model, detail));
         continue;
       }
       const hung = it.weapon ? hungWeapon(it.weapon) : undefined;
       const file = it.prop ?? hung?.file;
       if (!file) continue;
       const dir = hung?.dir ?? KENNEY_BLASTER;
-      for (const url of [`${dir}/${file}.glb`, `${dir}/${file}.lod.glb`]) {
+      for (const url of details.map((d) => (d === "hero" ? `${dir}/${file}.glb` : `${dir}/${file}.lod.glb`))) {
         if (dir !== KENNEY_BLASTER) kits.weapon.centre.add(url);
         else (it.prop ? props : weapons).add(url);
       }
     }
     return [[...weapons], [...props], kits, catalogue] as [string[], string[], typeof kits, typeof catalogue];
-  }, [items]);
+  }, [items, level]);
   const weaponFiles = useModels(weaponUrls, "centre");
   const propFiles = useModels(propUrls, "base");
   // The room's palette where there is one; a plain model (its colours mean something) is never recoloured
@@ -101,18 +108,19 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares, f
   const cat = (["armour", "kit", "medical", "prosthetic", "weapon", "worn", "plain"] as const).map((look) => useModels([...itemUrls[look]], "base", toneOf(look)));
   const files = useMemo(() => ({ ...weaponFiles, ...propFiles, ...armour, ...kit, ...medical, ...prosthetic, ...meleeFiles, ...Object.assign({}, ...cat) }), [weaponFiles, propFiles, armour, kit, medical, prosthetic, meleeFiles, ...cat]);
   const group = useRef<THREE.Group>(null);
-  const [near, setNear] = useState(true);
-  const clock = useRef(0);
+  const clock = useRef(1);
   const world = useRef(new THREE.Vector3());
   useFrame(({ camera }, delta) => {
     clock.current += delta;
     if (clock.current < 0.5 || !group.current) return;
     clock.current = 0;
     group.current.getWorldPosition(world.current);
-    const isNear = world.current.distanceTo(camera.position) < NEAR * Math.max(1, camera.position.y / 18);
-    if (isNear !== near) setNear(isNear);
+    const reach = Math.max(1, camera.position.y / 18);
+    const d = world.current.distanceTo(camera.position);
+    const now: Level = d < NEAR * reach ? "hero" : d < FAR * reach ? "low" : "none";
+    if (now !== level) setLevel(now);
   });
-  const baked = useMemo(() => (items.length ? stockGeometry(items, files, near ? "hero" : "low") : {}), [items, files, near]);
+  const baked = useMemo(() => (items.length && level !== "none" ? stockGeometry(items, files, level) : {}), [items, files, level]);
   useEffect(() => () => { for (const g of Object.values(baked)) g?.dispose(); }, [baked]);
   if (!items.length) return null;
   return (
