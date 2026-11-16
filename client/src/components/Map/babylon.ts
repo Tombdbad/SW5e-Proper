@@ -927,6 +927,7 @@ class Mirror {
       if (node.geometry) node.mesh.geometry?.releaseForMesh(node.mesh, false);
       // (a text's card is kept for the next label that says the same)
       if (node.kind === "text" && node.label) this.releaseCard(node.label);
+      node.cutMat?.dispose();
       node.mesh.dispose(false, false);
     }
     if (node.light) {
@@ -1590,7 +1591,7 @@ class Mirror {
     // camera's side of the character, by a clip plane on that copy
     const fade = typeof o.userData.fade === "number" ? o.userData.fade : 1;
     const cut = o.userData.cut as [number, number, number, number] | undefined;
-    if ((fade < 1 || cut) && mesh.material && !shader) {
+    if ((fade < 1 || cut) && mesh.material && !shader && !Array.isArray(o.material)) {
       if (!node.cutMat || node.cutFrom !== mesh.material) {
         node.cutMat?.dispose();
         node.cutFrom = mesh.material;

@@ -805,8 +805,9 @@ export const playerOf = (sim: Sim, id: string | undefined = sim.actor) => (id !=
 export const playersOf = (sim: Sim) => sim.units.filter((u) => u.side === "player");
 // Plays one member's input: the actions act for them, with their own spread and crosshair point
 export function withActor<T>(sim: Sim, id: string, play: () => T): T {
+  const u = sim.units.find((o) => o.side === "player" && o.id === id);
+  if (!u) return play();
   const was = { actor: sim.actor, spread: sim.spread, aim: sim.aim };
-  const u = playerOf(sim, id);
   sim.actor = id;
   sim.spread = u.spreadNow ?? SHOOT.spread.base;
   sim.aim = u.aimAt;
@@ -2721,9 +2722,9 @@ export type Command =
   | { k: "aim"; on: boolean; to?: Spot | null };
 // One command for one member: what it did, or why not (a gear used is taken from their belt here: `used` counts it by name)
 export function applyCommand(sim: Sim, id: string, cmd: Command, env: Env, events: Event[], opts: { gear?: FightGear[]; used?: Record<string, number>; place?: (x: number, y: number) => boolean } = {}): string {
+  if (!sim.units.some((u) => u.side === "player" && u.id === id)) return "";
   return withActor(sim, id, () => {
     const p = playerOf(sim);
-    if (p.id !== id) return "";
     const belt = opts.gear ?? [];
     const spend = (g: FightGear) => {
       g.count--;

@@ -89,7 +89,10 @@ function joinFight(s: Session, id: string, msg: any) {
 }
 // A member out of the fight (walked out, dropped too long, the game left): their unit goes from the field; the next member settles the world
 function leaveFight(s: Session, fight: Fight, id: string) {
-  if (!fight.members.delete(id)) return;
+  const m = fight.members.get(id);
+  if (!m) return;
+  send(s.members.get(id)?.socket, { t: "fight-end", area: fight.area, result: "left", owner: fight.owner, used: m.used, snap: snapOf(fight.sim, [], id) });
+  fight.members.delete(id);
   const u = fight.sim.units.find((o) => o.id === id);
   if (u) u.mode = "gone";
   delete fight.sim.poses?.[id];
@@ -107,12 +110,10 @@ function tickFight(s: Session, fight: Fight) {
   const events: Event[] = [];
   for (const [id, m] of fight.members) {
     if (m.droppedAt && now - m.droppedAt > FIGHT_HOLD_MS) { leaveFight(s, fight, id); continue; }
-    // (where the member stands, as their screen has it: kept on open ground and within a sprint of where they were)
+    // (where the member stands, as their screen has it: on a crate, a roof or in the air as well as on the floor; the game has no login, and the
+    // screen is the one that walks the map)
     const u = sim.units.find((o) => o.id === id);
-    if (m.pose && u && !u.dead) {
-      const near = Math.hypot(m.pose.x - u.x, m.pose.y - u.y) < 6;
-      if (near && fight.env.walkable(m.pose.x, m.pose.y)) sim.poses![id] = m.pose;
-    }
+    if (m.pose && u && !u.dead) sim.poses![id] = m.pose;
     const place = (x: number, y: number) => {
       if (!fight.env.walkable(x + 0.5, y + 0.5)) return false;
       events.push({ type: "reel", id, x: x + 0.5, y: y + 0.5 });
@@ -124,8 +125,9 @@ function tickFight(s: Session, fight: Fight) {
     }
   }
   if (!fight.members.size || !s.fights?.has(fight.area)) return;
-  const first = [...fight.members.keys()][0];
-  events.push(...step(sim, FIGHT_STEP, fight.env, sim.poses?.[first] ?? { x: 0, y: 0, h: 0, facing: 0 }));
+  // (the first party unit stands where it is when its screen has sent nothing yet)
+  const lead = sim.units.find((u) => u.side === "player")!;
+  events.push(...step(sim, FIGHT_STEP, fight.env, sim.poses?.[lead.id] ?? { x: lead.x, y: lead.y, h: lead.h, facing: lead.facing }));
   fight.events.push(...events);
   if (++fight.ticks % FIGHT_SEND_EVERY === 0) {
     for (const [id, m] of fight.members) {
@@ -338,7 +340,9 @@ async function hello(socket: WebSocket, msg: any): Promise<{ s: Session; id: str
   pushMembers(s);
   if (s.room && s.room.phase === "gather" && !s.room.joined.includes(id)) pushRoom(s);
   const fight = s.fights?.get(peer.areaId);
-  if (fight) send(socket, { t: "fight-on", area: fight.area, by: fight.owner });
+  const held = fight?.members.get(id);
+  if (held) held.droppedAt = undefined;
+  else if (fight) send(socket, { t: "fight-on", area: fight.area, by: fight.owner });
   return { s, id };
 }
 

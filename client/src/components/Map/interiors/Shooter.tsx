@@ -214,7 +214,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     // Mines and charges left set on the ground are picked up again (house rule, as on the tabletop): not used up
     for (const m of s.mines) if (m.side === "player" && st.used[m.name]) st.used[m.name]--;
     // (the member who began a co-op fight, or took it over, settles the world; the others only their own characters)
-    useShoot.getState().end(st.used, !!shared && end?.owner !== shared.me);
+    const owner = end?.owner ?? (fightBus.last?.area === shared?.area ? fightBus.last?.owner : undefined);
+    useShoot.getState().end(st.used, !!shared && !!owner && owner !== shared.me);
     now.finishRealtime(abandoned || (shared && result === "ongoing") ? "left" : result === "victory" ? "victory" : "stable", roundsOf(s), patch);
   };
 
@@ -240,7 +241,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       s.props = c.props?.() ?? [];
       // (a co-op fight is the server's: this screen sends the map's walls round the fight and the field as it made it; one already going there
       // takes in this member's party unit and companions instead)
-      if (session.shared) openSharedFight({ area: session.shared.area, grid: bakeGrid(c.env, Math.floor(me.x) - 40, Math.floor(me.y) - 40, 80, 80), units: s.units, props: s.props, seed: session.seed, surprise: session.surprise, gear: st.gear });
+      if (session.shared) {
+        const xs = [me.x, ...s.units.filter((u) => Number.isFinite(u.x)).map((u) => u.x)];
+        const ys = [me.y, ...s.units.filter((u) => Number.isFinite(u.y)).map((u) => u.y)];
+        const [x0, y0] = [Math.floor(Math.max(Math.min(...xs) - 16, me.x - 100)), Math.floor(Math.max(Math.min(...ys) - 16, me.y - 100))];
+        const [w, h] = [Math.min(200, Math.ceil(Math.max(...xs) + 16) - x0), Math.min(200, Math.ceil(Math.max(...ys) + 16) - y0)];
+        openSharedFight({ area: session.shared.area, grid: bakeGrid(c.env, x0, y0, w, h), units: s.units, props: s.props, seed: session.seed, surprise: session.surprise, gear: st.gear });
+      }
     }
     // What this screen does with the keys: in a fight of one, at once; in a co-op fight, sent to the server as commands (and shown at once
     // where it is plain what comes of it: the shot, the swing)

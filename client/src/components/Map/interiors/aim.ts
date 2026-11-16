@@ -134,6 +134,18 @@ export function fadeable(o: THREE.Object3D): boolean {
   return true;
 }
 const fadeRay = new THREE.Raycaster();
+// (what could be faded, gathered from the scene once a second: the rays are cast against these, not every mesh and instance of a street)
+const fadePool = { at: -1e9, scene: null as THREE.Object3D | null, list: [] as THREE.Object3D[] };
+function poolOf(scene: THREE.Object3D): THREE.Object3D[] {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (fadePool.scene !== scene || now - fadePool.at > 1000) {
+    fadePool.scene = scene;
+    fadePool.at = now;
+    fadePool.list = [];
+    scene.traverse((o) => { if ((o as THREE.Mesh).isMesh && fadeable(o)) fadePool.list.push(o); });
+  }
+  return fadePool.list;
+}
 const fadeNormal = new THREE.Vector3();
 // The meshes between the camera and the character this moment
 export function fadeBetween(scene: THREE.Object3D, camera: THREE.Vector3, feet: THREE.Vector3, eye: number): Set<THREE.Mesh> {
@@ -145,7 +157,7 @@ export function fadeBetween(scene: THREE.Object3D, camera: THREE.Vector3, feet: 
     if (toTarget < 0.05) continue;
     fadeRay.set(camera, along.normalize());
     fadeRay.far = toTarget;
-    for (const hit of fadeRay.intersectObject(scene, true)) {
+    for (const hit of fadeRay.intersectObjects(poolOf(scene), false)) {
       const m = hit.object as THREE.Mesh;
       if (out.has(m) || !hit.face) continue;
       fadeNormal.copy(hit.face.normal).transformDirection(m.matrixWorld);
