@@ -12020,6 +12020,21 @@ export function bulkOf(asset: Pick<RoomAsset, "name" | "w" | "h" | "kind">): Bul
   return { size, pounds: POUNDS[size] * (STONE.test(asset.name) ? 4 : 1) };
 }
 
+// What breaks (2026-11-16, batch G; the user: "relevant destructible furniture assets"). HOUSE RULES, since the books give furniture no hit points:
+// a loose piece of wood, plastoid or thin metal (a crate, a table, a locker, a lamp ...) has the hit points the Dungeon Master's Guide gives an
+// object of its size, at their average (fragile: glass, jars, lamps, screens; resilient: the rest), and is gone when they run out; a fuel drum
+// bursts into flame (3d6 fire within 10 feet, the ground burning a minute). Stone, built-in pieces and what is Huge or bigger do not break.
+const BREAKS = /crate|pallet|parts bin|footlocker|locker|cabinet|table|bench|desk|couch|cushions|shelving|rack|cart|stand|lamp|jar|dispenser|produce bin|privacy screen|tire stack|barricade|fuel drum|brazier|banner|bed\b|stool|chair|cloth bolts|trough/i;
+const FRAGILE = /jar|lamp|privacy screen|banner|cushions|cloth bolts|dispenser/i;
+const OBJECT_HP: Record<Bulk["size"], [number, number]> = { Tiny: [2, 5], Small: [3, 10], Medium: [4, 18], Large: [5, 27], Huge: [0, 0], Gargantuan: [0, 0] };
+export function breakOf(asset: Pick<RoomAsset, "name" | "w" | "h" | "kind">): { hp: number; burst?: { radius: number; dice: string; type: string; fire: boolean } } | undefined {
+  const bulk = bulkOf(asset);
+  if (bulk.fixed || STONE.test(asset.name) || !BREAKS.test(asset.name)) return undefined;
+  const hp = OBJECT_HP[bulk.size][FRAGILE.test(asset.name) ? 0 : 1];
+  if (!hp) return undefined;
+  return { hp, ...(/fuel drum/i.test(asset.name) ? { burst: { radius: 10, dice: "3d6", type: "fire", fire: true } } : {}) };
+}
+
 // The ground something is shoved over: a room's plan, or a fight's (with its raised floors)
 export interface ShoveGround {
   width: number;

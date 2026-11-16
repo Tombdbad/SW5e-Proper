@@ -73,7 +73,15 @@ interface ShootStore {
   up: (key: ShootKey) => void;
   hud: Hud;
   setHud: (hud: Partial<Hud>) => void;
+  // (2026-11-16, batch G) The loose pieces of the room the party is in that a power moved or a blow broke (by asset id: the corner in the room's
+  // squares, or gone). The map draws and walks by it; the room is set right when the party is somewhere else (house rule: a place is as it was
+  // when the party next comes)
+  pieces: { area: string; at: Record<string, Piece> };
+  setPiece: (area: string, id: string, piece: Piece) => void;
 }
+export interface Piece { x: number; y: number; gone?: boolean }
+// Where a room's piece stands now (moved or broken in a fight), or where the room has it
+export const pieceNow = <A extends { id: string; x: number; y: number }>(a: A, at: Record<string, Piece>): A & { gone?: boolean } => (at[a.id] ? { ...a, x: at[a.id].x, y: at[a.id].y, gone: at[a.id].gone } : a);
 let counter = 0;
 const KEY_LIST: ShootKey[] = ["aim", "sights", "fire", "grenade", "reload", "block", "swap", "crouch", "item", "next", "power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8", "page", "zoom"];
 const noKeys = () => Object.fromEntries(KEY_LIST.map((k) => [k, false])) as Record<ShootKey, boolean>;
@@ -89,6 +97,8 @@ export const useShoot = create<ShootStore>((set, get) => ({
   up: (key) => set({ held: { ...get().held, [key]: false } }),
   hud: blankHud(),
   setHud: (hud) => set({ hud: { ...get().hud, ...hud } }),
+  pieces: { area: "", at: {} },
+  setPiece: (area, id, piece) => set({ pieces: { area, at: { ...(get().pieces.area === area ? get().pieces.at : {}), [id]: piece } } }),
 }));
 
 const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap", KeyC: "crouch", KeyZ: "item", KeyT: "next", Digit1: "power0", Digit2: "power1", Digit3: "power2", Digit4: "power3", Digit5: "power4", Digit6: "power5", Digit7: "power6", Digit8: "power7", Digit9: "power8", Digit0: "page", KeyY: "zoom", KeyH: "aim" };

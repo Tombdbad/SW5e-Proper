@@ -31,8 +31,9 @@ import { beginSwing, kickOf, motion, nowSeconds, climbPhase, mountPlace, type Mo
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
-import { useShoot } from "./interiors/shoot";
-import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf, seamMarks } from "@shared/logic";
+import { useShoot, pieceNow } from "./interiors/shoot";
+import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf, seamMarks, bulkOf, breakOf, shoveAsset } from "@shared/logic";
+import { blastOf, type Prop } from "@shared/logic/shooter";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
@@ -3543,6 +3544,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && !a.layout.tube && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
+  // (the pieces moved or broken here; a room is set right once the party is somewhere else: house rule)
+  const pieces = useShoot((s) => s.pieces);
+  useEffect(() => {
+    if (pieces.area && pieces.area !== opened?.id) useShoot.setState({ pieces: { area: "", at: {} } });
+  }, [opened?.id]);
   const seen = (room: Area) =>
     room.layout!.assets.filter((a) => {
       if (a.kind === "door") return !world.paths.find((p) => p.id === a.ref)?.hidden;
@@ -3550,7 +3556,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (a.kind === "loot") return room.loot.some((c) => c.id === a.ref && !c.hidden);
       if (a.kind === "npc") return room.occupants.some((o) => o.id === a.ref);
       return true;
-    }).map((a) => (a.kind === "ship" && !bayBerth(room, a, based[room.id], minuteNow()).ship ? { ...a, blocks: false, cover: false } : a));
+    }).map((a) => (a.kind === "ship" && !bayBerth(room, a, based[room.id], minuteNow()).ship ? { ...a, blocks: false, cover: false } : a))
+      // (2026-11-16) the loose pieces a power moved or a blow broke in a real-time fight here (interiors/shoot.ts pieces)
+      .map((a) => (pieces.area === room.id ? pieceNow(a, pieces.at) : a)).filter((a) => !(a as { gone?: boolean }).gone);
   const shown = opened ? seen(opened) : [];
 
   // Outside: where the streets lead (a signpost for each way out of the district), a few things
@@ -4241,7 +4249,34 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       },
       walkable: (x, y) => open(Math.floor(x), Math.floor(y)),
       floorAt: shootFloor,
+      // (2026-11-16) a loose piece of the room moved by a power, by the tabletop's own rule (shoveAsset: a square at a time, stopping before a
+      // wall, another piece or a body, never where it would bar a way); the corner on the map's grid
+      shove: (id, dir, squares, who) => {
+        const l = inside?.layout;
+        if (!l || !inside) return null;
+        const ground: Parameters<typeof shoveAsset>[0] = { width: l.width, height: l.height, assets: shown };
+        const moved = shoveAsset(ground, id, dir, squares, { creatureAt: (x, y) => (who(x + l.x, y + l.y) ? { id: "", name: "" } : undefined), soft: (x, y) => feet.current.x === x + l.x && feet.current.y === y + l.y });
+        if (!moved.squares && !moved.struck) return { x: moved.x + l.x, y: moved.y + l.y, squares: 0 };
+        useShoot.getState().setPiece(inside.id, id, { x: moved.x, y: moved.y });
+        return { x: moved.x + l.x, y: moved.y + l.y, squares: moved.squares, ...(moved.struck ? { struck: { x: moved.struck.x + l.x, y: moved.struck.y + l.y } } : {}) };
+      },
     },
+    // (2026-11-16) the loose pieces of the room the fight is in: what a power can move (not built in) and what breaks (shared/logic bulkOf, breakOf)
+    props: (): Prop[] => {
+      const l = inside?.layout;
+      if (!l) return [];
+      return shown.filter((a) => a.kind === "furniture" && !a.side && !a.height && !bulkOf(a).fixed).map((a) => {
+        const bulk = bulkOf(a);
+        const br = breakOf(a);
+        return {
+          id: a.id, name: a.name, x: a.x + l.x, y: a.y + l.y, w: a.w, d: a.h, size: bulk.size, pounds: bulk.pounds,
+          ...(br ? { hp: br.hp } : {}),
+          ...(br?.burst ? { burst: blastOf(a.name, { radius: br.burst.radius, damage: [{ dice: br.burst.dice, type: br.burst.type }], ...(br.burst.fire ? { fire: { radius: br.burst.radius, dice: "1d4" } } : {}) }) } : {}),
+        };
+      });
+    },
+    // (a piece broken: gone from the room for the rest of the visit)
+    broke: (id: string) => { if (inside) useShoot.getState().setPiece(inside.id, id, { x: 0, y: 0, gone: true }); },
     feet: () => feet.current,
     altitude: () => heightNow() + air.current.y,
     facing: () => facing.current ?? token.current?.rotation.y ?? 0,

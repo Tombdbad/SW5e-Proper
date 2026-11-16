@@ -88,6 +88,8 @@ export const SHOOT = {
   // first adds this share to each shot and blow; a state entered at will (a rage) lasts this long, an extra action this long; a feature's "once
   // a turn" is once in this many seconds, and so is a reaction
   feature: { extraAttack: 0.5, stance: 60, surge: 6, turn: 6 },
+  // (2026-11-16) How high a loose piece stands (squares): a bolt below it strikes it, as the map's furniture stops one
+  propTop: 0.9,
 };
 // What each shot and blow does with an Attack action of so many attacks (Extra Attack), as a share of one (house rule: SHOOT.feature)
 export const extraAttackShare = (attacks: number) => 1 + SHOOT.feature.extraAttack * Math.max(0, Math.floor(attacks) - 1);
@@ -620,6 +622,10 @@ export interface RtPower {
   tradition?: "force" | "tech";
   level?: number;
   item?: boolean;
+  // (2026-11-16) A push or pull that moves objects (rules.ts powerMotion, at the character's level): the largest it moves, the heaviest, and
+  // how many squares by the size of what is moved
+  // (`choice`: the text lets the caster push or pull; here it pulls while the party is aiming, and pushes otherwise: house rule)
+  objects?: { size: Prop["size"]; maxPounds?: number; choice?: boolean; squares: Partial<Record<Prop["size"], number>> };
 }
 // (`natural`: spat or flung by a monster, drawn as what it is: a glob, a spine)
 // (`rider`: the weapon's riders, carried by the party's shots; `blade`: a thrown blade, drawn as one; `plain`: no riders at all, a harpoon's or
@@ -715,7 +721,10 @@ export type Event =
   | { type: "reel"; x: number; y: number; id?: string }
   | { type: "decoy"; id: string }
   | { type: "image"; id: string }
-  | { type: "revealed"; id: string };
+  | { type: "revealed"; id: string }
+  // (2026-11-16) a loose piece moved (its corner now) or broken
+  | { type: "prop"; id: string; x: number; y: number }
+  | { type: "broke"; id: string; x: number; y: number };
 
 export interface Env {
   // Whether a bolt, or a thrown thing, is stopped at this point (a wall, or something higher than it flies)
@@ -723,7 +732,27 @@ export interface Env {
   // Whether a body can stand in this square
   walkable: (x: number, y: number) => boolean;
   floorAt: (x: number, y: number) => number;
+  // (2026-11-16) Moves a loose piece of the place (Prop) up to so many squares along a direction, by the map's own rule (shared/logic shoveAsset):
+  // where its corner ends, how far it went, and the square where it came up against something (`who` says whether a body stands there)
+  shove?: (id: string, dir: { x: number; y: number }, squares: number, who: (x: number, y: number) => boolean) => { x: number; y: number; squares: number; struck?: { x: number; y: number } } | null;
 }
+// A loose piece of the place the fight is in (2026-11-16, batch G; the user: Force pull and push "should be able to move furniture assets ... anything
+// that has weight, but is NOT attached to the floor", and "destructible furniture"): its corner and squares (the map's grid), its size and weight
+// (shared/logic bulkOf, house rule), and its hit points if it breaks (breakOf), with the burst a fuel drum makes. The scene keeps where it stands.
+export interface Prop {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  size: "Tiny" | "Small" | "Medium" | "Large" | "Huge" | "Gargantuan";
+  pounds: number;
+  hp?: number;
+  burst?: GrenadeKind;
+  gone?: boolean;
+}
+const SIZE_ORDER = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"];
 export interface Sim {
   units: Unit[];
   bolts: Bolt[];
@@ -747,6 +776,8 @@ export interface Sim {
   lastSeen?: { x: number; y: number };
   eye?: { x: number; y: number; h: number; t: number };
   lit?: boolean;
+  // (2026-11-16) The loose pieces of the place
+  props?: Prop[];
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -800,10 +831,10 @@ export function blankUnit(base: Pick<Unit, "id" | "name" | "side" | "x" | "y" | 
     focus: SHOOT.focus.max, blocking: false, landed: false, wasReloading: false, pathT: 0, stuckT: 0, poisoned: 0, burning: 0, temp: 0, ...base,
   };
 }
-export function newSim(units: Unit[], opts: { seed?: number; surprise?: boolean } = {}): Sim {
+export function newSim(units: Unit[], opts: { seed?: number; surprise?: boolean; props?: Prop[] } = {}): Sim {
   // (those waiting for a call are off the map until it comes)
   for (const u of units) if (u.reserve) u.mode = "gone";
-  return { units, bolts: [], grenades: [], time: 0, seq: 1, seed: opts.seed ?? 1, spread: SHOOT.spread.base, surprise: !!opts.surprise, mines: [], fields: [] };
+  return { units, bolts: [], grenades: [], time: 0, seq: 1, seed: opts.seed ?? 1, spread: SHOOT.spread.base, surprise: !!opts.surprise, mines: [], fields: [], ...(opts.props?.length ? { props: opts.props } : {}) };
 }
 
 // ---- Seeing and standing -----------------------------------------------------------------------------------------------------------
@@ -1181,6 +1212,20 @@ export function setBlock(sim: Sim, on: boolean) {
 // cold that slows, a d12 kept; subroutines spend more points for more (distant: double range; twinned: a second target; improved: the dice
 // rerolled, taken as a sixth more; heightened: a condition half as long again; extended: a buff twice as long; quickened: no pause after),
 // each a number of times a rest (Unit.channel.subUses)
+// The loose piece whose squares hold a point (within a margin), not broken
+export function propAt(sim: Sim, x: number, y: number, margin = 0): Prop | undefined {
+  return sim.props?.find((o) => !o.gone && x >= o.x - margin && x < o.x + o.w + margin && y >= o.y - margin && y < o.y + o.d + margin);
+}
+// A blow, bolt or burst on a loose piece: one that breaks loses hit points, and is gone at none (a fuel drum bursts)
+function hurtProp(sim: Sim, o: Prop, amount: number, env: Env, events: Event[], by = "") {
+  if (o.gone || o.hp === undefined || amount <= 0) return;
+  o.hp -= amount;
+  if (o.hp > 0) return;
+  o.gone = true;
+  const at = { x: o.x + o.w / 2, y: o.y + o.d / 2, h: env.floorAt(o.x + o.w / 2, o.y + o.d / 2) + 0.4 };
+  events.push({ type: "broke", id: o.id, x: at.x, y: at.y });
+  if (o.burst) blow(sim, at, o.burst, by, env, events);
+}
 export function castPower(sim: Sim, index: number, env: Env, events: Event[], aim?: { x: number; y: number; h: number } | null, place?: (x: number, y: number) => boolean, given?: RtPower): string {
   const p = playerOf(sim);
   const power = given ?? p.powers?.[index];
@@ -1201,6 +1246,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     return true;
   };
   const range = power.range + (power.tradition === "force" ? ch.range ?? 0 : 0);
+  const bonus0 = () => (mine && cost ? cost * ch.perPoint!.per : 0);
   const radius = power.radius > 0 ? power.radius + (power.tradition === "force" ? ch.radius ?? 0 : 0) : 0;
   const from = { x: p.x, y: p.y, h: p.h + 1.0 };
   let at = { x: p.x, y: p.y, h: p.h + 1.0 };
@@ -1286,6 +1332,38 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
       events.push({ type: "decoy", id });
     }
     return spend();
+  }
+  // ---- A loose piece under the crosshair, for a power that moves objects (its text: the largest and heaviest, how far by size)
+  if ((power.kind === "push" || power.kind === "pull") && power.objects && aim) {
+    const piece = propAt(sim, aim.x, aim.y, 0.45);
+    if (piece && Math.hypot(piece.x + piece.w / 2 - p.x, piece.y + piece.d / 2 - p.y) <= range + 1) {
+      const o = power.objects;
+      if (o.maxPounds !== undefined && piece.pounds > o.maxPounds) return `${power.name}: the ${piece.name.toLowerCase()} is too heavy (about ${piece.pounds.toLocaleString()} lb)`;
+      const squares = SIZE_ORDER.indexOf(piece.size) <= SIZE_ORDER.indexOf(o.size) ? o.squares[piece.size] ?? 0 : 0;
+      if (!squares) return `${power.name}: the ${piece.name.toLowerCase()} is too big (${piece.size.toLowerCase()})`;
+      if (!env.shove) return `${power.name}: it will not move here`;
+      const [cx, cy] = [piece.x + piece.w / 2, piece.y + piece.d / 2];
+      const way = power.kind === "pull" || (o.choice && p.aimHeld) ? -1 : 1;
+      const len = Math.hypot(cx - p.x, cy - p.y) || 1;
+      const body = (x: number, y: number) => sim.units.some((u) => alive(u) && !u.decoy && u.side !== "player" && Math.floor(u.x) === x && Math.floor(u.y) === y);
+      const moved = env.shove(piece.id, { x: ((cx - p.x) / len) * way, y: ((cy - p.y) / len) * way }, Math.max(1, Math.round(squares)), body);
+      if (!moved || (!moved.squares && !moved.struck)) return `${power.name}: the ${piece.name.toLowerCase()} will not go that way`;
+      piece.x = moved.x;
+      piece.y = moved.y;
+      at = { x: piece.x + piece.w / 2, y: piece.y + piece.d / 2, h: env.floorAt(piece.x, piece.y) + 0.5 };
+      events.push({ type: "prop", id: piece.id, x: piece.x, y: piece.y });
+      // (what it comes up against: a body there, and the piece itself, both take the text's damage)
+      if (moved.struck && power.strike > 0) {
+        const struck = moved.struck;
+        for (const u of sim.units) if (alive(u) && !u.decoy && u.side !== "player" && Math.floor(u.x) === struck.x && Math.floor(u.y) === struck.y) {
+          hurt(sim, u, power.strike + bonus0(), power.type, p, events, { x: u.x, y: u.y, h: u.h + 0.8 });
+          u.stagger = Math.max(u.stagger, 0.6);
+        }
+        hurtProp(sim, piece, power.strike, env, events, p.id);
+      }
+      noise(sim, at.x, at.y, 8, events);
+      return spend();
+    }
   }
   // ---- On foes: the nearest the line of the aim, within reach and the cone, in sight (a distant subroutine doubles the reach)
   const [fx, fy] = dirOf(p.facing);
@@ -1724,7 +1802,7 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
   // The party's swing lands
   if (p.swing > 0 && !p.landed && p.swing <= SHOOT.saber.swing - SHOOT.saber.lands) {
     p.landed = true;
-    landSwing(sim, p, events);
+    landSwing(sim, p, events, env);
   }
   if (p.swing === 0) p.landed = false;
 
@@ -1881,7 +1959,7 @@ function finishReload(p: Unit) {
     g.spent += take;
   }
 }
-function landSwing(sim: Sim, p: Unit, events: Event[]) {
+function landSwing(sim: Sim, p: Unit, events: Event[], env: Env) {
   const b = p.blade!;
   const [fx, fy] = dirOf(p.facing);
   const damage = b.damage * (1 + SHOOT.saber.comboBonus * p.combo);
@@ -1906,6 +1984,15 @@ function landSwing(sim: Sim, p: Unit, events: Event[]) {
       afflict(sim, u, { blinds: false, poison: secondsOf(1) }, events);
       p.venom = undefined;
     }
+  }
+  // (a loose piece in the arc takes the blow too)
+  for (const o of sim.props ?? []) {
+    if (o.gone || o.hp === undefined) continue;
+    const [cx, cy] = [Math.max(o.x, Math.min(p.x, o.x + o.w)), Math.max(o.y, Math.min(p.y, o.y + o.d))];
+    const d = Math.hypot(cx - p.x, cy - p.y);
+    if (d > SHOOT.saber.reach + (b.reach ?? 0)) continue;
+    if (d > 0.3 && Math.acos(clamp(((cx - p.x) * fx + (cy - p.y) * fy) / d, -1, 1)) > SHOOT.saber.arc) continue;
+    hurtProp(sim, o, damage, env, events, p.id);
   }
   noise(sim, p.x, p.y, 8, events);
 }
@@ -2408,9 +2495,12 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       b.x += b.vx * sdt; b.y += b.vy * sdt; b.h += b.vh * sdt; b.life -= sdt;
       // (the square it was fired from does not stop it: a sentry on a roof shoots from a square the street calls a wall)
       const home = Math.floor(b.x) === b.cell[0] && Math.floor(b.y) === b.cell[1];
-      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05) {
+      // (a loose piece stops a bolt below its top, as the map's furniture does: SHOOT.propTop)
+      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05 || (!!sim.props && b.h < env.floorAt(b.x, b.y) + SHOOT.propTop && !!propAt(sim, b.x, b.y))) {
         b.life = 0;
         events.push({ type: "impact", x: b.x, y: b.y, h: Math.max(b.h, env.floorAt(b.x, b.y)) });
+        const piece = propAt(sim, b.x, b.y, 0.05);
+        if (piece) hurtProp(sim, piece, b.damage, env, events, b.owner);
         // (a harpoon that bites a wall: the party is reeled to it)
         if (b.harpoon) {
           events.push({ type: "line", x: p.x, y: p.y, h: p.h + 1, tx: ox, ty: oy, th: oh });
@@ -2527,6 +2617,12 @@ function blow(sim: Sim, at: { x: number; y: number; h: number }, kind: GrenadeKi
     const fall = reach <= SHOOT.grenade.near ? 1 : 1 - (1 - SHOOT.grenade.edge) * ((reach - SHOOT.grenade.near) / (1 - SHOOT.grenade.near));
     afflict(sim, u, kind, events);
     if (kind.damage > 0) hurt(sim, u, kind.damage * fall * (u.evade ? 0.5 : 1), kind.type, owner, events, { x: u.x, y: u.y, h: u.h + 0.7 });
+  }
+  // (the loose pieces in the burst break: whole damage near, half at the edge)
+  for (const o of sim.props ?? []) {
+    if (o.gone || o.hp === undefined || (kind.cone && facing !== undefined)) continue;
+    const d = Math.hypot(o.x + o.w / 2 - at.x, o.y + o.d / 2 - at.y);
+    if (d <= kind.radius + Math.max(o.w, o.d) / 2) hurtProp(sim, o, kind.damage * (d <= kind.radius * SHOOT.grenade.near ? 1 : SHOOT.grenade.edge), env, events, ownerId);
   }
   if (kind.lingers) sim.fields.push({ id: sim.seq++, owner: ownerId, x: at.x, y: at.y, h: env.floorAt(at.x, at.y), radius: kind.lingerRadius ?? kind.radius, t: kind.lingers, dps: kind.dps ?? 1, type: kind.lingerRadius ? "fire" : kind.type, ...(kind.poison ? { poison: kind.poison } : {}) });
 }

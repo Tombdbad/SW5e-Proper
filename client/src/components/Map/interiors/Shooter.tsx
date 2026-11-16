@@ -9,7 +9,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
   KEPT, SHOOT, applyGear, monstrous, castPower, cloakedNow, firePlayer, fitsAt, newSim, paceOf, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, sees, sensesOf, setBlock, step, swingPlayer, throwGrenade,
-  type Env, type Event, type FightGear, type Sim, type Unit,
+  type Env, type Event, type FightGear, type Prop, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, MotionContext, usePartyLook } from "../models";
 import { beginSwing, creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
@@ -37,6 +37,9 @@ export interface ShooterCtx {
   swimAt?: () => number | null;
   // Puts the party on a square (a portable teleporter); false when it cannot stand there
   place?: (x: number, y: number) => boolean;
+  // (2026-11-16) The loose pieces of the room (what a power moves and a blow breaks), and one broken (gone from the room)
+  props?: () => Prop[];
+  broke?: (id: string) => void;
 }
 
 const POOL = { bolts: 72, grenades: 6, blasts: 16, mines: 8, fields: 8, lines: 3, decoys: 3, images: 3 };
@@ -204,6 +207,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (!st.placed) {
       st.placed = true;
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
+      s.props = c.props?.() ?? [];
     }
     // What was pressed since the last frame
     const edge = (k: "aim" | "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page") => {
@@ -342,6 +346,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         continue;
       }
       if (e.type === "decoy") { say("A hologram flickers into being"); sfx.power("blind"); continue; }
+      // (2026-11-16) a loose piece moved by a power (the room draws it where it went: LocalMap's shove), or broken: splinters, and gone
+      if (e.type === "prop") { st.blasts.push({ x: e.x + 0.5, y: e.y + 0.5, h: me.h + 0.4, t: 0, r: 0.5, life: 0.3, c: "#c7b8ff" }); continue; }
+      if (e.type === "broke") {
+        c.broke?.(e.id);
+        for (let i = 0; i < 3; i++) st.blasts.push({ x: e.x, y: e.y, h: me.h + 0.3 + i * 0.2, t: -i * 0.05, r: 0.35 + i * 0.15, life: 0.35, c: "#a8875a" });
+        sfx.impact();
+        say(`${s.props?.find((o) => o.id === e.id)?.name ?? "It"} breaks apart`);
+        continue;
+      }
       if (e.type === "image") { say("A duplicate takes the blow and vanishes"); st.blasts.push({ x: me.x, y: me.y, h: me.h + 1, t: 0, r: 0.5, life: 0.3, c: "#a5b4fc" }); continue; }
       if (e.type === "revealed") { say("You are seen!"); continue; }
       if (e.type === "shot" && e.from !== "me" && ear > 0 && Math.hypot(e.x - me.x, e.y - me.y) <= ear && !sees(c.env, { x: me.x, y: me.y, h: me.h }, e)) st.pings.push({ a: Math.atan2(e.x - me.x, e.y - me.y) - me.facing, at: now });

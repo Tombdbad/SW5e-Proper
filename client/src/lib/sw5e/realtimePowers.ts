@@ -9,7 +9,8 @@
 // nine are on keys 1 to 9 (0 shows the next nine).
 import { avgDice, blastOf, SHOOT, type Buff, type FightGear, type RtPower, type Unit } from "@shared/logic/shooter";
 import type { CombatFeature, Amount } from "./characterCalculation";
-import { castingStats, powerCost, powerEffect, powerMotion } from "./rules";
+import { castingStats, motionFeet, powerCost, powerEffect, powerMotion } from "./rules";
+const SIZES = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"] as const;
 
 const feetOf = (range?: string): number => {
   const m = String(range ?? "").match(/(\d+)[- ]?(?:foot|feet|ft)/i);
@@ -62,7 +63,9 @@ export function realtimePowers(powers: any[], level: number, scores: any, limit 
     const mover = motion && !motion.rider && (motion.creatures || motion.feet.any);
     if (mover) {
       const feet = motion.feet.any ?? Math.max(0, ...Object.values(motion.feet).map(Number));
-      out.push({ ...base, kind: motion.way === "toward" ? "pull" : "push", distance: Math.max(1, Math.min(14, feet / 5)), strike: motion.strike ? Math.round(avgDice(motion.strike.dice)) : 0, type: motion.strike?.type ?? "kinetic" });
+      // (2026-11-16) and the objects it moves, read from the same text at the character's level: the largest, the heaviest, how far by size
+      const objects = motion.objects ? { size: motion.objects, ...(motion.maxPounds !== undefined ? { maxPounds: motion.maxPounds } : {}), ...(motion.way === "choice" ? { choice: true } : {}), squares: Object.fromEntries(SIZES.map((z) => [z, motionFeet(motion, z, true) / 5]).filter(([, n]) => (n as number) > 0)) } : undefined;
+      out.push({ ...base, kind: motion.way === "toward" ? "pull" : "push", distance: Math.max(1, Math.min(14, feet / 5)), strike: motion.strike ? Math.round(avgDice(motion.strike.dice)) : 0, type: motion.strike?.type ?? "kinetic", ...(objects ? { objects } : {}) });
       continue;
     }
     if (effect.kind === "heal") { out.push({ ...base, kind: "heal", damage: Math.max(1, Math.round(avgDice(effect.dice) + stats.modifier)), type: "healing" }); continue; }
