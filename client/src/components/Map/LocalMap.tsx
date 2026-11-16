@@ -32,7 +32,7 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf } from "@shared/logic";
+import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf, seamMarks } from "@shared/logic";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
@@ -45,7 +45,7 @@ import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { extPackOf, roofPropOf, roofSpot, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, SeamPilaster, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
@@ -3463,6 +3463,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // are drawn from the asset library and the squares they fill cannot be walked over
   const tier = useQuality((q) => q.tier);
   const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
+  const seams = useMemo(() => (districtPlan?.seams ? seamMarks(world, districtPlan) : []), [districtPlan, roomKey]);
   // The rise and fall of the open ground under an open sky (2026-11-11, shared/logic districtGround): every building's box, room, garden, stall and curtain
   // wall stands on a level pad and the ways between them are graded to it, all at the street's level (y 0, where every room and door is drawn); the ground
   // between them and out to the rim of the map is the biome's land, a few metres up and down. None on the sea or under it, aboard a ship, on a station or a
@@ -4571,7 +4572,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         flame.current.visible = pose.burning;
         if (pose.burning) flame.current.scale.y = 0.8 + 0.5 * Math.abs(Math.sin(performance.now() / 45));
       }
-      eye.current = outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+      eye.current = outside && planned ? [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz] : null;
       return;
     }
     if (rope.current?.visible || flame.current?.visible) {
@@ -4655,7 +4656,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
       if (sit.current && into > 0.3) token.current.rotation.y = sit.current.face;
     }
-    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, duelHigh(duelRef.current.z, (duelRef.current.x ?? 0) + 0.5, (duelRef.current.y ?? 0) + 0.5), (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, duelHigh(duelRef.current.z, (duelRef.current.x ?? 0) + 0.5, (duelRef.current.y ?? 0) + 0.5), (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz] : null;
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
@@ -5622,6 +5623,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
             {/* (a site's wall and gardens on their level pads: shared/logic districtGround) */}
             {districtPlan?.grounds?.wall && <group position={[0, groundY(districtPlan.grounds.wall.x + 1.5, districtPlan.grounds.wall.y + 1.5), 0]}><CurtainWall wall={districtPlan.grounds.wall} biome={biome} /></group>}
+            {/* (a seam between neighbours that came out alike: shared/logic seamMarks) */}
+            {seams.map((m) => <SeamPilaster key={`${m.building}-${m.x}-${m.y}`} mark={m} biome={biome} />)}
             {districtPlan?.grounds?.gardens?.map((r, i) => <group key={`garden-${i}`} position={[0, groundY(r.x + r.width / 2, r.y + r.height / 2), 0]}><GardenGround rects={[r]} biome={biome} /></group>)}
             <Scatter placed={stood.fixtures} biome={biome} />
             <Scatter placed={stood.ambient} biome={biome} />
@@ -5857,7 +5860,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       {mode !== "overhead" && viewing ? (
         <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (
-        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
+        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} ground={reliefGround && !underground ? (x, z) => groundY(x + cx, z + cz) : undefined} />
       )}
       <DistanceDetail />
       <Sky indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
