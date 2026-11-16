@@ -23,10 +23,12 @@ const areas = Object.values(world.areas);
 const kids = (id) => areas.filter((a) => a.parentId === id);
 const building = (re) => areas.find((a) => a.kind === "building" && re.test(a.type) && kids(a.id).some((r) => r.layout));
 const roomOf = (b, re) => b && (kids(b.id).find((r) => re.test(r.name)) ?? kids(b.id)[0]);
-const hostile = (a) => a.kind === "room" && (a.occupants || []).some((o) => o.disposition === "hostile" && o.hitPoints && o.count >= 1);
+// (foes that shoot back: people, not beasts, so that there are bolts both ways)
+const hostile = (a) => a.kind === "room" && (a.occupants || []).some((o) => o.disposition === "hostile" && o.hitPoints && o.count >= 1 && !/beast|wildlife|monstros|plant|ooze|swarm|spider/i.test(`${o.creature ?? ""} ${o.role ?? ""} ${o.name ?? ""}`));
 const cantina = building(/^cantina$/);
 const hangarRoom = areas.find((a) => a.kind === "room" && a.layout && /hangar|docking bay|landing/i.test(a.name));
-const fightRoom = areas.find(hostile);
+// (ROOM=<area id> fights in that room instead: an open one shows the bolts in flight)
+const fightRoom = (process.env.ROOM && world.areas[process.env.ROOM]) || areas.find(hostile);
 const where = {
   street: cantina,
   cantina: roomOf(cantina, /main bar/i),
@@ -47,7 +49,7 @@ try {
     const ch = (await api("POST", "/api/characters", {
       name: saber ? "Lumen Saber" : "Lumen Shot", species: "human", class: saber ? "guardian" : "fighter", background: "soldier", alignment: "Neutral", level: 5,
       abilityScores: { strength: 16, dexterity: 15, constitution: 14, intelligence: 12, wisdom: 10, charisma: 8 },
-      maxHp: 80, currentHp: 80, maxForcePoints: 10, currentForcePoints: 10, armorClass: 16, speed: 30,
+      maxHp: 900, currentHp: 900, maxForcePoints: 10, currentForcePoints: 10, armorClass: 16, speed: 30,
       equipment: [saber ? "Lightsaber" : "Blaster rifle", "Power cell", "Power cell", "Combat suit", "Glowrod"],
       startingLocation: "Unknown", skillProficiencies: ["Athletics"], savingThrowProficiencies: ["strength"],
     })).json;
@@ -84,12 +86,6 @@ try {
         await context.close();
         continue;
       }
-      // (a fight in shooter mode starts on the Fight button)
-      if (fight) {
-        await sleep(6000);
-        const button = page.getByRole("button", { name: "Fight", exact: true });
-        if (await button.count()) await button.click().catch(() => {});
-      }
       // Let it settle: shaders compiled, maps loaded
       await page.waitForFunction(() => window.__babylon?.prepared?.(), null, { timeout: 120000 }).catch(() => {});
       // (a big district is got ready a kind of room at a time first: up to five minutes on this card)
@@ -100,6 +96,19 @@ try {
         still = n === last ? still + 1 : 0;
         last = n;
         await sleep(1000);
+      }
+      // A fight starts once the room is ready (on the Fight button, or the foes start it), and is looked at while it runs: the party
+      // firing (or swinging) at the middle of the screen the whole time, so that bolts, flashes, strikes and the saber are in the frame
+      let firing = null;
+      if (fight) {
+        const button = page.getByRole("button", { name: "Fight", exact: true });
+        if (await button.count()) await button.click().catch(() => {});
+        await sleep(4000);
+        const vp = page.viewportSize();
+        const cx = Math.round((vp.width - (PHONE ? 0 : 320)) / 2), cy = Math.round(vp.height / 2);
+        let on = true;
+        firing = (async () => { while (on) { await page.mouse.move(cx, cy).catch(() => {}); await page.mouse.down().catch(() => {}); await sleep(250); await page.mouse.up().catch(() => {}); await sleep(150); } })();
+        firing.stop = () => { on = false; };
       }
       const sample = await page.evaluate(async () => {
         const b = window.__babylon;
@@ -118,11 +127,14 @@ try {
           frameMs: Math.round(mean * 10) / 10, p95: Math.round(gaps[Math.floor(gaps.length * 0.95)] * 10) / 10,
           sync: Math.round(b.timing.sync * 10) / 10, draw: Math.round(b.timing.draw * 10) / 10, calls: b.info.render.calls,
           shaders: shaders(), newShaders: shaders() - s0, software: b.software, gpu: b.engine.getGlInfo().renderer,
+          // the clustered lights burning now, by colour (the pools' lights among them: signs, bolts, flashes, sabers, a glowrod)
+          burning: (() => { const m = [...b.mirrors?.values?.() ?? []][0]; const c = m?.rig?.cluster; return c ? c.lights.filter((l) => l.intensity > 0).map((l) => l.diffuse.toHexString()) : null; })(),
           lights: (() => { const m = [...b.mirrors?.values?.() ?? []][0]; return m ? m.scene.lights.length : null; })(),
         };
       });
       const file = `${OUT}/${scene}-${tier}${PHONE ? "-phone" : ""}.png`;
       await page.screenshot({ path: file });
+      if (firing) { firing.stop(); await firing; }
       // Close looks at a few of the signs (one of each style there), on the full tier: from in front of each, a little above
       if (tier === "full" && !fight) {
         const signs = await page.evaluate(() => window.__signs ?? []);

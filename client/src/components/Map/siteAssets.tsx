@@ -12,7 +12,7 @@ import { useMegascans } from "./packs";
 import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
-import { lightBudget, setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
+import { CLUSTER, lightBudget, setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
 import { signHash, type SignSpec } from "@shared/logic/signs";
 import { biomeSky, createRandom, unitOf, packedness, SQUARE_M, terrainSurface, type DistrictGround, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery, type SeamMark } from "@shared/logic";
 
@@ -1474,10 +1474,13 @@ export function paintSign(c: CanvasRenderingContext2D, gl: CanvasRenderingContex
         const row = (h - inset * 6) / words.length;
         for (let i = 0; i < words.length; i++) letters(c, gl, s, words[i], w / 2, inset * 3 + row * (i + 0.5), w * 0.7, row * 0.86, "neon", rnd);
       } else {
-        if (s.style === "hutt") scriptLine(c, gl, s, w / 2, h * 0.34, w * 0.86, h * 0.38, true);
-        else if (s.script) scriptLine(c, gl, s, w / 2, h * 0.22, w * 0.6, h * 0.2, false);
-        letters(c, gl, s, s.style === "hutt" ? s.text.toUpperCase() : s.text, w / 2, s.style === "hutt" ? h * 0.72 : h * 0.6, w * 0.84, h * (s.style === "hutt" ? 0.3 : 0.44), "neon", rnd);
-        if (s.pictogram !== "none" && w > h * 2.5) {
+        // (a pictogram, where the board is wide enough, takes the left of it, and the words the rest)
+        const picto = s.pictogram !== "none" && w > h * 2.5 ? h * 0.75 : 0;
+        const mid = (w + picto) / 2, room = w * 0.86 - picto;
+        if (s.style === "hutt") scriptLine(c, gl, s, mid, h * 0.34, room, h * 0.38, true);
+        else if (s.script) scriptLine(c, gl, s, mid, h * 0.22, room * 0.7, h * 0.2, false);
+        letters(c, gl, s, s.style === "hutt" ? s.text.toUpperCase() : s.text, mid, s.style === "hutt" ? h * 0.72 : h * 0.6, room, h * (s.style === "hutt" ? 0.3 : 0.44), "neon", rnd);
+        if (picto) {
           paintPictogram(c, s.pictogram, toward(s.glow, "#ffffff", 0.4), inset * 2 + h * 0.3, h * 0.5, h * 0.26);
           paintPictogram(gl, s.pictogram, s.glow, inset * 2 + h * 0.3, h * 0.5, h * 0.26);
         }
@@ -1794,7 +1797,7 @@ export function LightPool({ count, fill }: { count: number; fill: (camera: THREE
       const l = refs.current[i];
       if (!l) continue;
       const s = slots[i];
-      if (!s || s.intensity <= 0) { l.intensity = 0; continue; }
+      if (!s || s.intensity <= 0 || !CLUSTER.on) { l.intensity = 0; continue; }
       l.position.set(s.x, s.y, s.z);
       l.color.set(s.color);
       l.intensity = s.intensity;

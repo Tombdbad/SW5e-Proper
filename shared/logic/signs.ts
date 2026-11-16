@@ -226,7 +226,6 @@ export function signOf(p: SignPlace): SignSpec | null {
     case "hutt":
       colours = pick(HUTT, h);
       lit = true;
-      sub = "under the protection of the clan";
       // (a wide gaudy board, never a blade: the script above the Basic is the point of it)
       hgt = w / 2.6;
       break;
