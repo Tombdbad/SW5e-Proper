@@ -12,6 +12,7 @@ export interface CommsContact extends TalkSpeaker {
   where: string;
   ok: boolean;
   why: string;
+  via?: "commlink" | "transceiver";
 }
 export interface CommsMate {
   id: string;
@@ -20,6 +21,9 @@ export interface CommsMate {
   ok: boolean;
   why: string;
 }
+
+// Calls answered this session, by day and caller: a ring is answered once, whatever tab the player goes to
+const answeredRings = new Set<string>();
 
 function MateLine({ mate, onSay }: { mate: CommsMate; onSay: (text: string, to: string) => void }) {
   const [text, setText] = useState("");
@@ -48,29 +52,39 @@ function MateLine({ mate, onSay }: { mate: CommsMate; onSay: (text: string, to: 
   );
 }
 
-export function CommsPanel({ hasComms, contacts, mates, says, player, scene, onSpoke, onSay }: {
+export function CommsPanel({ hasComms, contacts, mates, says, player, scene, ring, ship, onSpoke, onSay }: {
   hasComms: boolean;
   contacts: CommsContact[];
   mates: CommsMate[];
   says: Say[];
   player: TalkPlayer;
   scene: (where: string) => string;
+  // A call coming in (shared/logic/comms.ts incomingCall) and the ship whose transceiver reaches between worlds
+  ring?: { id: string; reason: string; day: number };
+  ship?: string;
   onSpoke: (id: string) => void;
   onSay: (text: string, to: string) => void;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
+  const [, again] = useState(0);
+  const answered = ring && answeredRings.has(`${ring.day}|${ring.id}`) ? ring.id : null;
+  const setAnswered = (id: string) => { if (ring) { answeredRings.add(`${ring.day}|${id}`); again((n) => n + 1); } };
+  const caller = ring ? contacts.find((c) => c.id === ring.id) : undefined;
   const contact = contacts.find((c) => c.id === picked);
   return (
     <div className="space-y-2 text-xs" data-testid="comms-panel">
       <p className="text-gray-300">
         {hasComms ? "You carry a commlink." : "You carry no commlink."} House rules: everyone in the party is issued a commlink; a call needs one at each end and reaches anyone on the same planet (the book's 30 miles, in
-        the open), and nothing between worlds without a ship's transceiver. People you have grown warm to (regard 20 or more) who carry one can be called. Speak into the microphone or type.
+        the open), and between worlds only from aboard a ship, through its transceiver (thin, with static). Warm contacts (regard 40 or more) ring now and then. People you have grown warm to (regard 20 or more) who carry one can be called. Speak into the microphone or type.
       </p>
       {mates.length > 0 && <div className="space-y-1">{mates.map((m) => <MateLine key={m.id} mate={m} onSay={onSay} />)}</div>}
       {says.length > 0 && (
         <div className="max-h-28 space-y-0.5 overflow-y-auto rounded border border-gray-700 p-1" data-testid="comms-log">
           {says.slice(-8).map((s, i) => <p key={i} className={s.mine ? "text-gray-400" : "text-gray-100"}><span className="font-semibold">{s.name}:</span> {s.text}</p>)}
         </div>
+      )}
+      {caller && ring && answered !== ring.id && (
+        <Button size="sm" className="h-auto whitespace-normal px-2 py-1 text-left text-xs" onClick={() => { setAnswered(ring.id); setPicked(ring.id); }} data-testid="comms-ring">Incoming call from {caller.name}: answer</Button>
       )}
       <p className="font-semibold text-gray-200">People you can call</p>
       {contacts.length === 0 && <p className="text-gray-400">No one yet. Talk, trade and help people until they are warm to you, and they will give you their frequency.</p>}
@@ -81,7 +95,7 @@ export function CommsPanel({ hasComms, contacts, mates, says, player, scene, onS
           </Button>
         ))}
       </div>
-      {contact && <TalkPanel key={contact.id} speaker={contact} player={player} scene={scene(contact.where)} comms onSpoke={() => onSpoke(contact.id)} />}
+      {contact && <TalkPanel key={contact.id + (answered === contact.id ? "-in" : "")} speaker={contact} player={player} scene={scene(contact.where)} comms call={{ via: contact.via, ship, ...(ring && answered === contact.id && ring.id === contact.id ? { from: "them" as const, reason: ring.reason } : {}) }} onSpoke={() => onSpoke(contact.id)} />}
     </div>
   );
 }

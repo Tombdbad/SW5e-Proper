@@ -96,3 +96,20 @@ test("calls at a distance: a commlink at each end and the same planet; everyone 
   assert.match(canCall({ fromPlanet: "p1", toPlanet: "p1", fromHas: false, toHas: true }).why, /You carry no commlink/);
   assert.match(canCall({ fromPlanet: "p1", toPlanet: "p1", fromHas: true, toHas: false }).why, /They carry/);
 });
+
+test("calls between worlds need a ship's transceiver, and warm contacts ring at most once a day, the same every time", async () => {
+  const { canCall, incomingCall, RING_REGARD } = await import("../../shared/logic/comms");
+  const far = { fromPlanet: "p1", toPlanet: "p2", fromHas: true, toHas: true };
+  assert.equal(canCall(far).ok, false);
+  assert.deepEqual(canCall({ ...far, transceiver: "Lark" }), { ok: true, why: "", via: "transceiver" });
+  assert.equal(canCall({ ...far, toPlanet: "p1", transceiver: "Lark" }).via, "commlink");
+  assert.equal(incomingCall(3, 1000, [{ id: "a", regard: RING_REGARD - 1, reasons: ["x"] }]), null, "not warm enough");
+  const people = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, regard: 60, reasons: ["work", "news"] }));
+  let rang = 0;
+  for (let day = 0; day < 30; day++) {
+    const ring = incomingCall(day, 23 * 60, people);
+    assert.deepEqual(ring, incomingCall(day, 23 * 60, people), "the same call every time");
+    if (ring) { rang++; assert.ok(ring.hour >= 8 && ring.hour < 20); assert.equal(incomingCall(day, ring.hour * 60 - 1, people.filter((p) => p.id === ring.id)), null, "not before its hour"); }
+  }
+  assert.ok(rang > 20, `with forty warm people someone rings most days (${rang} of 30)`);
+});

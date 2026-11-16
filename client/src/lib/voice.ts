@@ -189,8 +189,31 @@ function bufferOf(c: AudioContext, url: string, init?: RequestInit): Promise<Aud
 let engine: Promise<{ engine: string; voices: string[]; speakers?: number }> | null = null;
 export const speechEngine = () => (engine ??= fetch("/api/speech/status").then((r) => r.json()).catch(() => ({ engine: "none", voices: [] })));
 
-// The chain a voice is heard through: gravel, the three bands, then droid ring, metal, helmet, mask, comlink, and the loudness
-function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, irs: Record<string, AudioBuffer | null>, gain = 1): { input: AudioNode; out: GainNode; stop: () => void } {
+// Where a voice is heard from (2026-11-16): the speaker's offset from the party in map squares (x to the right on the screen, z towards the
+// near edge of it), as the map's fixed camera looks (north up). The ear sits at the origin facing north. How far off a voice is already lives in
+// its `gain`; here the sound only turns to its side (HRTF, so headphones place it and a phone's speaker gets a little of it) and is dulled by the air.
+export interface Place { x: number; z: number }
+function placed(c: AudioContext, from: AudioNode, at: Place): AudioNode {
+  const far = Math.hypot(at.x, at.z);
+  const air = c.createBiquadFilter();
+  air.type = "lowpass";
+  air.frequency.value = Math.max(2500, 12000 - far * 700);
+  const pan = c.createPanner();
+  pan.panningModel = "HRTF";
+  pan.distanceModel = "linear";
+  pan.rolloffFactor = 0;
+  // (a person on top of the party is put one unit off in the same direction, or straight ahead: the model cannot place a point on the ear)
+  const k = far >= 1 ? 1 : far > 1e-3 ? 1 / far : 0;
+  pan.positionX.value = at.x * k;
+  pan.positionY.value = 0;
+  pan.positionZ.value = far > 1e-3 ? at.z * k : -1;
+  from.connect(air);
+  air.connect(pan);
+  return pan;
+}
+
+// The chain a voice is heard through: gravel, the three bands, then droid ring, metal, helmet, mask, comlink, where it comes from, and the loudness
+function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, irs: Record<string, AudioBuffer | null>, gain = 1, place?: Place): { input: AudioNode; out: GainNode; stop: () => void } {
   const nodes: AudioScheduledSourceNode[] = [];
   const input = c.createGain();
   let at: AudioNode = input;
@@ -262,6 +285,7 @@ function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, i
   }
   const out = c.createGain();
   out.gain.value = 0.9 * tone.gain * gain;
+  if (place) at = placed(c, at, place);
   at.connect(out).connect(c.destination);
   return { input, out, stop: () => nodes.forEach((n) => { try { n.stop(); } catch { /* stopped */ } }) };
 }
@@ -398,17 +422,28 @@ const SPOKEN_CUES: Record<string, string> = { chuckle: "Heh heh.", laugh: "Ha ha
 let playing: { stop: () => void } | null = null;
 // (people of the world talking among themselves, heard in the background: `ambient`)
 let ambient: { stop: () => void } | null = null;
-export const stopSpeaking = () => { playing?.stop(); playing = null; ambient?.stop(); ambient = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+// (`halt` stops what is playing; `stopSpeaking` also drops what was queued behind it by `speakQueued`)
+let queueEpoch = 0;
+let queueTail: Promise<void> = Promise.resolve();
+const halt = () => { playing?.stop(); playing = null; ambient?.stop(); ambient = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+export const stopSpeaking = () => { queueEpoch++; halt(); };
+// A reply spoken as it is written (2026-11-15): each finished sentence is queued here as the server sends it and is said after the one before, in the
+// same voice, without cutting it off. The first plays within about a second of its arrival; `stopSpeaking` drops the rest. Resolves when this one has been said.
+export function speakQueued(text: string, speaker: VoiceSpeaker, o: { comms?: boolean } = {}): Promise<void> {
+  const epoch = queueEpoch;
+  queueTail = queueTail.then(() => (epoch === queueEpoch ? speak(text, speaker, o) : undefined)).catch(() => undefined);
+  return queueTail;
+}
 
 // Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped. `ambient`: two people of
 // the world talking to each other (2026-11-02), at `gain` (quieter the further off they are): never over a reply to the party (it is not
 // spoken while one is, and one stops it), and a new one stops the last
-export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number } = {}): Promise<void> {
+export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number; at?: Place } = {}): Promise<void> {
   if (o.ambient) {
     if (playing) return;
     ambient?.stop();
     ambient = null;
-  } else stopSpeaking();
+  } else halt();
   const c = audio();
   // (talk in the background is not heard before the page may play sound: a browser holds it back until the player has touched the page)
   if (o.ambient && (!c || c.state !== "running")) return;
@@ -426,7 +461,7 @@ export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: bo
   const m = await manifestNow();
   const irs: Record<string, AudioBuffer | null> = {};
   for (const [k, url] of Object.entries(m.ir ?? {})) irs[k] = await bufferOf(c, `/audio/voice/${url}`);
-  const chain = chainOf(c, p, tone, !!o.comms, irs, o.gain ?? 1);
+  const chain = chainOf(c, p, tone, !!o.comms, irs, o.gain ?? 1, o.comms ? undefined : o.at);
   const sources: AudioScheduledSourceNode[] = [];
   stopNow.stop = () => { stopped = true; sources.forEach((s) => { try { s.stop(); } catch { /* done */ } }); chain.out.gain.setTargetAtTime(0, c.currentTime, 0.02); setTimeout(chain.stop, 300); };
   const speechOf = (say: string) => {

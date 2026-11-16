@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { PersonSheet, TalkPanel } from "@/components/Play/TalkPanel";
 import { HandsGame, type HandsResult } from "@/components/Map/interiors/ShooterHud";
 import { CommsPanel, type CommsContact, type CommsMate } from "@/components/Play/CommsPanel";
-import { COMMS_ISSUE, canCall, commsOf, needsComms } from "@shared/logic/comms";
+import { COMMS_ISSUE, canCall, commsOf, incomingCall, needsComms } from "@shared/logic/comms";
 import { NemesisPanel } from "@/components/Play/NemesisPanel";
 import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent, type NemesisRecord } from "@shared/logic/nemesis";
 import { Loader2 } from "lucide-react";
@@ -39,6 +39,7 @@ import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/u
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
+import { watchFight } from "@/lib/barks";
 import { realtimePowers } from "@/lib/sw5e/realtimePowers";
 import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
@@ -5484,6 +5485,26 @@ export default function GameBoard() {
     const minute = pitHalfHour * 30;
     useTalkWorld.setState({ pit: arenas.flatMap((a) => pitNews(a, minute, monsters)), matches: arenas.flatMap((a) => cardFor(a, dayOf(minute), monsters)) });
   }, [world, here?.id, pitHalfHour, monsterData]);
+  // A warm contact who rings (shared/logic/comms.ts incomingCall: house rule); the page says so once a day each and the Comms tab offers the answer
+  const ringing = useMemo(() => {
+    if (!world || !commsOf(character?.equipment)) return null;
+    const people = Object.entries(standing.regard ?? {}).flatMap(([id, regard]) => {
+      const found = findOccupant(world, id);
+      if (!found || !found.occupant.loadout?.some((n) => /^(commlink|holocomm)/i.test(n))) return [];
+      return [{ id, regard, reasons: [...(workFrom(world, found.occupant, found.area.id).length ? ["they have work for you, if you want it"] : []), "to ask how you are getting on", "to tell you what they heard in town"] }];
+    });
+    return incomingCall(dayOf(clockMinutes), clockMinutes % 1440, people);
+  }, [world, standing, character?.equipment, clockMinutes]);
+  // Shouts in a turn-based fight (lib/barks.ts)
+  useEffect(() => (inCombat ? watchFight({ scene: talkScene(), player: talkPlayer.name }) : undefined), [inCombat]);
+  const rungFor = useRef("");
+  useEffect(() => {
+    if (!ringing || !world) return;
+    const key = `${dayOf(clockMinutes)}|${ringing.id}`;
+    if (rungFor.current === key) return;
+    rungFor.current = key;
+    toast(`${personById(world, ringing.id)?.name ?? "Someone"} is calling you (Comms tab).`);
+  }, [ringing]);
   const talkScene = (): string => {
     if (!world || !here) return "";
     const trail = trailOf(world, here.id);
@@ -5495,6 +5516,15 @@ export default function GameBoard() {
       law >= 2 ? "The law is strict here." : law === 0 ? "There is little law here." : "",
       here.description ? String(here.description).slice(0, 160) : "",
     ].filter(Boolean).join(" ");
+  };
+  // What a person can speak of besides themselves, from the world and for the local model (server/dialogue.ts `knows`): what they sell today, the work they
+  // offer, and for a companion the party's open quests. Dialogue is colour; none of it changes a price or a job.
+  const talkKnows = (o: Occupant, placeId: string) => {
+    if (!world || !character) return undefined;
+    const wares = waresOf(o) && o.trade !== "droids" && isOpen(world, o, placeId, clock) && equipmentData.length
+      ? stockOf(world, o, placeId, equipmentData as any, today, customer, ledger).filter((l) => !l.contraband).slice(0, 6).map((l) => `${l.name} (${l.price} cr)`) : [];
+    const jobs = workFrom(world, o, placeId).length ? makeOffers(world, o, placeId, cState.done[o.id] ?? 0, today).slice(0, 3).map((x) => x.title) : [];
+    return wares.length || jobs.length ? { wares, jobs } : undefined;
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   // (in the saddle, the beast ridden)
@@ -9029,6 +9059,7 @@ export default function GameBoard() {
               <TalkPanel
                 speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined, notes: world ? talkNotes(world, standing, o, talkPlayer.name, false) : undefined }}
                 news={world ? townTalk(world, talkPlayer.name, here ? trailOf(world, here.id).find((a) => a.kind === "settlement")?.id : undefined) : undefined}
+                knows={talkKnows(o, holderId)}
                 player={talkPlayer}
                 scene={talkScene()}
                 disabled={inCombat || dead}
@@ -9115,6 +9146,7 @@ export default function GameBoard() {
           {c.how && <p className="text-xs text-gray-400">Joined: {c.how}.</p>}
           <TalkPanel
             speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", form: c.kind, creature: c.creature, notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : "", c.hp < c.maxHp ? "Hurt." : ""].filter(Boolean).join(" ") }}
+            knows={{ party: quests.filter((q) => q.status === "active").slice(0, 2).map((q) => q.title).join("; ") || undefined }}
             player={talkPlayer}
             scene={talkScene()}
             disabled={inCombat || dead}
@@ -10321,8 +10353,8 @@ export default function GameBoard() {
                   const found = findOccupant(world, id);
                   if (!found || !found.occupant.loadout?.some((n) => /^(commlink|holocomm)/i.test(n))) return [];
                   const o = found.occupant;
-                  const call = canCall({ fromPlanet: hereId ? planetOf(hereId) : undefined, toPlanet: planetOf(found.area.id), fromHas: !!mine, toHas: true });
-                  return [{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(r)), kin: kinLine(world, o), where: found.area.name, ok: call.ok, why: call.why }];
+                  const call = canCall({ fromPlanet: hereId ? planetOf(hereId) : undefined, toPlanet: planetOf(found.area.id), fromHas: !!mine, toHas: true, transceiver: aboardShip?.name });
+                  return [{ via: call.via, id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(r)), kin: kinLine(world, o), where: found.area.name, ok: call.ok, why: call.why }];
                 });
               const mates: CommsMate[] = coopHere
                 ? coopOthers().filter((m) => m.connected).map((m) => {
@@ -10337,6 +10369,8 @@ export default function GameBoard() {
                   mates={mates}
                   says={coopSays}
                   player={talkPlayer}
+                  ship={aboardShip?.name}
+                  ring={ringing ?? undefined}
                   scene={(where) => `A call over commlinks: you are at ${here?.name ?? "somewhere"}, they are at ${where}. ${talkScene()}`}
                   onSpoke={(id) => { const o = personById(world, id); if (o) saveCampaign({ factionInfluence: reputation(world, standing, o.id, CHANGE.talk, CAPS.talk).standing }); }}
                   onSay={(text, to) => sayToMates(text, { species: character.species, role: klass?.name ?? character.class, gender: String(character.appearance?.gender ?? "").toLowerCase() }, to)}

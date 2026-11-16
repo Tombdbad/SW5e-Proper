@@ -164,9 +164,10 @@ const newsOf = (world: World, areaId: string) => townTalk(world, useTalkWorld.ge
 // A line said aloud in the speaker's own voice (voice.ts `speak`, in the background), as loud as they are near the party: nothing past
 // HEAR_SQUARES, or with voices off. Resolves when it has been heard.
 const HEAR_SQUARES = 12;
-function voiceLine(o: Occupant, text: string, far: number): Promise<void> | undefined {
+// (`off`: where they stand from the party, in squares, so the voice comes from that side: voice.ts `Place`)
+function voiceLine(o: Occupant, text: string, far: number, off?: { x: number; y: number }): Promise<void> | undefined {
   if (!(far < HEAR_SQUARES) || !voicePrefs().voice) return undefined;
-  const heard = speak(text, { id: o.id, name: o.name, species: o.species, role: o.role, gender: genderOf(o), creature: o.creature, disposition: o.disposition }, { ambient: true, gain: Math.min(1, 1.25 - far / HEAR_SQUARES) });
+  const heard = speak(text, { id: o.id, name: o.name, species: o.species, role: o.role, gender: genderOf(o), creature: o.creature, disposition: o.disposition }, { ambient: true, gain: Math.min(1, 1.25 - far / HEAR_SQUARES), at: off && { x: off.x, z: off.y } });
   // (never waited on for longer than a slow reading of it, whatever the sound does)
   return Promise.race([heard, new Promise<void>((done) => setTimeout(done, (4 + text.split(/\s+/).length * 0.6) * 1000))]);
 }
@@ -2651,7 +2652,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
             const line = t.lines[t.i++];
             const [speaker, listener] = line.who === 0 ? [a, other] : [other, a];
             const seconds = talkSeconds(line.text);
-            const heard = voiceLine(speaker.occupant, line.text, me ? Math.hypot(speaker.x - me.x, speaker.y - me.y) : Infinity);
+            const heard = voiceLine(speaker.occupant, line.text, me ? Math.hypot(speaker.x - me.x, speaker.y - me.y) : Infinity, me ? { x: speaker.x - me.x, y: speaker.y - me.y } : undefined);
             if (heard) {
               t.speaking = true;
               void heard.finally(() => { t.speaking = false; t.last = still.current.clock; });
@@ -3191,7 +3192,7 @@ function Strollers({ strolls, scene, news, talkers, party, ground }: { strolls: 
         const me = party();
         const at = state.current[speaker]?.at;
         const person = strolls.find((x) => x.key === speaker)?.who;
-        const heard = person && at && me ? voiceLine(person, line.text, Math.hypot(at.x - me.x, at.y - me.y)) : undefined;
+        const heard = person && at && me ? voiceLine(person, line.text, Math.hypot(at.x - me.x, at.y - me.y), { x: at.x - me.x, y: at.y - me.y }) : undefined;
         if (heard) {
           t.speaking = true;
           void heard.finally(() => { t.speaking = false; t.last = clockNow.current; });
