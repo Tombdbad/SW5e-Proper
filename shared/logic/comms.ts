@@ -79,7 +79,7 @@ export const RING_REGARD = 40;
 export const RING_ODDS = 6;
 const unit = (text: string) => (Array.from(text).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0) % 10000 / 10000;
 export interface Ringer { id: string; regard: number; reasons: string[] }
-export interface Ring { id: string; reason: string; hour: number }
+export interface Ring { id: string; reason: string; hour: number; day: number }
 export function incomingCall(day: number, minutes: number, people: Ringer[]): Ring | null {
   const hour = Math.floor(minutes / 60) % 24;
   const due = people
@@ -88,5 +88,5 @@ export function incomingCall(day: number, minutes: number, people: Ringer[]): Ri
     .sort((a, b) => a.at - b.at || a.p.id.localeCompare(b.p.id))[0];
   if (!due || hour < due.at) return null;
   const reasons = due.p.reasons.length ? due.p.reasons : ["to ask how you are getting on"];
-  return { id: due.p.id, reason: reasons[Math.floor(unit(`${due.p.id}|${day}|why`) * reasons.length)], hour: due.at };
+  return { id: due.p.id, reason: reasons[Math.floor(unit(`${due.p.id}|${day}|why`) * reasons.length)], hour: due.at, day };
 }

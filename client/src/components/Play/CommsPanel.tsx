@@ -22,6 +22,9 @@ export interface CommsMate {
   why: string;
 }
 
+// Calls answered this session, by day and caller: a ring is answered once, whatever tab the player goes to
+const answeredRings = new Set<string>();
+
 function MateLine({ mate, onSay }: { mate: CommsMate; onSay: (text: string, to: string) => void }) {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
@@ -57,13 +60,15 @@ export function CommsPanel({ hasComms, contacts, mates, says, player, scene, rin
   player: TalkPlayer;
   scene: (where: string) => string;
   // A call coming in (shared/logic/comms.ts incomingCall) and the ship whose transceiver reaches between worlds
-  ring?: { id: string; reason: string };
+  ring?: { id: string; reason: string; day: number };
   ship?: string;
   onSpoke: (id: string) => void;
   onSay: (text: string, to: string) => void;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
-  const [answered, setAnswered] = useState<string | null>(null);
+  const [, again] = useState(0);
+  const answered = ring && answeredRings.has(`${ring.day}|${ring.id}`) ? ring.id : null;
+  const setAnswered = (id: string) => { if (ring) { answeredRings.add(`${ring.day}|${id}`); again((n) => n + 1); } };
   const caller = ring ? contacts.find((c) => c.id === ring.id) : undefined;
   const contact = contacts.find((c) => c.id === picked);
   return (
