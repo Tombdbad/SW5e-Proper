@@ -1,4 +1,94 @@
 {
-  "nonverbal": {},
-  "ir": {}
+  "nonverbal": {
+    "droid/beep": [
+      "nonverbal/droid/beep-1.wav",
+      "nonverbal/droid/beep-2.wav",
+      "nonverbal/droid/beep-3.wav"
+    ],
+    "droid/whistle": [
+      "nonverbal/droid/whistle-1.wav",
+      "nonverbal/droid/whistle-2.wav",
+      "nonverbal/droid/whistle-3.wav"
+    ],
+    "droid/static": [
+      "nonverbal/droid/static-1.wav",
+      "nonverbal/droid/static-2.wav",
+      "nonverbal/droid/static-3.wav"
+    ],
+    "droid/gasp": [
+      "nonverbal/droid/gasp-1.wav",
+      "nonverbal/droid/gasp-2.wav",
+      "nonverbal/droid/gasp-3.wav"
+    ],
+    "human/breath": [
+      "nonverbal/human/breath-1.wav",
+      "nonverbal/human/breath-2.wav",
+      "nonverbal/human/breath-3.wav"
+    ],
+    "human/sigh": [
+      "nonverbal/human/sigh-1.wav",
+      "nonverbal/human/sigh-2.wav",
+      "nonverbal/human/sigh-3.wav"
+    ],
+    "human/gasp": [
+      "nonverbal/human/gasp-1.wav",
+      "nonverbal/human/gasp-2.wav",
+      "nonverbal/human/gasp-3.wav"
+    ],
+    "human/cough": [
+      "nonverbal/human/cough-1.wav",
+      "nonverbal/human/cough-2.wav",
+      "nonverbal/human/cough-3.wav"
+    ],
+    "human/wheeze": [
+      "nonverbal/human/wheeze-1.wav",
+      "nonverbal/human/wheeze-2.wav",
+      "nonverbal/human/wheeze-3.wav"
+    ],
+    "human/hmm": [
+      "nonverbal/human/hmm-1.wav",
+      "nonverbal/human/hmm-2.wav",
+      "nonverbal/human/hmm-3.wav"
+    ],
+    "human/groan": [
+      "nonverbal/human/groan-1.wav",
+      "nonverbal/human/groan-2.wav",
+      "nonverbal/human/groan-3.wav"
+    ],
+    "human/chuckle": [
+      "nonverbal/human/chuckle-1.wav",
+      "nonverbal/human/chuckle-2.wav",
+      "nonverbal/human/chuckle-3.wav"
+    ],
+    "human/laugh": [
+      "nonverbal/human/laugh-1.wav",
+      "nonverbal/human/laugh-2.wav",
+      "nonverbal/human/laugh-3.wav"
+    ],
+    "human/growl": [
+      "nonverbal/human/growl-1.wav",
+      "nonverbal/human/growl-2.wav",
+      "nonverbal/human/growl-3.wav"
+    ],
+    "wookiee/growl": [
+      "nonverbal/wookiee/growl-1.wav",
+      "nonverbal/wookiee/growl-2.wav",
+      "nonverbal/wookiee/growl-3.wav"
+    ],
+    "large/growl": [
+      "nonverbal/large/growl-1.wav",
+      "nonverbal/large/growl-2.wav",
+      "nonverbal/large/growl-3.wav"
+    ],
+    "small/chuckle": [
+      "nonverbal/small/chuckle-1.wav",
+      "nonverbal/small/chuckle-2.wav",
+      "nonverbal/small/chuckle-3.wav"
+    ]
+  },
+  "ir": {
+    "helmet": "ir/helmet.wav",
+    "mask": "ir/mask.wav",
+    "comms": "ir/comms.wav"
+  }
 }
