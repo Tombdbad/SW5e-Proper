@@ -3202,7 +3202,7 @@ export default function GameBoard() {
         saveCampaign({ galaxyMap: closeEncounter(current) });
       }
     }
-    if (!guest && areaId && world?.areas[areaId]) {
+    if (areaId && world?.areas[areaId]) {
       const area = world.areas[areaId];
       const fight = useCombat.getState();
       const remaining = fight.combatants.length ? fight.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;
@@ -3218,7 +3218,8 @@ export default function GameBoard() {
         slain += down;
         xp += earned;
         fallenKind ||= people;
-        if (!changed) continue;
+        // (a co-op guest takes the experience: house rule, each member the whole of it; the world is written by the one who began the fight)
+        if (guest || !changed) continue;
         const carcasses = remains.map((r, i) => makeRemains(`n-${Date.now().toString(36)}-${id}-${i}`, r.name, r.cr, r.count));
         const loot = [...(gear.length ? [...part.loot, { id: `l-${Date.now().toString(36)}-${id}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : part.loot), ...carcasses];
         // Their places on the plan: one for each still standing
@@ -3235,7 +3236,7 @@ export default function GameBoard() {
         galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(placed ? { layout: placed } : {}) }).world;
       }
       // Furniture a power moved in the fight stays where it was put
-      for (const id of areaIds) {
+      if (!guest) for (const id of areaIds) {
         const part = galaxyMap.areas[id];
         if (!part?.layout) continue;
         const moves: Record<string, { x: number; y: number }> = {};
@@ -3258,9 +3259,10 @@ export default function GameBoard() {
           mourned.push(...r.heard.filter((h) => h.delta <= -10).slice(0, 2).map((h) => h.name ?? "a relative"));
         }
       }
-      if (mourned.length) toast.info(`${[...new Set(mourned)].slice(0, 3).join(", ")} will hear of it: kin remember.`);
+      if (guest) regarded = standing;
+      if (mourned.length && !guest) toast.info(`${[...new Set(mourned)].slice(0, 3).join(", ")} will hear of it: kin remember.`);
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
-      if (slain && fallenKind && outcome !== "dead") {
+      if (slain && fallenKind && outcome !== "dead" && !guest) {
         const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
         const holder = factionAt(world, areaId);
         let renown = addRenown(regarded, losers, -1);
@@ -3271,7 +3273,7 @@ export default function GameBoard() {
     // The enemies who got away, were left for dead or brought the party down hold a grudge from now on (shared/logic/nemesis.ts)
     {
       const current = latestWorld() ?? world;
-      if (current && fightNow.combatants.length) {
+      if (current && fightNow.combatants.length && !guest) {
         const bodies = [...(gang?.gang ?? []), ...areaIds.flatMap((id) => world?.areas[id]?.occupants ?? [])];
         const bodyOf = (id: string) => bodies.find((o) => o.id === id) ?? bodies.find((o) => id.replace(/-\d+$/, "") === o.id);
         const foes: FightFoe[] = [];
