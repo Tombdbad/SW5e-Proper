@@ -18,7 +18,7 @@ import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { partyMotion, stance, useNotice, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, usePlacing, whereNow, facingNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, usePlacing, whereNow, facingNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, useCarriedLight, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
@@ -5086,6 +5086,9 @@ export default function GameBoard() {
     gills: speciesTraits.some((t) => /breathe air and water|can breathe water|breathe underwater/i.test(String(t.description ?? ""))),
     suits: Object.fromEntries(wearingNow.map((n) => [n, suitFacts(n)?.protects ?? []])),
   });
+  // (the party's own light lights the 3D map round it: LocalMap useCarriedLight)
+  const carriedLight = !!protections().light;
+  useEffect(() => { useCarriedLight.setState({ on: carriedLight }); }, [carriedLight]);
   // ---- What the character carries (Player's Handbook, Lifting and Carrying; the Variant: Encumbrance on by default): everything in the
   // pack counts. Before 2026-10-26 the companions and beasts silently took whatever went over half the capacity, so the pack's weight
   // hardly ever told (the user: "it ignores the weight of the player inventory"); now only a hovercart pushed along takes its 2,000 lb (since then a cart on the map, `carts`),

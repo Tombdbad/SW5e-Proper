@@ -12,7 +12,8 @@ import { useMegascans } from "./packs";
 import { boxUV, groundShader, meanOf, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import { archParts, useArchParts } from "./interiors/body";
 import type { PackId } from "./interiors/packs";
-import { setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
+import { lightBudget, setRenderTier, shaderPatch, type GroundLayers } from "./babylon";
+import { signHash, type SignSpec } from "@shared/logic/signs";
 import { biomeSky, createRandom, unitOf, packedness, SQUARE_M, terrainSurface, type DistrictGround, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery, type SeamMark } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -1159,6 +1160,677 @@ export function SeamPilaster({ mark, biome }: { mark: SeamMark; biome: string })
       }}
       position={[mark.x + out[0] * 0.12, mark.from, mark.y + out[1] * 0.12]}
       rotation={[0, out[0] ? Math.PI / 2 : 0, 0]}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Signs (2026-11-16, batch F; the user: "real stylized textures relevant to the building, room, settlement and planet", never floating
+// letters). What a sign says and how it looks is shared/logic/signs.ts; here each is painted on a canvas (its picture, and on a second
+// canvas what of it glows), the signs of a scene packed into one atlas, and drawn as panels with their frames: two draw calls for every
+// sign in sight, one material (its emission is the glow canvas: babylon.ts lets it bloom, `userData.glow`). A lit sign's light on the wall
+// and the street is a clustered point light from a small pool, the nearest signs first (`SignLights`, `LightPool`).
+// ---------------------------------------------------------------------------------------------
+
+// A sign where it hangs: `at` the middle of its face, `turn` about the upright (its face looks along (sin turn, cos turn)); `both` painted on
+// both faces (a blade standing out from a wall, a board on a roof); `arm` the length of the bracket back to the wall; `owner` the building it names
+export interface MountedSign { spec: SignSpec; at: V3; turn: number; both?: boolean; arm?: number; owner?: string }
+
+type Rgb = [number, number, number];
+const rgbOf = (hex: string): Rgb => { const c = new THREE.Color(hex); return [c.r * 255, c.g * 255, c.b * 255]; };
+const css = ([r, g, b]: Rgb, a = 1) => `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${a})`;
+const tint = (hex: string, k: number) => { const [r, g, b] = rgbOf(hex); return css([Math.min(255, r * k), Math.min(255, g * k), Math.min(255, b * k)]); };
+const toward = (hex: string, to: string, t: number) => { const a = rgbOf(hex), b = rgbOf(to); return css([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]); };
+function seeded(key: string) {
+  let s = signHash(key) || 1;
+  return () => ((s = Math.imul(s ^ (s >>> 15), 2246822507) ^ Math.imul(s ^ (s >>> 13), 3266489909)), ((s ^= s >>> 16) >>> 0) / 4294967296);
+}
+const FONT = "'Arial Black', 'Segoe UI Black', 'Helvetica Neue', Arial, sans-serif";
+// The size of the Basic words that fill `w` by `h` pixels
+function fitFont(c: CanvasRenderingContext2D, text: string, w: number, h: number, weight = "900", family = FONT) {
+  let px = Math.max(8, Math.floor(h));
+  c.font = `${weight} ${px}px ${family}`;
+  const wide = c.measureText(text).width;
+  if (wide > w) px = Math.max(8, Math.floor(px * (w / wide)));
+  c.font = `${weight} ${px}px ${family}`;
+  return px;
+}
+
+// The board itself: its stuff (metal brushed and riveted, wood with its grain, plastoid smooth, stone flecked) and the wear of the place
+function paintGround(c: CanvasRenderingContext2D, s: SignSpec, w: number, h: number, rnd: () => number, round = false) {
+  c.save();
+  c.beginPath();
+  if (round) c.arc(w / 2, h / 2, Math.min(w, h) / 2, 0, Math.PI * 2);
+  else c.rect(0, 0, w, h);
+  c.clip();
+  const g = c.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, tint(s.ground, 1.18));
+  g.addColorStop(1, tint(s.ground, 0.82));
+  c.fillStyle = g;
+  c.fillRect(0, 0, w, h);
+  if (s.material === "wood") {
+    for (let y = 0; y < h; y += 2 + rnd() * 5) {
+      c.strokeStyle = tint(s.ground, 0.7 + rnd() * 0.25);
+      c.globalAlpha = 0.35;
+      c.lineWidth = 1 + rnd() * 1.5;
+      c.beginPath();
+      c.moveTo(0, y);
+      c.bezierCurveTo(w * 0.3, y + (rnd() - 0.5) * 6, w * 0.7, y + (rnd() - 0.5) * 6, w, y + (rnd() - 0.5) * 3);
+      c.stroke();
+    }
+  } else if (s.material === "metal") {
+    c.globalAlpha = 0.12;
+    for (let y = 0; y < h; y += 2) {
+      c.fillStyle = rnd() < 0.5 ? "#ffffff" : "#000000";
+      c.fillRect(0, y, w, 1);
+    }
+  } else if (s.material === "stone") {
+    c.globalAlpha = 0.25;
+    for (let i = 0; i < (w * h) / 60; i++) {
+      c.fillStyle = rnd() < 0.5 ? tint(s.ground, 1.4) : tint(s.ground, 0.6);
+      c.fillRect(rnd() * w, rnd() * h, 1 + rnd() * 2, 1 + rnd() * 2);
+    }
+  }
+  c.globalAlpha = 1;
+  // (grime from below, sun-fade from above, flecks, and on metal rust that runs down from the rivets)
+  if (s.wear > 0) {
+    const dirt = c.createLinearGradient(0, h * 0.4, 0, h);
+    dirt.addColorStop(0, "rgba(40,30,20,0)");
+    dirt.addColorStop(1, `rgba(40,30,20,${0.5 * s.wear})`);
+    c.fillStyle = dirt;
+    c.fillRect(0, 0, w, h);
+    for (let i = 0; i < s.wear * (w * h) / 220; i++) {
+      c.fillStyle = rnd() < 0.6 ? `rgba(30,22,14,${0.15 + rnd() * 0.3})` : `rgba(255,248,230,${0.08 + rnd() * 0.15})`;
+      c.beginPath();
+      c.arc(rnd() * w, rnd() * h, 0.6 + rnd() * 2.2 * s.wear, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+  c.restore();
+}
+function paintRivets(c: CanvasRenderingContext2D, s: SignSpec, w: number, h: number, rnd: () => number) {
+  if (s.material !== "metal") return;
+  const r = Math.max(2, h * 0.035);
+  for (const [x, y] of [[r * 3, r * 3], [w - r * 3, r * 3], [r * 3, h - r * 3], [w - r * 3, h - r * 3]]) {
+    if (s.wear > 0.3) {
+      const run = c.createLinearGradient(0, y, 0, y + h * 0.4 * s.wear);
+      run.addColorStop(0, `rgba(120,60,20,${0.5 * s.wear})`);
+      run.addColorStop(1, "rgba(120,60,20,0)");
+      c.fillStyle = run;
+      c.fillRect(x - r * 0.6, y, r * 1.2 + rnd() * r, h * 0.4 * s.wear);
+    }
+    c.fillStyle = tint(s.trim, 1.2);
+    c.beginPath();
+    c.arc(x, y, r, 0, Math.PI * 2);
+    c.fill();
+  }
+}
+// A frame round the face, and its tube on the glow canvas if the sign is lit
+function paintFrame(c: CanvasRenderingContext2D, gl: CanvasRenderingContext2D, s: SignSpec, w: number, h: number, inset: number, tube: boolean) {
+  c.strokeStyle = s.trim;
+  c.lineWidth = Math.max(2, inset * 0.6);
+  c.strokeRect(inset / 2, inset / 2, w - inset, h - inset);
+  if (tube && s.lit) neon(c, gl, s, (k) => k.strokeRect(inset * 1.4, inset * 1.4, w - inset * 2.8, h - inset * 2.8), Math.max(2, inset * 0.35));
+}
+// A neon tube: on the picture pale glass, on the glow canvas its colour, haloed
+function neon(c: CanvasRenderingContext2D, gl: CanvasRenderingContext2D, s: SignSpec, path: (k: CanvasRenderingContext2D) => void, width: number, dead = false) {
+  c.save();
+  c.strokeStyle = dead ? tint(s.glow, 0.35) : toward(s.glow, "#ffffff", 0.55);
+  c.lineWidth = width;
+  c.lineCap = c.lineJoin = "round";
+  path(c);
+  c.restore();
+  if (dead) return;
+  gl.save();
+  gl.strokeStyle = s.glow;
+  gl.shadowColor = s.glow;
+  gl.shadowBlur = width * 3;
+  gl.lineWidth = width * 1.4;
+  gl.lineCap = gl.lineJoin = "round";
+  path(gl);
+  gl.shadowBlur = 0;
+  gl.strokeStyle = toward(s.glow, "#ffffff", 0.7);
+  gl.lineWidth = width * 0.5;
+  path(gl);
+  gl.restore();
+}
+// Words a letter at a time (so that a sputtering sign can have a dead letter); `mode` how they are drawn
+function letters(c: CanvasRenderingContext2D, gl: CanvasRenderingContext2D, s: SignSpec, text: string, cx: number, cy: number, w: number, h: number, mode: "neon" | "paint" | "lit", rnd: () => number) {
+  const px = fitFont(c, text, w, h);
+  gl.font = c.font;
+  const total = c.measureText(text).width;
+  let x = cx - total / 2;
+  const dead = s.flicker > 0.3 ? Math.floor(rnd() * text.length) : -1;
+  c.textBaseline = gl.textBaseline = "middle";
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const adv = c.measureText(ch).width;
+    if (ch.trim()) {
+      if (mode === "neon") neon(c, gl, s, (k) => k.strokeText(ch, x, cy), Math.max(1.5, px * 0.09), i === dead);
+      else {
+        c.fillStyle = s.ink;
+        c.fillText(ch, x, cy);
+        if (mode === "lit") {
+          gl.fillStyle = s.glow;
+          gl.globalAlpha = 0.85;
+          gl.fillText(ch, x, cy);
+          gl.globalAlpha = 1;
+        }
+      }
+    }
+    x += adv;
+  }
+  return px;
+}
+// A line of the script: each glyph its strokes on a three-by-three grid; Hutt letters swell into curves
+function scriptLine(c: CanvasRenderingContext2D, gl: CanvasRenderingContext2D | null, s: SignSpec, cx: number, cy: number, w: number, h: number, curvy: boolean) {
+  const glyphs = s.script ?? [];
+  if (!glyphs.length) return;
+  const cell = Math.min(h, w / glyphs.length);
+  const left = cx - (cell * glyphs.length) / 2;
+  const draw = (k: CanvasRenderingContext2D) => {
+    glyphs.forEach((g, i) => {
+      const ox = left + i * cell + cell * 0.18, oy = cy - cell * 0.32, step = cell * 0.32;
+      const pt = (n: number): [number, number] => [ox + (n % 3) * step, oy + Math.floor(n / 3) * step];
+      for (const [a, b] of g) {
+        const [x0, y0] = pt(a), [x1, y1] = pt(b);
+        k.beginPath();
+        k.moveTo(x0, y0);
+        if (curvy) k.quadraticCurveTo((x0 + x1) / 2 + (y1 - y0) * 0.45, (y0 + y1) / 2 - (x1 - x0) * 0.45, x1, y1);
+        else k.lineTo(x1, y1);
+        k.stroke();
+      }
+    });
+  };
+  if (gl && s.lit) neon(c, gl, s, draw, Math.max(1.5, cell * 0.08));
+  else {
+    c.save();
+    c.strokeStyle = s.ink;
+    c.lineWidth = Math.max(1.5, cell * 0.1);
+    c.lineCap = "square";
+    draw(c);
+    c.restore();
+  }
+}
+// A clan's or house's mark: mirrored about the middle, from a few shapes
+function paintSigil(c: CanvasRenderingContext2D, g: NonNullable<SignSpec["sigil"]>, colour: string, cx: number, cy: number, r: number) {
+  c.save();
+  c.translate(cx, cy);
+  c.rotate(g.tilt - 0.2);
+  c.fillStyle = c.strokeStyle = colour;
+  c.lineWidth = r * 0.12;
+  c.beginPath();
+  c.moveTo(0, -r * 0.55);
+  c.lineTo(r * 0.45, -r * 0.1);
+  c.lineTo(r * 0.28, r * 0.5);
+  c.lineTo(0, r * 0.75);
+  c.lineTo(-r * 0.28, r * 0.5);
+  c.lineTo(-r * 0.45, -r * 0.1);
+  c.closePath();
+  c.fill();
+  for (let i = 0; i < g.horns; i++) for (const side of [-1, 1]) {
+    c.beginPath();
+    c.moveTo(side * r * 0.3, -r * 0.35);
+    c.quadraticCurveTo(side * r * (0.9 + i * 0.15), -r * (0.5 + i * 0.2), side * r * (0.75 + i * 0.1), -r * (1 + i * 0.1));
+    c.stroke();
+  }
+  if (g.crescent) {
+    c.beginPath();
+    c.arc(0, r * 0.1, r * 0.9, Math.PI * 0.15, Math.PI * 0.85);
+    c.stroke();
+  }
+  c.fillStyle = "rgba(0,0,0,0.55)";
+  if (g.eye) for (const side of [-1, 1]) { c.beginPath(); c.ellipse(side * r * 0.17, r * 0.02, r * 0.11, r * 0.06, side * 0.4, 0, Math.PI * 2); c.fill(); }
+  if (g.bar) c.fillRect(-r * 0.3, r * 0.25, r * 0.6, r * 0.08);
+  for (let i = 0; i < g.points; i++) {
+    const a = Math.PI * (0.25 + (0.5 * i) / Math.max(1, g.points - 1));
+    c.fillStyle = colour;
+    c.beginPath();
+    c.moveTo(Math.cos(a) * r * 0.95, Math.sin(a) * r * 0.95);
+    c.lineTo(Math.cos(a - 0.08) * r * 0.75, Math.sin(a - 0.08) * r * 0.75);
+    c.lineTo(Math.cos(a + 0.08) * r * 0.75, Math.sin(a + 0.08) * r * 0.75);
+    c.fill();
+  }
+  c.restore();
+}
+// The shop pictograms: simple shapes in a unit square (no maker's marks)
+function paintPictogram(c: CanvasRenderingContext2D, p: SignSpec["pictogram"], colour: string, cx: number, cy: number, r: number) {
+  c.save();
+  c.translate(cx - r, cy - r);
+  c.scale(r / 50, r / 50);
+  c.fillStyle = c.strokeStyle = colour;
+  c.lineWidth = 7;
+  c.lineCap = c.lineJoin = "round";
+  const path = (pts: number[], close = true) => { c.beginPath(); c.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]); if (close) c.closePath(); };
+  switch (p) {
+    case "blaster": path([12, 38, 78, 38, 88, 32, 88, 46, 60, 48, 52, 70, 38, 70, 40, 50, 12, 50]); c.fill(); c.fillRect(64, 28, 14, 6); break;
+    case "gear": c.beginPath(); for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2, rr = i % 2 ? 30 : 40; c.lineTo(50 + Math.cos(a) * rr, 50 + Math.sin(a) * rr); } c.closePath(); c.fill(); c.fillStyle = "rgba(0,0,0,0.6)"; c.beginPath(); c.arc(50, 50, 12, 0, Math.PI * 2); c.fill(); break;
+    case "droid": c.beginPath(); c.arc(50, 42, 24, Math.PI, 0); c.fill(); c.fillRect(26, 44, 48, 36); c.fillStyle = "rgba(0,0,0,0.6)"; c.beginPath(); c.arc(50, 36, 7, 0, Math.PI * 2); c.fill(); c.fillRect(32, 54, 36, 5); break;
+    case "speeder": path([8, 58, 30, 40, 76, 40, 92, 52, 84, 62, 16, 64]); c.fill(); c.fillRect(40, 30, 16, 12); break;
+    case "needle": c.beginPath(); c.moveTo(22, 80); c.lineTo(78, 20); c.stroke(); c.beginPath(); c.ellipse(70, 28, 8, 4, -0.8, 0, Math.PI * 2); c.stroke(); c.beginPath(); c.moveTo(78, 20); c.bezierCurveTo(95, 40, 60, 70, 40, 88); c.lineWidth = 3; c.stroke(); break;
+    case "crate": c.strokeRect(20, 24, 60, 52); c.beginPath(); c.moveTo(20, 24); c.lineTo(80, 76); c.moveTo(80, 24); c.lineTo(20, 76); c.stroke(); break;
+    case "gem": path([50, 14, 82, 40, 50, 88, 18, 40]); c.fill(); c.fillStyle = "rgba(255,255,255,0.4)"; path([50, 14, 62, 40, 50, 88, 38, 40]); c.fill(); break;
+    case "coin": c.beginPath(); c.arc(50, 50, 34, 0, Math.PI * 2); c.stroke(); c.beginPath(); c.arc(50, 50, 22, 0, Math.PI * 2); c.stroke(); c.fillRect(46, 30, 8, 40); break;
+    case "wrench": c.lineWidth = 12; c.beginPath(); c.moveTo(28, 76); c.lineTo(62, 42); c.stroke(); c.lineWidth = 8; c.beginPath(); c.arc(68, 34, 14, Math.PI * 0.9, Math.PI * 2.6); c.stroke(); break;
+    case "flask": path([40, 14, 60, 14, 60, 40, 80, 82, 20, 82, 40, 40]); c.stroke(); c.fillRect(30, 62, 40, 18); break;
+    case "bed": c.fillRect(12, 50, 76, 14); c.fillRect(12, 34, 10, 40); c.fillRect(78, 46, 10, 28); c.beginPath(); c.arc(32, 44, 8, 0, Math.PI * 2); c.fill(); break;
+    case "bowl": c.beginPath(); c.arc(50, 48, 32, 0, Math.PI); c.fill(); c.beginPath(); c.moveTo(38, 36); c.quadraticCurveTo(30, 24, 40, 12); c.moveTo(56, 36); c.quadraticCurveTo(48, 24, 58, 12); c.lineWidth = 4; c.stroke(); break;
+    case "dice": c.strokeRect(22, 22, 56, 56); c.fillStyle = colour; for (const [x, y] of [[36, 36], [64, 64], [50, 50], [64, 36], [36, 64]]) { c.beginPath(); c.arc(x, y, 5, 0, Math.PI * 2); c.fill(); } break;
+    case "ship": path([50, 10, 64, 56, 88, 76, 50, 66, 12, 76, 36, 56]); c.fill(); break;
+    case "scroll": c.strokeRect(24, 20, 52, 60); for (const y of [34, 46, 58, 70]) { c.beginPath(); c.moveTo(32, y); c.lineTo(68, y); c.lineWidth = 3; c.stroke(); } break;
+    case "arrow": path([10, 42, 62, 42, 62, 26, 92, 50, 62, 74, 62, 58, 10, 58]); c.fill(); break;
+    default: break;
+  }
+  c.restore();
+}
+// Diagonal hazard stripes across a band of the face
+function hazard(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, a: string, b: string) {
+  c.save();
+  c.beginPath();
+  c.rect(x, y, w, h);
+  c.clip();
+  c.fillStyle = a;
+  c.fillRect(x, y, w, h);
+  c.fillStyle = b;
+  for (let i = -h; i < w + h; i += h * 1.4) {
+    c.beginPath();
+    c.moveTo(x + i, y + h);
+    c.lineTo(x + i + h * 0.7, y + h);
+    c.lineTo(x + i + h * 1.4, y);
+    c.lineTo(x + i + h * 0.7, y);
+    c.fill();
+  }
+  c.restore();
+}
+
+// One sign painted at (x, y) of the atlas, `w` by `h` pixels: its picture on `c`, what glows on `gl` (black is no light)
+export function paintSign(c: CanvasRenderingContext2D, gl: CanvasRenderingContext2D, s: SignSpec, x: number, y: number, w: number, h: number) {
+  const rnd = seeded(s.key);
+  c.save();
+  gl.save();
+  c.translate(x, y);
+  gl.translate(x, y);
+  c.beginPath();
+  c.rect(0, 0, w, h);
+  c.clip();
+  gl.beginPath();
+  gl.rect(0, 0, w, h);
+  gl.clip();
+  gl.fillStyle = "#000000";
+  gl.fillRect(0, 0, w, h);
+  const inset = Math.max(3, Math.min(w, h) * 0.05);
+  const u = Math.min(w, h);
+  switch (s.style) {
+    case "neon":
+    case "hutt": {
+      paintGround(c, s, w, h, rnd);
+      paintFrame(c, gl, s, w, h, inset, true);
+      const tall = h > w;
+      if (tall) {
+        // (a blade: the words stacked, a letter to a line)
+        const words = s.text.toUpperCase().replace(/[^A-Z0-9 ]/g, "").split(/\s+/).filter((t) => !/^(THE|OF|A)$/.test(t)).join("").slice(0, 9) || s.text.slice(0, 1);
+        const row = (h - inset * 6) / words.length;
+        for (let i = 0; i < words.length; i++) letters(c, gl, s, words[i], w / 2, inset * 3 + row * (i + 0.5), w * 0.7, row * 0.86, "neon", rnd);
+      } else {
+        if (s.style === "hutt") scriptLine(c, gl, s, w / 2, h * 0.34, w * 0.86, h * 0.38, true);
+        else if (s.script) scriptLine(c, gl, s, w / 2, h * 0.22, w * 0.6, h * 0.2, false);
+        letters(c, gl, s, s.style === "hutt" ? s.text.toUpperCase() : s.text, w / 2, s.style === "hutt" ? h * 0.72 : h * 0.6, w * 0.84, h * (s.style === "hutt" ? 0.3 : 0.44), "neon", rnd);
+        if (s.pictogram !== "none" && w > h * 2.5) {
+          paintPictogram(c, s.pictogram, toward(s.glow, "#ffffff", 0.4), inset * 2 + h * 0.3, h * 0.5, h * 0.26);
+          paintPictogram(gl, s.pictogram, s.glow, inset * 2 + h * 0.3, h * 0.5, h * 0.26);
+        }
+      }
+      break;
+    }
+    case "stencil": {
+      paintGround(c, s, w, h, rnd);
+      hazard(c, 0, 0, h * 0.5, h, s.glow, s.trim);
+      hazard(c, w - h * 0.5, 0, h * 0.5, h, s.glow, s.trim);
+      c.fillStyle = s.ink;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      const px = fitFont(c, s.text, w - h * 1.4, h * (s.sub ? 0.5 : 0.66), "900");
+      c.fillText(s.text, w / 2, h * (s.sub ? 0.4 : 0.52));
+      // (the stencil's bridges: the letters broken where the plate held)
+      c.fillStyle = tint(s.ground, 1);
+      for (let bx = h * 0.6; bx < w - h * 0.6; bx += px * 0.62) c.fillRect(bx, h * (s.sub ? 0.4 : 0.52) - px * 0.04, px * 0.05, px * 0.6);
+      c.fillRect(h * 0.5, h * (s.sub ? 0.4 : 0.52) - px * 0.03, w - h, px * 0.06);
+      if (s.sub) {
+        c.fillStyle = s.ink;
+        fitFont(c, s.sub.toUpperCase(), w - h * 1.6, h * 0.18, "700");
+        c.fillText(s.sub.toUpperCase(), w / 2, h * 0.8);
+      }
+      if (s.lit) {
+        gl.fillStyle = s.glow;
+        gl.shadowColor = s.glow;
+        gl.shadowBlur = h * 0.1;
+        gl.fillRect(h * 0.6, h - inset * 1.2, w - h * 1.2, inset * 0.6);
+        c.fillStyle = toward(s.glow, "#ffffff", 0.5);
+        c.fillRect(h * 0.6, h - inset * 1.2, w - h * 1.2, inset * 0.6);
+      }
+      paintRivets(c, s, w, h, rnd);
+      break;
+    }
+    case "clan": {
+      paintGround(c, s, w, h, rnd);
+      paintFrame(c, gl, s, w, h, inset, false);
+      if (s.sigil) paintSigil(c, s.sigil, s.ink, h * 0.55, h * 0.5, h * 0.36);
+      scriptLine(c, null, s, w * 0.6, h * 0.25, w * 0.66, h * 0.22, false);
+      c.textAlign = "left";
+      c.fillStyle = s.ink;
+      c.textBaseline = "middle";
+      fitFont(c, s.text.toUpperCase(), w - h * 1.3, h * 0.3);
+      c.fillText(s.text.toUpperCase(), h * 1.1, h * 0.58);
+      if (s.sub) { fitFont(c, s.sub.toUpperCase(), w - h * 1.3, h * 0.14, "700"); c.fillText(s.sub.toUpperCase(), h * 1.1, h * 0.82); }
+      paintRivets(c, s, w, h, rnd);
+      break;
+    }
+    case "medical": {
+      const disc = s.shape === "disc";
+      paintGround(c, s, w, h, rnd, disc);
+      // (a light box: the whole face glows a little, the cross more)
+      gl.fillStyle = toward("#000000", s.glow, 0.35);
+      if (disc) { gl.beginPath(); gl.arc(w / 2, h / 2, u / 2 - inset, 0, Math.PI * 2); gl.fill(); } else gl.fillRect(inset, inset, w - inset * 2, h - inset * 2);
+      const cx = disc ? w / 2 : h * 0.55, cy = disc ? h * 0.42 : h / 2, r = disc ? u * 0.24 : h * 0.3;
+      for (const k of [c, gl]) {
+        k.fillStyle = k === c ? "#1aa6c8" : s.glow;
+        k.fillRect(cx - r * 0.3, cy - r, r * 0.6, r * 2);
+        k.fillRect(cx - r, cy - r * 0.3, r * 2, r * 0.6);
+      }
+      c.strokeStyle = s.trim;
+      c.lineWidth = inset;
+      if (disc) { c.beginPath(); c.arc(w / 2, h / 2, u / 2 - inset / 2, 0, Math.PI * 2); c.stroke(); } else c.strokeRect(inset / 2, inset / 2, w - inset, h - inset);
+      c.fillStyle = s.ink;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      if (disc) { fitFont(c, s.text.toUpperCase(), w * 0.62, h * 0.12, "800"); c.fillText(s.text.toUpperCase(), w / 2, h * 0.76); }
+      else { fitFont(c, s.text, w - h * 1.3, h * 0.42, "800"); c.fillText(s.text, (w + h * 1.1) / 2, h / 2); }
+      break;
+    }
+    case "bay": {
+      paintGround(c, s, w, h, rnd);
+      hazard(c, 0, 0, w, h * 0.12, "#f2c200", "#151515");
+      hazard(c, 0, h * 0.88, w, h * 0.12, "#f2c200", "#151515");
+      c.fillStyle = s.ink;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      fitFont(c, s.text, w * 0.5, h * 0.62);
+      c.fillText(s.text, w * 0.36, h * 0.52);
+      c.textAlign = "left";
+      fitFont(c, "BAY", w * 0.3, h * 0.2);
+      c.fillText("BAY", w * 0.64, h * 0.38);
+      if (s.sub) { fitFont(c, s.sub.toUpperCase(), w * 0.32, h * 0.1, "700"); c.fillText(s.sub.toUpperCase(), w * 0.64, h * 0.62); }
+      // (strip lamps along the stripes)
+      for (const yy of [h * 0.13, h * 0.85]) {
+        c.fillStyle = "#fff8d0";
+        c.fillRect(inset, yy, w - inset * 2, inset * 0.35);
+        gl.fillStyle = s.glow;
+        gl.shadowColor = s.glow;
+        gl.shadowBlur = inset;
+        gl.fillRect(inset, yy, w - inset * 2, inset * 0.35);
+      }
+      paintRivets(c, s, w, h, rnd);
+      break;
+    }
+    case "shop": {
+      paintGround(c, s, w, h, rnd);
+      paintFrame(c, gl, s, w, h, inset, s.lit);
+      const r = h * 0.34;
+      c.fillStyle = s.trim;
+      c.beginPath();
+      c.arc(h * 0.5, h * 0.5, r * 1.15, 0, Math.PI * 2);
+      c.fill();
+      paintPictogram(c, s.pictogram, s.ink, h * 0.5, h * 0.5, r * 0.85);
+      if (s.lit) paintPictogram(gl, s.pictogram, s.glow, h * 0.5, h * 0.5, r * 0.85);
+      c.textAlign = "left";
+      c.textBaseline = "middle";
+      c.fillStyle = s.ink;
+      fitFont(c, s.text, w - h * 1.25, h * 0.42, "800");
+      c.fillText(s.text, h * 1.05, h * 0.52);
+      paintRivets(c, s, w, h, rnd);
+      break;
+    }
+    case "crest": {
+      paintGround(c, s, w, h, rnd);
+      c.fillStyle = s.trim;
+      c.fillRect(0, 0, w, inset * 1.5);
+      c.beginPath();
+      c.moveTo(0, h * 0.86);
+      c.lineTo(w / 2, h);
+      c.lineTo(w, h * 0.86);
+      c.lineTo(w, h);
+      c.lineTo(0, h);
+      c.fill();
+      if (s.sigil) paintSigil(c, s.sigil, s.ink, w / 2, h * 0.36, w * 0.36);
+      c.fillStyle = s.ink;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      fitFont(c, s.text.toUpperCase(), w * 0.84, h * 0.07, "800", "Georgia, 'Times New Roman', serif");
+      c.fillText(s.text.toUpperCase(), w / 2, h * 0.7);
+      break;
+    }
+    default: {
+      // street plates, house plates and signposts: an enamelled board with a light rim
+      paintGround(c, s, w, h, rnd);
+      c.strokeStyle = s.trim;
+      c.lineWidth = inset * 0.7;
+      c.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
+      const arrow = s.pictogram === "arrow";
+      if (arrow) paintPictogram(c, "arrow", s.ink, w - h * 0.55, h * 0.5, h * 0.32);
+      c.fillStyle = s.ink;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      fitFont(c, s.text, w - inset * 4 - (arrow ? h : 0), h * (s.sub ? 0.4 : 0.52), "800");
+      c.fillText(s.text, (w - (arrow ? h * 0.9 : 0)) / 2, h * (s.sub ? 0.42 : 0.52));
+      if (s.sub) { fitFont(c, s.sub.toUpperCase(), w * 0.6, h * 0.18, "700"); c.fillText(s.sub.toUpperCase(), (w - (arrow ? h * 0.9 : 0)) / 2, h * 0.76); }
+      if (s.lit) { gl.fillStyle = toward("#000000", s.glow, 0.3); gl.fillRect(inset, inset, w - inset * 2, h - inset * 2); }
+      paintRivets(c, s, w, h, rnd);
+    }
+  }
+  // (an old sign's light is dimmer: dust in the tubes, a cracked box)
+  if (s.wear > 0.2) {
+    gl.globalCompositeOperation = "multiply";
+    gl.fillStyle = css([255 * (1 - s.wear * 0.35), 255 * (1 - s.wear * 0.35), 255 * (1 - s.wear * 0.35)]);
+    gl.fillRect(0, 0, w, h);
+    gl.globalCompositeOperation = "source-over";
+  }
+  c.restore();
+  gl.restore();
+}
+
+// The signs of a scene packed into one picture and one glow map (rows of signs, each `ppu` pixels a square), and where each lies in them
+export interface SignAtlas { map: THREE.CanvasTexture; glow: THREE.CanvasTexture; uv: Map<string, [number, number, number, number]> }
+export function signAtlas(specs: SignSpec[], lite: boolean): SignAtlas | null {
+  if (typeof document === "undefined" || !specs.length) return null;
+  const unique = [...new Map(specs.map((s) => [s.key, s])).values()];
+  const W = lite ? 1024 : 2048;
+  let ppu = lite ? 96 : 160;
+  let rects: { s: SignSpec; x: number; y: number; w: number; h: number }[] = [];
+  let H = 0;
+  for (let tries = 0; tries < 6; tries++, ppu *= 0.75) {
+    rects = [];
+    let x = 0, y = 0, row = 0;
+    for (const s of [...unique].sort((a, b) => b.h - a.h)) {
+      const w = Math.min(W, Math.ceil(s.w * ppu)), h = Math.min(W, Math.ceil(s.h * ppu));
+      if (x + w > W) { x = 0; y += row + 2; row = 0; }
+      rects.push({ s, x, y, w, h });
+      x += w + 2;
+      row = Math.max(row, h);
+    }
+    H = y + row;
+    if (H <= W) break;
+  }
+  H = Math.min(W, 2 ** Math.ceil(Math.log2(Math.max(64, H))));
+  const make = () => { const cv = document.createElement("canvas"); cv.width = W; cv.height = H; return cv; };
+  const pic = make(), glow = make();
+  const c = pic.getContext("2d"), gl = glow.getContext("2d");
+  if (!c || !gl) return null;
+  gl.fillStyle = "#000000";
+  gl.fillRect(0, 0, W, H);
+  const uv = new Map<string, [number, number, number, number]>();
+  for (const r of rects) {
+    paintSign(c, gl, r.s, r.x, r.y, r.w, r.h);
+    // (u from the left, v from the bottom: three's canvas textures are flipped)
+    uv.set(r.s.key, [r.x / W, 1 - (r.y + r.h) / H, (r.x + r.w) / W, 1 - r.y / H]);
+  }
+  const tex = (cv: HTMLCanvasElement) => {
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return t;
+  };
+  return { map: tex(pic), glow: tex(glow), uv };
+}
+
+// The faces of the signs as one geometry (each a quad with its piece of the atlas; a sign on both faces gets a second quad, turned about,
+// its picture the right way round), and their frames and brackets as another, coloured by vertex
+function signGeometry(signs: MountedSign[], atlas: SignAtlas) {
+  const pos: number[] = [], nor: number[] = [], uvs: number[] = [], idx: number[] = [];
+  const frame: THREE.BufferGeometry[] = [];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), v = new THREE.Vector3(), n = new THREE.Vector3();
+  const quad = (turn: number, at: V3, w: number, h: number, [u0, v0, u1, v1]: [number, number, number, number], out: number) => {
+    q.setFromAxisAngle(up, turn);
+    m.compose(new THREE.Vector3(at[0], at[1], at[2]), q, new THREE.Vector3(1, 1, 1));
+    n.set(0, 0, 1).applyQuaternion(q);
+    const base = pos.length / 3;
+    for (const [x, y, uu, vv] of [[-w / 2, -h / 2, u0, v0], [w / 2, -h / 2, u1, v0], [w / 2, h / 2, u1, v1], [-w / 2, h / 2, u0, v1]]) {
+      v.set(x, y, out).applyMatrix4(m);
+      pos.push(v.x, v.y, v.z);
+      nor.push(n.x, n.y, n.z);
+      uvs.push(uu, vv);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  for (const sg of signs) {
+    const r = atlas.uv.get(sg.spec.key);
+    if (!r) continue;
+    const { w, h } = sg.spec;
+    const depth = 0.07;
+    quad(sg.turn, sg.at, w, h, r, depth / 2 + 0.004);
+    if (sg.both) quad(sg.turn + Math.PI, sg.at, w, h, r, depth / 2 + 0.004);
+    const colour = new THREE.Color(sg.spec.trim);
+    const box = new THREE.BoxGeometry(w + 0.06, h + 0.06, depth);
+    for (const p of [box]) {
+      const g = p.toNonIndexed();
+      const count = g.attributes.position.count;
+      const cols = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) colour.toArray(cols, i * 3);
+      g.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+      g.deleteAttribute("uv");
+      q.setFromAxisAngle(up, sg.turn);
+      g.applyMatrix4(m.compose(new THREE.Vector3(sg.at[0], sg.at[1], sg.at[2]), q, new THREE.Vector3(1, 1, 1)));
+      frame.push(g);
+      p.dispose();
+    }
+    if (sg.arm) {
+      // (the arm runs along the face's own side, from the panel's edge to the wall)
+      const arm = new THREE.BoxGeometry(sg.arm, 0.06, 0.06).toNonIndexed();
+      const count = arm.attributes.position.count;
+      const cols = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) colour.toArray(cols, i * 3);
+      arm.setAttribute("color", new THREE.BufferAttribute(cols, 3));
+      arm.deleteAttribute("uv");
+      for (const yy of [h / 2 - 0.1, -h / 2 + 0.1]) {
+        const g = arm.clone();
+        q.setFromAxisAngle(up, sg.turn);
+        g.applyMatrix4(m.compose(new THREE.Vector3(sg.at[0], sg.at[1] + yy, sg.at[2]), q, new THREE.Vector3(1, 1, 1)).multiply(new THREE.Matrix4().makeTranslation(-(w / 2 + sg.arm / 2), 0, 0)));
+        frame.push(g);
+      }
+      arm.dispose();
+    }
+  }
+  const faces = new THREE.BufferGeometry();
+  faces.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  faces.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+  faces.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  faces.setIndex(idx);
+  faces.computeBoundingSphere();
+  const frames = frame.length ? mergeGeometries(frame) : null;
+  for (const g of frame) g.dispose();
+  return { faces, frames };
+}
+
+// Every sign of a scene: faces in one draw, frames in another. By day a lit sign shows its tubes; by night they burn brighter
+const SIGN_FRAME = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.45 });
+export function SignBoards({ signs, night }: { signs: MountedSign[]; night: boolean }) {
+  const tier = useQuality((s) => s.tier);
+  const keys = signs.map((s) => `${s.spec.key}@${s.at.join(",")}:${s.turn}:${s.both ? 1 : 0}:${s.arm ?? 0}`).join(";");
+  const atlas = useMemo(() => signAtlas(signs.map((s) => s.spec), tier === "lite"), [keys, tier]);
+  const built = useMemo(() => (atlas ? signGeometry(signs, atlas) : null), [atlas]);
+  const face = useMemo(() => {
+    if (!atlas) return null;
+    // (userData.glow: how much brighter than its picture babylon.ts draws its emission where bloom is on, so that only what glows blooms)
+    const m = new THREE.MeshStandardMaterial({ map: atlas.map, emissiveMap: atlas.glow, emissive: new THREE.Color("#ffffff"), roughness: 0.5, metalness: 0.1 });
+    m.userData.glow = 2.4;
+    return m;
+  }, [atlas]);
+  useEffect(() => () => { atlas?.map.dispose(); atlas?.glow.dispose(); face?.dispose(); }, [atlas, face]);
+  useEffect(() => () => { built?.faces.dispose(); built?.frames?.dispose(); }, [built]);
+  if (face) face.emissiveIntensity = night ? 1.3 : 0.7;
+  if (!built || !face) return null;
+  return (
+    <group>
+      <mesh geometry={built.faces} material={face} receiveShadow raycast={() => null} />
+      {built.frames && <mesh geometry={built.frames} material={SIGN_FRAME} castShadow receiveShadow raycast={() => null} />}
+    </group>
+  );
+}
+
+// ---- A pool of lights for what glows: the nearest few of a scene's many, clustered (babylon.ts) ----
+// `count` lights are made once and kept (a light that came and went would be a node made and dropped each time); each frame `fill` puts
+// the ones wanted now in the slots, the nearest first, and the rest are dark. Where the device cannot cluster, nothing is lit by them: each
+// would be a light of its own, and every one switched on or off would compile the shaders of everything in sight again.
+export interface LightSlot { x: number; y: number; z: number; color: string; intensity: number; distance: number }
+export function LightPool({ count, fill }: { count: number; fill: (camera: THREE.Camera, slots: LightSlot[], now: number) => void }) {
+  const refs = useRef<(THREE.PointLight | null)[]>([]);
+  const slots = useMemo<LightSlot[]>(() => [], []);
+  const budget = Math.min(count, lightBudget());
+  useFrame(({ camera, clock }) => {
+    slots.length = 0;
+    fill(camera, slots, clock.elapsedTime);
+    for (let i = 0; i < budget; i++) {
+      const l = refs.current[i];
+      if (!l) continue;
+      const s = slots[i];
+      if (!s || s.intensity <= 0) { l.intensity = 0; continue; }
+      l.position.set(s.x, s.y, s.z);
+      l.color.set(s.color);
+      l.intensity = s.intensity;
+      l.distance = s.distance;
+    }
+  });
+  return <>{Array.from({ length: budget }, (_, i) => <pointLight key={i} ref={(l) => { refs.current[i] = l; }} intensity={0} distance={4} decay={2} />)}</>;
+}
+// The nearest `max` of `items` to the camera, by the squared distance of `at`, into `out` (a scene's dozens of signs: sorted, not scanned)
+export function nearest<T>(items: T[], at: (t: T) => V3, camera: THREE.Camera, max: number): T[] {
+  const p = camera.position;
+  return items
+    .map((t) => { const [x, y, z] = at(t); return { t, d: (x - p.x) ** 2 + (y - p.y) ** 2 + (z - p.z) ** 2 }; })
+    .sort((a, b) => a.d - b.d)
+    .slice(0, max)
+    .map((e) => e.t);
+}
+
+// The light the lit signs throw at night: from in front of the face, the sign's own colour, a sputtering tube flickering
+export function SignLights({ signs, night }: { signs: MountedSign[]; night: boolean }) {
+  const lit = useMemo(() => signs.filter((s) => s.spec.light), [signs]);
+  const ahead = (s: MountedSign): V3 => [s.at[0] + Math.sin(s.turn) * 0.7, s.at[1] - 0.3, s.at[2] + Math.cos(s.turn) * 0.7];
+  const shown = useRef<MountedSign[]>([]);
+  const last = useRef(-1);
+  if (!night || !lit.length) return null;
+  return (
+    <LightPool
+      count={8}
+      fill={(camera, slots, now) => {
+        // (the nearest are chosen a few times a second; the camera moves little in between)
+        if (now - last.current > 0.25) { shown.current = nearest(lit, ahead, camera, 8); last.current = now; }
+        for (const s of shown.current) {
+          const l = s.spec.light!;
+          const [x, y, z] = ahead(s);
+          const sputter = s.spec.flicker > 0 && Math.sin(now * 23 + s.at[0] * 7) + Math.sin(now * 37 + s.at[2] * 3) > 2 - s.spec.flicker * 1.2 ? 0.25 : 1;
+          slots.push({ x, y, z, color: l.color, intensity: l.intensity * sputter, distance: l.distance });
+        }
+      }}
     />
   );
 }
