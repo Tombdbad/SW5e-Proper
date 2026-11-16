@@ -1468,7 +1468,9 @@ export function paintSign(c: CanvasRenderingContext2D, gl: CanvasRenderingContex
       const tall = h > w;
       if (tall) {
         // (a blade: the words stacked, a letter to a line)
-        const words = s.text.toUpperCase().replace(/[^A-Z0-9 ]/g, "").split(/\s+/).filter((t) => !/^(THE|OF|A)$/.test(t)).join("").slice(0, 9) || s.text.slice(0, 1);
+        // (the place's own name, the part in quotes if it has one, without the little words: as much as fits down the blade, else its first word)
+        const own = (/"([^"]+)"/.exec(s.text)?.[1] ?? s.text).toUpperCase().replace(/[^A-Z0-9 ]/g, "").split(/\s+/).filter((t) => t && !/^(THE|OF|A|AND)$/.test(t));
+        const words = (own.join("").length <= 9 ? own.join("") : own.sort((a, b) => b.length - a.length)[0] ?? "").slice(0, 9) || s.text.slice(0, 1).toUpperCase();
         const row = (h - inset * 6) / words.length;
         for (let i = 0; i < words.length; i++) letters(c, gl, s, words[i], w / 2, inset * 3 + row * (i + 0.5), w * 0.7, row * 0.86, "neon", rnd);
       } else {
@@ -1814,7 +1816,8 @@ export function nearest<T>(items: T[], at: (t: T) => V3, camera: THREE.Camera, m
 // The light the lit signs throw at night: from in front of the face, the sign's own colour, a sputtering tube flickering
 export function SignLights({ signs, night }: { signs: MountedSign[]; night: boolean }) {
   const lit = useMemo(() => signs.filter((s) => s.spec.light), [signs]);
-  const ahead = (s: MountedSign): V3 => [s.at[0] + Math.sin(s.turn) * 0.7, s.at[1] - 0.3, s.at[2] + Math.cos(s.turn) * 0.7];
+  // (a little out from the face and below it: close in front, the light made a hot spot on the sign itself)
+  const ahead = (s: MountedSign): V3 => [s.at[0] + Math.sin(s.turn) * 1.1, s.at[1] - s.spec.h / 2 - 0.35, s.at[2] + Math.cos(s.turn) * 1.1];
   const shown = useRef<MountedSign[]>([]);
   const last = useRef(-1);
   if (!night || !lit.length) return null;

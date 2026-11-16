@@ -3777,13 +3777,17 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (!to) continue;
       const spec = signpostOf(`${exit.via === "leave" ? "Out to " : ""}${to.name}`, exit.via === "leave", biome, world.seed);
       const dx = x + 0.5 - cx, dz = y + 0.5 - cz;
-      out.push({ spec, at: [x + 0.5, groundSq(x, y) + 1.4, y + 0.5], turn: Math.atan2(-dz, dx), both: true });
+      // (on top of the post, which is 1.6 high)
+      out.push({ spec, at: [x + 0.5, groundSq(x, y) + 1.62 + spec.h / 2, y + 0.5], turn: Math.atan2(-dz, dx), both: true });
     }
     // Inside: the rooms of this building, on the first wall with no way through near its middle
+    const shownInside = new Set<string>();
     for (const room of rooms.filter((a) => a.parentId === building.id && a.layout && !a.layout.mask)) {
       const l = room.layout!;
       const spec = signOf({ name: building.name, type: building.type, room: room.name, faction: faction(building), biome, wealth: wealthOf(building.type, room.name), seed: world.seed, span: Math.min(l.width, l.height) });
-      if (!spec) continue;
+      // (one of each: a cantina's bar has its neon, its dance floor and gaming room no second copy of the same name)
+      if (!spec || shownInside.has(`${spec.style}|${spec.text}`)) continue;
+      shownInside.add(`${spec.style}|${spec.text}`);
       const floor = levelY(l);
       const high = Math.min(floor + 2.3 + spec.h / 2, floor + (l.tall ? LEVEL_H * 2 : LEVEL_H) - spec.h / 2 - 0.2);
       for (const side of ["n", "s", "w", "e"] as const) {
@@ -3796,7 +3800,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       }
     }
     return out;
-  }, [planned, buildings, rooms, street, districtPlan, world.seed, biome, building.id]);
+  }, [planned, world, buildings, street, districtPlan, biome, building.id]);
+  // (for scripts, e2e/lights.mjs: where each sign hangs in the scene, and which way it faces)
+  useEffect(() => {
+    const w = window as unknown as { __signs?: unknown };
+    w.__signs = signs.map((s) => ({ text: s.spec.text, style: s.spec.style, shape: s.spec.shape, at: [s.at[0] - cx, s.at[1], s.at[2] - cz], face: [Math.sin(s.turn), 0, Math.cos(s.turn)], both: !!s.both, w: s.spec.w, h: s.spec.h }));
+    return () => { delete w.__signs; };
+  }, [signs, cx, cz]);
   const settlementId = trail.find((a) => a.kind === "settlement")?.id;
   const blockade =!!settlementId && blockadeAt(world, settlementId, minutes);
   const barricades = useMemo(() => {

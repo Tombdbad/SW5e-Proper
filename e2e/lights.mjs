@@ -92,6 +92,8 @@ try {
       }
       // Let it settle: shaders compiled, maps loaded
       await page.waitForFunction(() => window.__babylon?.prepared?.(), null, { timeout: 120000 }).catch(() => {});
+      // (a big district is got ready a kind of room at a time first: up to five minutes on this card)
+      await page.waitForFunction(() => !document.body.innerText.includes("Getting the district ready"), null, { timeout: 300000 }).catch(() => {});
       // (and no shader compiled for six seconds, up to two minutes)
       for (let i = 0, last = -1, still = 0; i < 120 && still < 6; i++) {
         const n = await page.evaluate(() => Object.keys(window.__babylon.engine._compiledEffects ?? {}).length);
@@ -121,6 +123,21 @@ try {
       });
       const file = `${OUT}/${scene}-${tier}${PHONE ? "-phone" : ""}.png`;
       await page.screenshot({ path: file });
+      // Close looks at a few of the signs (one of each style there), on the full tier: from in front of each, a little above
+      if (tier === "full" && !fight) {
+        const signs = await page.evaluate(() => window.__signs ?? []);
+        const styles = new Set();
+        const picked = signs.filter((s) => (styles.has(s.style) ? false : (styles.add(s.style), true))).slice(0, Number(process.env.CLOSE || 5));
+        say(`   ${signs.length} signs:`, signs.map((s) => `${s.style}/${s.shape} "${s.text}"`).slice(0, 12).join(", "));
+        for (let i = 0; i < picked.length; i++) {
+          const s = picked[i];
+          const d = Math.max(2.6, Math.max(s.w, s.h) * 1.7);
+          const from = [s.at[0] + s.face[0] * d, s.at[1] + 0.5, s.at[2] + s.face[2] * d];
+          await page.evaluate(([f, t]) => window.__map3d?.look(f, t), [from, s.at]);
+          await sleep(2500);
+          await page.screenshot({ path: `${OUT}/${scene}-sign${i}-${s.style}.png` });
+        }
+      }
       const row = { scene, tier, ...sample, errors: errors.length };
       rows.push(row);
       say(JSON.stringify(row));

@@ -53,6 +53,10 @@ test("a room takes its own sign: a hangar its bay number, a ward the medical boa
   assert.equal(bar.style, "neon");
   assert.equal(bar.shape, "board", "a bar's sign inside hangs flat");
   assert.equal(signOf({ name: "X", type: "cantina", room: "Cellar", seed: 5 }), null, "a cellar has none");
+  assert.equal(signOf({ name: "X", type: "cantina", room: "Entrance", seed: 5 }), null, "nor a cantina's entrance: the building is not the room");
+  assert.equal(bar.text, "The Rusty Mynock", "a bar's neon shows the place's name");
+  assert.equal(ward.text, "Ward");
+  assert.equal(signOf({ name: 'Rooming house "Wandering Promise"', type: "rooming house", seed: 5 })!.text, "Wandering Promise", "a long name keeps its own part");
 });
 
 test("signs are deterministic, never empty, sized to the wall, and every lit one throws a light", () => {

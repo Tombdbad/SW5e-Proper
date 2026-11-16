@@ -101,7 +101,17 @@ export function pictogramOf(type: string): Pictogram {
 
 // The style a place takes: who holds it first (a Hutt's cantina is gaudy in Hutt script, a Mandalorian clan paints its mark), then its kind
 export function signStyleOf(type: string, faction = "", room = ""): SignStyle | null {
-  const what = `${type} ${room}`;
+  // (a room's sign is for what the room is, not what the building is: a cantina's bar has its neon, its entrance and its booths none)
+  if (room) {
+    if (NONE.test(room)) return null;
+    if (BAY.test(room)) return "bay";
+    if (MEDICAL.test(room)) return "medical";
+    if (MILITARY.test(room)) return /mandalor/i.test(faction) ? "clan" : "stencil";
+    if (/main bar|dance floor|gaming floor|gambling room|betting hall|cantina/i.test(room)) return /hutt|black sun|pyke|crymorah|czerka/i.test(faction) ? "hutt" : "neon";
+    if (/sales floor|showroom|shopfront|repair counter|stalls/i.test(room)) return "shop";
+    return null;
+  }
+  const what = type;
   if (NONE.test(what)) return null;
   if (BAY.test(room || type)) return "bay";
   if (MEDICAL.test(what)) return "medical";
@@ -180,7 +190,12 @@ export function sigilOf(name: string): Sigil {
 }
 
 // A short name fits a sign: "The Rusty Mynock Cantina" stays whole, a long room name drops what follows a comma
-const shortName = (name: string) => name.split(/[,:(]/)[0].trim().slice(0, 28);
+// (a name too long for a board keeps the part in quotes, the place's own name: 'Rooming house "Wandering Promise"' is "Wandering Promise")
+const shortName = (name: string) => {
+  const head = name.split(/[,:(]/)[0].trim();
+  const own = /"([^"]+)"/.exec(head)?.[1];
+  return (head.length > 24 && own ? own : head).slice(0, 28);
+};
 
 // ---- The sign of a place ----
 export function signOf(p: SignPlace): SignSpec | null {
@@ -192,7 +207,8 @@ export function signOf(p: SignPlace): SignSpec | null {
   const biome = p.biome ?? "";
   const span = Math.max(1, p.span ?? 4);
   const wear = signWearOf(wealth, biome);
-  const name = shortName(p.room ?? p.name);
+  // (a bar's neon and a shop's board inside show the place's name; a ward's, a hangar's or an armory's door the room's own)
+  const name = shortName(p.room && !["neon", "hutt", "shop"].includes(style) ? p.room : p.name);
   let colours: readonly string[];
   let shape: SignShape = "board";
   let text = name;
@@ -211,7 +227,8 @@ export function signOf(p: SignPlace): SignSpec | null {
       colours = pick(HUTT, h);
       lit = true;
       sub = "under the protection of the clan";
-      if (!p.room) { shape = "blade"; w = 0.9; hgt = 2.4; }
+      // (a wide gaudy board, never a blade: the script above the Basic is the point of it)
+      hgt = w / 2.6;
       break;
     case "stencil":
       colours = stencilColours(p.faction ?? "");
@@ -234,7 +251,8 @@ export function signOf(p: SignPlace): SignSpec | null {
     case "bay": {
       colours = ["#2a2d31", "#f4f1e8", "#ffd84a", "#ffcc00"];
       lit = true;
-      const n = p.number ?? 1 + (h % 48);
+      // (the number is the building's: its hangar inside shows the one over its door)
+      const n = p.number ?? 1 + (signHash(p.name, p.seed) % 48);
       text = `${n}`;
       sub = p.room ? shortName(p.room) : name;
       w = Math.min(4, Math.max(1.6, span * 0.5));
