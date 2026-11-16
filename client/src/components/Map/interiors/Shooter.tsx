@@ -328,7 +328,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         continue;
       }
       if (e.type === "line") { st.lines.push({ ...e, t: 0 }); continue; }
-      if (e.type === "reel") {
+      if (e.type === "reel" && (!e.id || e.id === "me")) {
         // (reeled along the cable to the last free square before where it bit)
         const d = Math.hypot(e.x - me.x, e.y - me.y);
         for (let k = d - 0.7; k >= 1; k -= 0.5) {
@@ -402,6 +402,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         if (e.act === "throw") say(beast ? `${who.name} rears back to spit` : `${who.name} pulls a grenade`);
         else if (e.act === "spray") say(beast ? `${who.name} draws breath` : `${who.name} levels a sprayer`);
         else if (e.act === "call") say(`${who.name} reaches for a comlink`);
+        else if (e.act === "cast") say(`${who.name} ${who.side === "foe" ? "reaches out" : "calls on"}: ${e.name ?? "a power"}`);
         else say(`${who.name} kneels over a medpac`);
       } else if (e.type === "broken") {
         const who = s.units.find((u) => u.id === e.id);

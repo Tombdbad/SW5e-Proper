@@ -80,7 +80,7 @@ import {
   advanceSearch, retireSquad, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, statProfile, type StatCasting, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -402,7 +402,9 @@ export default function GameBoard() {
         resist: [...(c.resist ?? c.profile?.resistances ?? []), ...(nem?.adapted ?? [])], vulnerable: c.vulnerable ?? c.profile?.vulnerabilities, immune: c.immune ?? c.profile?.immunities,
         condImmune: c.conditionImmune ?? c.profile?.conditionImmunities, regen: c.profile?.traits?.find((t: any) => t.kind === "regeneration")?.amount,
         droid: !organic, small: !/large|huge|gargantuan/i.test(c.size ?? ""), ...(rider ? { rider } : {}), ...(beast ? { natural: true } : {}),
-        kit: c.ally ? undefined : foeKit(c, nem), caller: !c.ally && callsForHelp(c),
+        // (a companion uses its stat block's specials too: batch G, 2026-11-16; what a nemesis learned is the foe's only)
+        kit: foeKit(c, c.ally ? undefined : nem), caller: !c.ally && callsForHelp(c),
+        ...casterOf(c),
       });
     };
     const unarmed = kit.unarmed ? { meleeWeapon: kit.unarmed.name, meleeDice: kit.unarmed.dice, meleeDamage: kit.unarmed.damage, meleeType: kit.unarmed.type, meleeExtra: kit.unarmed.extra } : {};
@@ -2494,6 +2496,8 @@ export default function GameBoard() {
     rangedAttacker: o.attack?.ranged ?? true,
     saves: o.saves,
     profile: o.profile,
+    // (its stat block, for what the profile of an older world lacks: a caster's powers, see casterOf)
+    statBlockId: o.statBlock,
     speed: o.speed || 30,
     reach: o.attack?.ranged ? 5 : o.attack?.range ?? 5,
     range: o.attack?.ranged ? ([o.attack.range ?? 80, o.attack.long ?? (o.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -5627,6 +5631,7 @@ export default function GameBoard() {
     rangedAttacker: c.attack?.ranged ?? false,
     saves: c.saves,
     profile: c.profile,
+    statBlockId: c.statBlock,
     speed: c.speed || 30,
     reach: c.attack?.ranged ? 5 : c.attack?.range ?? 5,
     range: c.attack?.ranged ? ([c.attack.range ?? 80, c.attack.long ?? (c.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -6002,6 +6007,24 @@ export default function GameBoard() {
     if (nem && nem.rank >= 2) medpacs++;
     if (!blasts.length && !medpacs && !antidote && !extinguisher) return undefined;
     return { blasts, medpacs, heal: Math.round((hitDieOfSize(c.size) + 1) / 2 + 2), antidote, extinguisher };
+  };
+  // A caster in a real-time fight (2026-11-16, batch G: a foe's or a companion's stat block with a Forcecasting or Techcasting trait,
+  // shared/logic castingOf): its powers read from their texts as the party's are (realtimePowers, at its caster level and with its own ability
+  // scores), its points, and its uses a day. HOUSE RULE: one that casts innately (uses a day and no points) pays no points for them.
+  const casterOf = (c: any): Partial<Unit> => {
+    const monsters = monsterData as unknown as Sw5eMonster[];
+    const monster = (c.statBlockId && monsters.find((m) => m.id === c.statBlockId)) || monsters.find((m) => m.name === c.name);
+    const casting: StatCasting | undefined = c.profile?.casting ?? (monster ? statProfile(monster).casting : undefined);
+    if (!casting) return {};
+    const rows = casting.powers.map((p) => (powerData as any[]).find((x) => x.name === p.name)).filter(Boolean);
+    // (no stat block to hand: the ability that gives its save DC)
+    const mod = casting.dc ? casting.dc - 8 - (2 + Math.floor((Math.max(1, casting.level) - 1) / 4)) : 2;
+    const scores = monster ? { intelligence: monster.intelligence, wisdom: monster.wisdom, charisma: monster.charisma } : { intelligence: 10 + 2 * mod, wisdom: 10 + 2 * mod, charisma: 10 + 2 * mod };
+    const innate = casting.points === undefined;
+    const powers = realtimePowers(rows, Math.max(1, casting.level), scores, 40).map((w) => (innate ? { ...w, cost: 0 } : w));
+    if (!powers.length) return {};
+    const perDay = Object.fromEntries(casting.powers.filter((p) => p.perDay).map((p) => [powers.find((w) => w.name === p.name)?.id ?? p.name, p.perDay!]));
+    return { powers, points: casting.points ?? 0, perDay, castT: 1.5 + (hashString(`${c.id}|cast`) % 1000) / 500 };
   };
   // A foe with a comlink who calls for help when the fight goes on (house rule: shooter.ts SHOOT.backup): a leader, or one of the watch, a
   // soldier or officer, a guard; not a beast

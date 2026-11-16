@@ -76,6 +76,11 @@ export const SHOOT = {
   acDown: 0.05,
   // A thrown blade's speed (a saber throw, a thrown weapon), a dash's reach (squares: a saber strike's move)
   thrown: 16, dash: 6,
+  // (2026-11-16, batch G) A caster among the foes or the companions (a stat block's Forcecasting or Techcasting, a companion's powers): the
+  // moment the power takes to come (a hand thrown out: the party sees it and can stagger it), the pause before its next, the longest a
+  // condition it lays on the party holds (the party makes no save in real time: the hold is short instead, house rule), and the farthest it
+  // shoves the party (squares)
+  npc: { windup: 0.6, every: [3.5, 6.5] as [number, number], partyHold: 2, partyShove: 3 },
 };
 // How often an attack roll lands: a d20 + the bonus against the Armor Class (a 1 always misses, a 20 always hits), as a chance and not a die
 export const hitChance = (bonus: number, ac: number) => clamp((21 - ac + bonus) / 20, 0.05, 0.95);
@@ -426,7 +431,7 @@ export interface Unit {
   powers?: RtPower[];
   powerCd?: number;
   // Being pushed or pulled: a velocity (squares a second), for how long, and the damage if it strikes a wall
-  knock?: { vx: number; vy: number; t: number; strike: number; type: string };
+  knock?: { vx: number; vy: number; t: number; strike: number; type: string; by?: string };
   // The squares a foe is walking to get round a wall, how long until it looks again, and how long until it checks it is not stuck in one
   path?: { x: number; y: number }[];
   pathT: number;
@@ -467,7 +472,10 @@ export interface Unit {
   // A monster (see `monstrous`): its shots are spat or flung, not fired from a gun
   natural?: boolean;
   // What its hands (or jaws) are about: a throw, a spray or breath, a call for help, under way for `t` seconds more (SHOOT.act)
-  act?: { kind: "throw" | "spray" | "call"; t: number; blast?: FoeBlast; target?: string };
+  act?: { kind: "throw" | "spray" | "call" | "cast"; t: number; blast?: FoeBlast; target?: string; power?: RtPower };
+  // (2026-11-16) A caster's uses left of its "3/day" powers (by power id), and its pause before the next power
+  perDay?: Record<string, number>;
+  castT?: number;
   // (the party only) half damage from a burst, a cone or a breath, by the item that gives it (Reflex Enhancer: "no damage if you succeed on
   // a saving throw, and only half damage if you fail", taken at its middle: house rule); once a fight, to drop to 1 hit point instead of 0
   evade?: boolean;
@@ -660,7 +668,7 @@ export type Event =
   | { type: "call"; id: string; jammed: boolean }
   | { type: "arrive"; id: string }
   // a foe begins something with its hands that takes a moment (the scene plays its wind-up), or is stopped in it; a blow that misses
-  | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal"; seconds: number }
+  | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal" | "cast"; seconds: number; name?: string }
   | { type: "broken"; id: string }
   | { type: "miss"; id: string; target: string }
   // (2026-11-03) a once-a-rest feature spent (by item name), what befell a foe (held, slowed, charmed, turned...: the scene marks it), a line
@@ -669,7 +677,7 @@ export type Event =
   | { type: "once"; name: string }
   | { type: "status"; id: string; text: string }
   | { type: "line"; x: number; y: number; h: number; tx: number; ty: number; th: number }
-  | { type: "reel"; x: number; y: number }
+  | { type: "reel"; x: number; y: number; id?: string }
   | { type: "decoy"; id: string }
   | { type: "image"; id: string }
   | { type: "revealed"; id: string };
@@ -1603,7 +1611,7 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
     const k = u.knock;
     const h = Math.min(dt, k.t);
     if (!walk(u, k.vx * h, k.vy * h, env)) {
-      if (k.strike > 0) hurt(sim, u, k.strike, k.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+      if (k.strike > 0) hurt(sim, u, k.strike, k.type, k.by ? sim.units.find((o) => o.id === k.by) : p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
       u.knock = undefined;
     } else {
       k.t -= h;
@@ -1647,6 +1655,7 @@ function stepStates(sim: Sim, dt: number, events: Event[]) {
     u.poisoned = Math.max(0, u.poisoned - dt);
     if (u.using !== undefined) u.using = Math.max(0, u.using - dt);
     for (const b of u.kit?.blasts ?? []) b.cd = Math.max(0, b.cd - dt);
+    if (u.castT) u.castT = Math.max(0, u.castT - dt);
     // Standing in fire or gas: it hurts every second, a fire keeps burning a moment after, a gas poisons
     for (const f of sim.fields) {
       if (Math.hypot(u.x - f.x, u.y - f.y) > f.radius || u.h > f.h + 1.2) continue;
@@ -1876,7 +1885,8 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     if (a.kind === "call") {
       events.push({ type: "call", id: u.id, jammed: !!sim.jammed });
       if (!sim.jammed) sim.backupAt = sim.time + SHOOT.backup.delay;
-    } else if (a.blast && a.kind === "throw") lob(sim, u, a.blast.kind, at, events, a.blast.natural);
+    } else if (a.kind === "cast" && a.power) npcCast(sim, u, a.power, sim.units.find((o) => o.id === a.target && (alive(o) || a.power!.kind === "revive")) ?? at, env, events);
+    else if (a.blast && a.kind === "throw") lob(sim, u, a.blast.kind, at, events, a.blast.natural);
     else if (a.blast) spray(sim, u, a.blast, at, events);
     return;
   }
@@ -1893,6 +1903,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     events.push({ type: "use", id: u.id, name: "Medpac", text: `+${u.hp - was}` });
   } else if (u.using === 0) u.using = undefined;
   if (useKit(sim, u, target, d, seen, events)) return;
+  if (pickCast(sim, u, target, d, seen, env, events)) return;
   if (!u.brave && !u.leader && u.hp <= u.maxHp * SHOOT.fleeAt && u.side === "foe") return void startFleeing(u, events);
   if (u.caller && u.side === "foe" && !sim.called) callForHelp(sim, u, events);
   const blind = u.blind > 0;
@@ -1973,8 +1984,8 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
   for (const b of k.blasts) {
     if (b.left <= 0 || b.cd > 0) continue;
     if (b.thrown ? d < b.kind.radius + 1.5 || d > b.range : d > b.range) continue;
-    // (it does not throw where its own would be caught)
-    if (b.thrown && sim.units.some((o) => o !== u && o.side === u.side && alive(o) && Math.hypot(o.x - target.x, o.y - target.y) < b.kind.radius)) continue;
+    // (it does not throw where its own would be caught: a companion's own are the party and the other companions)
+    if (b.thrown && sim.units.some((o) => o !== u && allied(o, u) && alive(o) && Math.hypot(o.x - target.x, o.y - target.y) < b.kind.radius)) continue;
     b.left--;
     b.cd = b.every;
     // (the wind-up first: the arm drawn back, the chest filled for a breath; SHOOT.act)
@@ -1984,6 +1995,141 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
     return true;
   }
   return false;
+}
+// The same side: the party and its companions, or the foes
+const allied = (a: Unit, b: Unit) => (a.side === "foe") === (b.side === "foe");
+// ---- Casters other than the party (2026-11-16, batch G; the user: companions "use a single best attack and do not cast", "enemy Force users do
+// not cast"). A foe with a stat block's Forcecasting or Techcasting, or a companion with powers, has its powers read from their texts as the
+// party's are (`powers`, `points`, and `perDay` for a "3/day"), and plays them through the same kinds. HOUSE RULE (the books' turns and saves do
+// not exist here): every few seconds (SHOOT.npc.every) it takes the power that does the most now: a hurt friend healed, a fallen one brought back,
+// a buff it does not have, else a power on the one it fights (damage, a hold, a blinding, a slow, fear, a push or pull, a thrown blade, harmful
+// ground, a charm on a foe). The power comes after a wind-up the party can see and break (SHOOT.npc.windup, as a throw's); a condition it lays on
+// the party lasts at most SHOOT.npc.partyHold seconds, and a shove sends the party at most SHOOT.npc.partyShove squares.
+function pickCast(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, _env: Env, events: Event[]): boolean {
+  if (!u.powers?.length || (u.castT ?? 0) > 0 || u.blind > 0 || u.stagger > 0 || (u.held ?? 0) > 0) return false;
+  const can = (w: RtPower) => (w.cost === 0 || (u.points ?? 0) >= w.cost) && (u.perDay?.[w.id] ?? 1) > 0;
+  const friends = sim.units.filter((o) => alive(o) && allied(o, u) && !o.decoy);
+  const options: { w: RtPower; on: Unit; score: number }[] = [];
+  for (const w of u.powers) {
+    if (!can(w)) continue;
+    const reach = Math.max(1.5, w.range) + 0.8;
+    if (w.kind === "heal") {
+      const low = friends.filter((o) => o.hp < o.maxHp * 0.5 && dist(u, o) <= reach).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+      if (low) options.push({ w, on: low, score: 30 });
+      continue;
+    }
+    if (w.kind === "revive") {
+      const down = sim.units.find((o) => o !== u && o.dead && !o.fled && !o.decoy && !o.droid && o.side === u.side && dist(u, o) <= reach);
+      if (down) options.push({ w, on: down, score: 35 });
+      continue;
+    }
+    if (w.kind === "buff" && w.buff) {
+      if (!w.buff.cloak && !w.buff.react && !u.buffs?.some((b) => b.name === w.name)) options.push({ w, on: u, score: 8 + (w.buff.ac ?? 0) * 2 + (w.buff.temp ? 4 : 0) + (w.buff.resist?.length ? 3 : 0) });
+      continue;
+    }
+    if (!seen || d > reach || target.decoy) continue;
+    const held = target.stagger > 0.5 || (target.held ?? 0) > 0;
+    const score: Partial<Record<PowerKind, number>> = {
+      damage: 10 + w.damage, throw: 10 + w.damage,
+      stun: held ? 0 : 18, restrain: held || target.huge ? 0 : 16, blind: target.blind > 0 ? 0 : 14, slow: (target.slowed ?? 0) > 0 ? 0 : 12, fear: 11,
+      push: w.strike > 0 ? 12 + w.strike : 9, pull: w.strike > 0 ? 12 + w.strike : 9,
+      zone: w.field && w.field.dps > 0 ? 10 + w.field.dps * 3 : 0,
+      // (a charm only on the party's foes: the party's own mind is not taken over in real time)
+      mind: target.side === "foe" && !target.droid && !target.natural ? 13 : 0,
+    };
+    const s = score[w.kind] ?? 0;
+    if (s > 0) options.push({ w, on: target, score: s });
+  }
+  if (!options.length) {
+    u.castT = 1;
+    return false;
+  }
+  options.sort((a, b) => b.score - a.score);
+  // (now and then the second best, so that a caster is not one power over and over)
+  const pick = options[options.length > 1 && rand(sim) < 0.35 ? 1 : 0];
+  if (pick.w.cost) u.points = (u.points ?? 0) - pick.w.cost;
+  if (u.perDay?.[pick.w.id] !== undefined) u.perDay[pick.w.id]--;
+  u.castT = between(sim, SHOOT.npc.every);
+  u.aiming = 0;
+  u.volleyLeft = 0;
+  u.act = { kind: "cast", t: SHOOT.npc.windup, target: pick.on.id, power: pick.w };
+  events.push({ type: "act", id: u.id, act: "cast", seconds: SHOOT.npc.windup, name: pick.w.name });
+  return true;
+}
+// The power a caster other than the party wound up takes hold (see pickCast)
+function npcCast(sim: Sim, u: Unit, w: RtPower, t: Unit, env: Env, events: Event[]) {
+  const from = { x: u.x, y: u.y, h: u.h + 1.1 };
+  const at = { x: t.x, y: t.y, h: t.h + SHOOT.height * 0.6 };
+  events.push({ type: "power", id: u.id, kind: w.kind, name: w.name, ...from, tx: at.x, ty: at.y, th: at.h });
+  if (w.kind === "heal") {
+    const was = t.hp;
+    t.hp = Math.min(t.maxHp, t.hp + w.damage);
+    return void events.push({ type: "use", id: u.id, name: w.name, text: `${t.name} +${Math.round(t.hp - was)}` });
+  }
+  if (w.kind === "revive") {
+    if (!t.dead) return;
+    Object.assign(t, { dead: false, hp: Math.max(1, w.damage), mode: "engage" });
+    return void events.push({ type: "use", id: u.id, name: w.name, text: `${t.name} is back up` });
+  }
+  if (w.kind === "buff" && w.buff) {
+    addBuff(u, { ...w.buff, t: Math.min(SHOOT.power.longest * 2, w.buff.t) });
+    return void events.push({ type: "use", id: u.id, name: w.name, text: describeBuff(w.buff) });
+  }
+  if (!sees(env, { x: u.x, y: u.y, h: u.h }, { x: t.x, y: t.y, h: t.h })) return;
+  noise(sim, u.x, u.y, 8, events);
+  if (w.kind === "throw") return void launch(sim, u, { damage: w.damage, type: u.blade?.type ?? w.type, long: w.range * 1.5, blade: true, plain: true }, from, at, 0.04, events, SHOOT.thrown);
+  if (w.kind === "zone" && w.field) {
+    sim.fields.push({ id: sim.seq++, owner: u.id, x: t.x, y: t.y, h: env.floorAt(t.x, t.y), radius: Math.max(1, w.radius || 3), t: Math.min(SHOOT.power.longest * 2, w.seconds || 12), dps: w.field.dps, type: w.field.type, ...(w.field.poison ? { poison: 1 } : {}), ...(w.field.obscure ? { obscure: true } : {}), ...(w.field.slow ? { slow: true } : {}) });
+    return;
+  }
+  const taken = [t, ...(w.radius ? sim.units.filter((o) => o !== t && alive(o) && !allied(o, u) && !o.decoy && dist(o, t) <= w.radius) : [])];
+  for (const o of taken) {
+    const party = o.side === "player";
+    // (the party makes no save in real time: what holds it is short, SHOOT.npc.partyHold)
+    const hold = (s: number) => Math.min(party ? SHOOT.npc.partyHold : SHOOT.power.longest, Math.max(1, s || 6));
+    const immune = (c: RegExp) => !!o.condImmune?.some((x) => c.test(x));
+    const hitAt = { x: o.x, y: o.y, h: o.h + SHOOT.height * 0.6 };
+    if (o.mode === "idle") alertFoe(sim, o, events);
+    if (w.kind === "damage") {
+      hurt(sim, o, w.damage, w.type, u, events, hitAt);
+      o.stagger = Math.max(o.stagger, party ? 0.15 : 0.3);
+    } else if (w.kind === "stun" && !immune(/stun|paraly/i)) {
+      o.stagger = Math.max(o.stagger, hold(w.seconds));
+      events.push({ type: "status", id: o.id, text: "stunned" });
+    } else if (w.kind === "blind" && !immune(/blind/i)) o.blind = Math.max(o.blind, hold(w.seconds));
+    else if (w.kind === "restrain" && !o.huge && !immune(/restrain/i)) {
+      o.held = Math.max(o.held ?? 0, hold(w.seconds));
+      events.push({ type: "status", id: o.id, text: "held" });
+    } else if (w.kind === "slow") {
+      o.slowed = Math.max(o.slowed ?? 0, party ? hold(w.seconds) * 2 : Math.min(SHOOT.power.longest, w.seconds || 6));
+      o.slowBy = Math.max(o.slowBy ?? 0, SHOOT.slowLevel);
+      if (w.ac) o.acDown = Math.max(o.acDown ?? 0, w.ac);
+      events.push({ type: "status", id: o.id, text: "slowed" });
+    } else if (w.kind === "fear" && !immune(/fright/i) && !o.buffs?.some((b) => b.fearless)) {
+      // (a foe of the party's that is not brave runs; the brave, the party and its companions are shaken a moment)
+      if (o.side === "foe" && !o.brave && !o.leader) { o.mode = "flee"; o.flee = hold(w.seconds); }
+      else o.stagger = Math.max(o.stagger, Math.min(1.5, hold(w.seconds)));
+    } else if ((w.kind === "push" || w.kind === "pull") && !o.anchored) {
+      const way = w.kind === "push" ? 1 : -1;
+      const d = dist(u, o) || 1;
+      const [ux, uy] = [(o.x - u.x) / d, (o.y - u.y) / d];
+      if (party) {
+        // (the party's body is the scene's: it is sent to the last free square along the shove, as a hook's reel)
+        const s = Math.min(w.distance || 2, SHOOT.npc.partyShove) * way;
+        events.push({ type: "reel", id: o.id, x: o.x + ux * (s + 0.7 * Math.sign(s)), y: o.y + uy * (s + 0.7 * Math.sign(s)) });
+        o.stagger = Math.max(o.stagger, 0.4);
+        if (w.strike > 0) hurt(sim, o, w.strike, w.type, u, events, hitAt);
+      } else {
+        const s = Math.max(0.15, (w.distance || 2) / SHOOT.power.knock);
+        o.knock = { vx: ux * SHOOT.power.knock * way, vy: uy * SHOOT.power.knock * way, t: s, strike: w.strike, type: w.type, by: u.id };
+        o.stagger = Math.max(o.stagger, s + 0.2);
+      }
+    } else if (w.kind === "mind" && o.side === "foe") {
+      o.charmed = Math.max(o.charmed ?? 0, Math.min(12, w.seconds || 12));
+      o.aiming = 0;
+      events.push({ type: "status", id: o.id, text: "charmed" });
+    }
+  }
 }
 // A thing thrown in an arc to land at the target's feet (as near as the thrower's skill takes it), bursting a moment after; a monster's spit
 // or flung glob (`natural`) flies flatter and bursts where it strikes
