@@ -2773,16 +2773,17 @@ function hullSkin(deck: Pick<HullDeck, "rows">, L: number, B: number): { plate: 
   }
   return { plate, rim };
 }
-export function HullOutline({ name, make, upTo, levelH }: { name?: string; make?: ShipFaction; upTo: number; levelH: number }) {
+export function HullOutline({ name, make, upTo, levelH, dropped = [] }: { name?: string; make?: ShipFaction; upTo: number; levelH: number; dropped?: number[] }) {
   const hull = hullPlanOf(name);
   if (!hull || !hull.decks?.length) return null;
   const paint = shipPaint(make ?? (SHIP_KIT[name!]?.faction as ShipFaction | undefined) ?? "civilian", name!);
-  const decks = hull.decks.filter((d) => d.level <= upTo);
+  // (a deck the plan left out is not drawn: shared/logic boardShip tags it `dropped:`)
+  const decks = hull.decks.filter((d) => d.level <= upTo && !dropped.includes(d.level));
   if (!decks.length) return null;
   return (
     <Untappable>
       <Model
-        id={`hulloutline:${name}:${upTo}:${paint.join("")}`}
+        id={`hulloutline:${name}:${upTo}:${dropped.join(",")}:${paint.join("")}`}
         shadow={false}
         build={(k) => {
           for (const deck of decks) {

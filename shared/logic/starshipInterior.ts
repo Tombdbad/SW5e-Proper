@@ -1360,12 +1360,13 @@ export function buildInterior(ship: ShipSpec, plan: InteriorPlan, buildingId: st
     const my = clamp(m.y - p.y, 0, p.h - 1);
     const side = m.side && m.side !== "down" ? m.side : undefined;
     const along: [number, number][] = side === "n" || side === "s" ? [[0, 0], [-1, 0], [1, 0]] : side ? [[0, 0], [0, -1], [0, 1]] : [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
-    // (in a room too narrow to step round it, the ramp is a hatch in the floor one walks over: it does not block)
+    // (in a room too narrow to step round it, the ramp is a hatch in the floor one walks over: it does not block; `toward` is the hull wall it is let
+    // down through, not `side`, which would make it a way in the wall to the rest of the game)
     for (const [dx, dy] of along) {
       for (const blocks of [true, false]) {
         const [x, y] = [mx + dx, my + dy];
         if (rampPut || !clear(l, x, y) || l.assets.some((o) => o.kind === "door" && o.x === x && o.y === y)) continue;
-        give(room, { kind: "furniture", name: "Boarding ramp", x, y, w: 1, h: 1, ...(blocks ? { blocks: true } : {}), ref: `${STATION}ramp`, cover: false, ...(side ? { side } : {}) });
+        give(room, { kind: "furniture", name: "Boarding ramp", x, y, w: 1, h: 1, ...(blocks ? { blocks: true } : {}), ref: `${STATION}ramp`, cover: false, ...(side ? { toward: side } : {}) });
         if (floorFaults(l)) { l.assets.pop(); continue; }
         rampPut = true;
       }

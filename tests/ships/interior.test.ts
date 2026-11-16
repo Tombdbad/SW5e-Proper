@@ -340,3 +340,17 @@ test("the inside of every kit hull follows its outline", () => {
   if (missing.length) console.log(`(no outline yet for ${missing.length} kit hulls: ${[...new Set(missing)].join(", ")})`);
   assert.deepEqual(found.slice(0, 40), []);
 });
+
+test("a ship whose maker changes (a captured ship) is laid out again in its new hull, and its ramp is no way in the wall", () => {
+  let world = worldWithBerth();
+  const ship = shipOf("Large", "Corvette", "Galactic Empire", 9);
+  world = boardShip(world, ship, "berth").world;
+  assert.ok(world.areas[shipBuildingIdOf(ship.id)].tags.includes("hull:ship_imperial_large"));
+  world = boardShip(world, { ...ship, owner: "Kessa Dray" }, "berth").world;
+  const tags = world.areas[shipBuildingIdOf(ship.id)].tags;
+  assert.ok(tags.includes("hull:ship_civilian_large"), tags.join());
+  assert.equal(tags.filter((t) => t.startsWith("hull:")).length, 1);
+  // (the ramp's wall is `toward`: `side` would make the rest of the game take it for a doorway)
+  const ramp = world.areas[deckIdOf(ship.id)].layout!.assets.find((a) => a.ref === "station:ramp")!;
+  assert.equal(ramp.side, undefined);
+});

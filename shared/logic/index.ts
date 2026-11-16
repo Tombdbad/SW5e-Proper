@@ -27,7 +27,7 @@ import type { Base } from "./bases";
 export * from "./bases";
 import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShipPart, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
-import { hasInterior, shipFactionOf, shipInteriorOf } from "./starshipInterior";
+import { hasInterior, hullNameOf, shipFactionOf, shipInteriorOf } from "./starshipInterior";
 export * from "./starshipInterior";
 import { ECO_HIT, ECOLOGY, PACK_SCALE, ecologySpots, terrainFor, terrainHeight, districtGround, districtLand, districtRelief, type DistrictGround, type DistrictGroundSpec, type DistrictRect, type EcoSpot, type Terrain } from "./terrain";
 export { ECO_HIT, PACK_SCALE, TERRAIN_STYLES, terrainStyleOf, makeTerrain, terrainFor, terrainHeight, terrainSlope, terrainGradient, terrainFlow, terrainSplat, terrainColorAt, terrainSurface, type TerrainSurface, kitSpots, type KitSpot, type KitKind, ECOLOGY, ecologySpots, type EcoEntry, type EcoSpot, terrainNoise, levelDisc, levelBox, levelRoad, districtGround, districtRelief, districtHill, districtLand, SQUARE_M, type DistrictGround, type DistrictGroundSpec, type DistrictRect, scatterOn, carveBasins, terrainWater, type TerrainWater, streamPower, erodeDroplets, thermalSettle, polishFlats, type Terrain, type TerrainSpec, type TerrainStyle, type TerrainPalette, type GroundOver, type LevelDisc, type LevelRoad, type ScatterRule } from "./terrain";
@@ -5838,8 +5838,10 @@ export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" 
   const faction = shipFactionOf(ship.owner);
   const old = areas[deckId];
   const tagsOf = (extra: string[]) => [`ship:${ship.id}`, `kit:${faction}`, ...extra];
-  const fresh = !areas[buildingId]?.tags.includes(`interior:${INTERIOR_VERSION}`);
-  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: tagsOf(hasInterior(ship) ? [`interior:${INTERIOR_VERSION}`, ...(fresh ? [] : (areas[buildingId]?.tags ?? []).filter((t) => t.startsWith("hull:")))] : []), description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
+  // (made again too when the ship now takes another kit hull: a captured ship whose owner, and so its maker, changed)
+  const hullWas = areas[buildingId]?.tags.find((t) => t.startsWith("hull:"))?.slice(5);
+  const fresh = !areas[buildingId]?.tags.includes(`interior:${INTERIOR_VERSION}`) || (!!hullWas && hasInterior(ship) && hullWas !== hullNameOf(ship));
+  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: tagsOf(hasInterior(ship) ? [`interior:${INTERIOR_VERSION}`, ...(fresh ? [] : (areas[buildingId]?.tags ?? []).filter((t) => t.startsWith("hull:") || t.startsWith("dropped:")))] : []), description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
   areas[buildingId] = building;
   let paths = world.paths;
   const comeFrom = from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:"));
@@ -5850,7 +5852,8 @@ export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" 
       paths = paths.filter((p) => !p.id.startsWith(`${buildingId}-p`));
       const built = shipInteriorOf(ship, buildingId, deckId, hashOf(`${world.seed}|${ship.id}`));
       // (the hull whose outline the plan follows: the map draws its outline round the decks)
-      if (built.plan.hullName) building.tags = [...building.tags, `hull:${built.plan.hullName}`];
+      // (and the decks of it the plan left out, which the map does not draw: `dropped:` the deck numbers, from 0)
+      if (built.plan.hullName) building.tags = [...building.tags, `hull:${built.plan.hullName}`, ...(built.plan.dropped?.length ? [`dropped:${built.plan.dropped.join(",")}`] : [])];
       for (const room of built.rooms) areas[room.id] = room;
       paths = [...paths, ...built.paths];
     }

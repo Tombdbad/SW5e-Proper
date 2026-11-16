@@ -1450,7 +1450,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const wallLine = useMemo(() => outline(width, height, [nw, ne, se, sw]), [width, height, nw, ne, se, sw]);
   // (asset ids can repeat in a room, so the keys are made unique: React warned of twins 50 to 111 times in a fight, T-004)
   const keyOf = useMemo(() => { const keys = uniqueKeys(assets); return new Map(assets.map((a, i) => [a, keys[i]] as const)); }, [assets]);
-  const setIn = useMemo(() => assets.filter((a) => a.side).map((a) => meets.map((m) => m.place(a)).find(Boolean) ?? wayPlace(wallLine, width, height, a)), [assets, wallLine, meets]);
+  // (a ship's boarding ramp is let down through the hull wall it is `toward`: drawn as set in that wall, though it is no way in it)
+  const sideRamp = (a: RoomAsset) => !a.side && !!a.toward && !!shipMake && a.kind === "furniture" && /^boarding ramp/i.test(a.name);
+  const setIn = useMemo(() => assets.filter((a) => a.side || sideRamp(a)).map((a) => (sideRamp(a) ? { ...wayPlace(wallLine, width, height, { ...a, side: a.toward }), a } : meets.map((m) => m.place(a)).find(Boolean) ?? wayPlace(wallLine, width, height, a))), [assets, wallLine, meets, shipMake]);
   // (a stretch against a round room has no wall of its own: the round room's curve is the wall there)
   const onLine = (side: FootSide, u: number) => {
     const piece = wallLine.pieces.find((p) => p.kind === "line" && p.side === side);
@@ -1536,7 +1538,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? (rustic ? RUSTIC.deck : RAMP_DECK) : undefined} rustic={rustic && !!plan.open} />}
+      {plan?.climb && plan.form && !sloped && !(shipMake && plan.form === "lift") && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? (rustic ? RUSTIC.deck : RAMP_DECK) : undefined} rustic={rustic && !!plan.open} />}
       {shipMake && plan?.form === "lift" && plan.climb && <Turbolift w={width} h={height} up={climbs} toward={plan.climb.toward} />}
       {/* A covered walkway is the kit's tube from within, as it is from without (its deck a hair over the floor's) */}
       {canopyWay
@@ -1622,10 +1624,10 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => (walls || p.a.kind !== "window") && !p.a.seam).map(({ a, at, turn, bend }) => (
         <group key={keyOf.get(a) ?? a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
-          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} ship={shipMake ? { make: shipMake, out: a.side === "n" || a.side === "w" ? -1 : 1 } : undefined} />
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} ship={shipMake ? { make: shipMake, out: (a.side ?? a.toward) === "n" || (a.side ?? a.toward) === "w" ? -1 : 1 } : undefined} />
         </group>
       ))}
-      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
+      {assets.filter((a) => !a.side && !sideRamp(a) && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={keyOf.get(a) ?? a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} perMetre={UNITS_PER_M} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             // (a round tower's spiral: drawn from its way up, over both halves of its 2 by 2 squares; on the top floor, the well it comes up through)
@@ -5217,7 +5219,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         })}
 
         {/* A ship's hull round its decks, from the kit's outline (models.tsx HullOutline; nothing where the hull is not measured) */}
-        {hullDark && <HullOutline name={building.tags.find((t) => t.startsWith("hull:"))?.slice(5)} make={shipMakeOf(kit)} upTo={opened?.layout?.level ?? 0} levelH={LEVEL_H} />}
+        {hullDark && <HullOutline name={building.tags.find((t) => t.startsWith("hull:"))?.slice(5)} make={shipMakeOf(kit)} upTo={opened?.layout?.level ?? 0} levelH={LEVEL_H} dropped={building.tags.find((t) => t.startsWith("dropped:"))?.slice(8).split(",").map(Number)} />}
         {!planned && (
           <group position={[cx, 0, cz]} onClick={(e) => tapPlace(e, building.id)}>
             <group scale={2.4}><BuildingModel type={building.type} wall={wall} /></group>
