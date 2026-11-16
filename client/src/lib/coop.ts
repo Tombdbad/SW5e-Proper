@@ -28,7 +28,20 @@ interface CoopStore {
   peers: Record<string, Peer>;
   error: string;
   says: Say[];
+  // (2026-11-16) A shared fight begun by another member in my place: my screen joins it (GameBoard)
+  fightOn?: { area: string; by: string; at: number } | null;
 }
+// The shared fight as the server plays it (2026-11-16, batch G; server/coop.ts "The shared fight"): the latest field it sent (a number that grows
+// with each), what is left on my belt and what it had to say, and the end. Read each frame by interiors/Shooter.tsx, not through React.
+export const fightBus = {
+  seq: 0,
+  last: null as null | { area: string; owner: string; snap: any; gear: [string, number][]; notes: string[] },
+  end: null as null | { area: string; result: string; owner: string; used: Record<string, number>; snap: any },
+};
+export const openSharedFight = (args: { area: string; grid: unknown; units: unknown[]; props: unknown[]; seed: number; surprise: boolean; gear: unknown[] }) => { fightBus.end = null; fightBus.last = null; transmit({ t: "fight-open", ...args }); };
+export const joinSharedFight = (args: { area: string; units: unknown[]; gear: unknown[] }) => { fightBus.end = null; fightBus.last = null; transmit({ t: "fight-join", ...args }); };
+export const sharedFightInput = (area: string, pose: unknown, cmds: unknown[]) => transmit({ t: "fight-input", area, pose, cmds });
+export const leaveSharedFight = (area: string) => transmit({ t: "fight-leave", area });
 
 export const useCoop = create<CoopStore>(() => ({ status: "off", code: "", campaignId: null, gameName: "", me: null, members: [], room: null, peers: {}, error: "", says: [] }));
 
@@ -163,6 +176,19 @@ function receive(msg: any) {
     case "gun": {
       // From the gunner of the craft I pilot
       roadBus.gun = { aim: Number(msg.aim) || 0, fire: !!msg.fire, at: performance.now() };
+      return;
+    }
+    case "fight-on": {
+      set({ fightOn: { area: String(msg.area ?? ""), by: String(msg.by ?? ""), at: Date.now() } });
+      return;
+    }
+    case "fight": {
+      fightBus.seq++;
+      fightBus.last = { area: String(msg.area ?? ""), owner: String(msg.owner ?? ""), snap: msg.snap, gear: Array.isArray(msg.gear) ? msg.gear : [], notes: Array.isArray(msg.notes) ? msg.notes : [] };
+      return;
+    }
+    case "fight-end": {
+      fightBus.end = { area: String(msg.area ?? ""), result: String(msg.result ?? "left"), owner: String(msg.owner ?? ""), used: msg.used ?? {}, snap: msg.snap };
       return;
     }
     case "room": {

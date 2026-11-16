@@ -445,7 +445,11 @@ export default function GameBoard() {
     const backup: Unit[] = callers.length && weakest && !pitBout.current ? Array.from({ length: Math.min(2, 1 + Math.floor(others.length / 3)) }, (_, i) => ({ ...asUnit({ ...weakest, hp: weakest.maxHp, leader: false }), id: `backup-${i}`, name: `${weakest.name} (backup)`, reserve: true, caller: false })) : [];
     shooterAt.current = hereId;
     useCombat.getState().beginRealtime();
+    // (in a co-op game the fight is the server's, shared by everyone in the place: server/coop.ts "The shared fight")
+    const co = useCoop.getState();
+    const shared = co.status === "on" && co.me && co.campaignId === Number(campaignId) && hereId ? { area: hereId, me: co.me } : undefined;
     useShoot.getState().begin({
+      ...(shared ? { shared } : {}),
       units: [party, ...others.map(asUnit), ...backup],
       meta: Object.fromEntries([...others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }]), ...backup.map((u) => [u.id, { role: weakest!.role, species: weakest!.species, creature: weakest!.creature, size: weakest!.size }])]),
       seed: Math.floor(Math.random() * 1e9), surprise, gear: belt,
@@ -3071,10 +3075,18 @@ export default function GameBoard() {
   // behind; those still standing keep the hit points they have, so that leaving, being knocked
   // out or dying does not give the enemy their strength back. Won: the room is clear. Stable: the
   // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
+  // (2026-11-16) Another member began a fight where this one stands (a co-op game in the shooter): this screen joins it, as the Fight button would
+  const fightOn = useCoop((s) => s.fightOn);
+  useEffect(() => {
+    if (!fightOn || playMode !== "shooter" || inCombat || fightOn.area !== hereId || Date.now() - fightOn.at > 15000) return;
+    fight();
+  }, [fightOn?.at]);
   const outcome = useCombat((state) => state.outcome);
   useEffect(() => {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
+    // (a member who joined another's co-op fight settles only their own character: the world is the one who began it's to write)
+    const guest = !!useShoot.getState().last?.guest;
     const pit = pitBout.current;
     pitBout.current = false;
     // (a fight that is over may be begun again where the party stands: "They attack" must not stay spent for the room)
@@ -3190,7 +3202,7 @@ export default function GameBoard() {
         saveCampaign({ galaxyMap: closeEncounter(current) });
       }
     }
-    if (areaId && world?.areas[areaId]) {
+    if (!guest && areaId && world?.areas[areaId]) {
       const area = world.areas[areaId];
       const fight = useCombat.getState();
       const remaining = fight.combatants.length ? fight.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;

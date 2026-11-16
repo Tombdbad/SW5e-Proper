@@ -23,6 +23,8 @@ export interface Session {
   // The powers that can be cast in real time (keys 1 to 4), and the force or tech points the party has for them
   powers?: RtPower[];
   points?: number;
+  // (2026-11-16) A co-op game's fight: played by the server for everyone in the place (`area`); `me` is this member's id there
+  shared?: { area: string; me: string };
 }
 export interface Hud {
   hp: number; maxHp: number;
@@ -64,9 +66,9 @@ export const ADS = { k: 0, zoom: 1 };
 interface ShootStore {
   session: Session | null;
   // What the last fight used up (grenades thrown, medpacs, a kit's uses: by item name), for the game to take out of the pack
-  last: { used: Record<string, number> } | null;
+  last: { used: Record<string, number>; guest?: boolean } | null;
   begin: (s: Omit<Session, "id">) => void;
-  end: (used?: Record<string, number>) => void;
+  end: (used?: Record<string, number>, guest?: boolean) => void;
   taps: Record<ShootKey, number>;
   held: Record<ShootKey, boolean>;
   down: (key: ShootKey) => void;
@@ -90,7 +92,7 @@ export const useShoot = create<ShootStore>((set, get) => ({
   session: null,
   last: null,
   begin: (s) => set({ session: { ...s, id: ++counter }, last: null, hud: blankHud(), held: noKeys() }),
-  end: (used = {}) => set({ session: null, last: { used }, hud: blankHud() }),
+  end: (used = {}, guest = false) => set({ session: null, last: { used, ...(guest ? { guest } : {}) }, hud: blankHud() }),
   taps: noTaps(),
   held: noKeys(),
   down: (key) => set({ taps: { ...get().taps, [key]: get().taps[key] + 1 }, held: { ...get().held, [key]: true } }),
