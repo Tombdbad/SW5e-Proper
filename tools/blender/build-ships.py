@@ -831,6 +831,28 @@ def ship_rebel_small(h):
                                  reb_nacelle(h, -1.0, y + up * 0.42, 0.95, 0.38, 3.8)))
     gear(h, [(-3.2, 0.5), (-3.2, -0.5), (4.5, 0)], y - 0.4, 0.1)
 
+def ship_rebel_small_shuttle(h):
+    # a light transport (the U-wing's line): a box of a cabin with a sliding door either side, a long glazed nose, two wings swept forward at the
+    # stern with their engines; 14.5 x 10.7 x 5.6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (6.4, 3.6, 0))
+    h.mark("ramp", (0.2, 3.0, -3.1), "n")
+    y = 3.2
+    h.box((-0.75, y, 0), (11.0, 3.6, 6.2), HULL, top=(10.6, 6.0))
+    h.loft_x([(4.5, y + 0.1, 0, 1.6, 2.8, 4), (6.6, y - 0.1, 0, 1.2, 1.7, 3.5), (8.0, y - 0.5, 0, 0.35, 0.4, 2.5)], 12, HULL)
+    canopy(h, 6.4, y + 0.95, 0, 2.6, 1.6, 0.55)
+    h.pair(lambda s: h.box((0.2, y - 0.1, 3.12), (4.4, 2.6, 0.1), PANEL))
+    stripe(h, 3.0, 4.2, y + 1.83, 0, 5.8, 0.1)
+    def wing(s):
+        with h.at((-4.6, y + 1.2, 3.0)):
+            h.prism([(0.8, 0), (-1.8, 0), (1.2, 2.2), (2.2, 2.2)], -0.1, 0.1, HULL)
+            h.prism([(1.0, 1.2), (-0.2, 1.2), (1.6, 1.9), (2.1, 1.9)], 0.1, 0.13, LIVERY)
+            cannon(h, 2.0, 0, 2.2, 1.6, 0.07)
+        reb_nacelle(h, -3.2, y + 0.4, 3.9, 0.72, 3.2)
+    h.pair(wing)
+    reb_astro(h, -3.5, y + 1.8, 0, 0.3)
+    gear(h, [(-4, 1.8), (-4, -1.8), (4, 0)], y - 1.8, 0.16)
+
 def ship_rebel_medium(h):
     # a troop transport: a squared fuselage with a long nose, side doors, two wings swept forward at the stern and big engines at their roots; 24 x 18 x 5 m
     # (the helm and the ramp, for the inside's outline)
@@ -958,23 +980,23 @@ def ship_republic_small(h):
     gear(h, [(-2.0, 0.8), (-2.0, -0.8), (2.0, 0)], y, 0.08)
 
 def ship_republic_small_shuttle(h):
-    # an attack shuttle: a rounded body, a long cockpit nose, wings folded down to land and a fin; 14 x 10 x 6 m
+    # an attack shuttle: a rounded body with a troop cabin a squad stands up in, a long cockpit nose, wings folded down to land and a fin; 14 x 10.5 x 7 m
     # (the helm and the ramp, for the inside's outline)
-    h.mark("cockpit", (5.2, 2.6, 0))
-    h.mark("ramp", (-6.0, 2.3, 0), "w")
-    y = 2.3
-    h.loft_x([(-6, y, 0, 1.4, 1.5, 3), (-3, y + 0.1, 0, 1.8, 1.9, 3.5), (3, y, 0, 1.6, 1.7, 3.5), (6.5, y - 0.3, 0, 0.8, 0.9, 2.5), (7.8, y - 0.4, 0, 0.2, 0.2, 2)], 12, HULL)
-    canopy(h, 5.2, y + 0.55, 0, 2.6, 1.3, 0.55)
-    stripe(h, 2.0, 3.5, y + 1.65, 0, 2.6, 0.1)
-    h.plate([(-6, y + 1.2), (-2.5, y + 1.2), (-4.0, y + 3.8), (-5.6, y + 3.8)], -0.1, 0.1, HULL)
-    h.plate([(-5.0, y + 3.4), (-4.2, y + 3.4), (-4.1, y + 3.7), (-5.2, y + 3.7)], -0.12, 0.12, LIVERY)
+    h.mark("cockpit", (5.6, 3.3, 0))
+    h.mark("ramp", (-6.0, 2.6, 0), "w")
+    y = 2.6
+    h.loft_x([(-6, y, 0, 1.8, 2.7, 4), (-5, y + 0.05, 0, 2.0, 3.1, 4.5), (3.5, y + 0.05, 0, 2.0, 3.1, 4.5), (6.0, y - 0.2, 0, 1.2, 1.7, 3), (7.8, y - 0.4, 0, 0.2, 0.2, 2)], 12, HULL)
+    canopy(h, 5.6, y + 0.95, 0, 2.6, 1.4, 0.55)
+    stripe(h, 2.0, 3.5, y + 2.03, 0, 4.4, 0.1)
+    h.plate([(-6, y + 1.6), (-2.5, y + 1.6), (-4.0, y + 4.0), (-5.6, y + 4.0)], -0.1, 0.1, HULL)
+    h.plate([(-5.0, y + 3.6), (-4.2, y + 3.6), (-4.1, y + 3.9), (-5.2, y + 3.9)], -0.12, 0.12, LIVERY)
     def wing(s):
-        with h.at((-1.5, y + 0.2, 1.6), (math.radians(-35), 0, 0)):
-            h.prism([(2.0, 0), (-2.5, 0), (-1.6, 3.6), (0.8, 3.6)], -0.1, 0.1, HULL)
-            h.prism([(1.2, 2.6), (-1.8, 2.6), (-1.6, 3.6), (0.8, 3.6)], 0.1, 0.13, LIVERY)
+        with h.at((-1.5, y + 0.2, 3.0), (math.radians(-50), 0, 0)):
+            h.prism([(2.0, 0), (-2.5, 0), (-1.6, 3.4), (0.8, 3.4)], -0.1, 0.1, HULL)
+            h.prism([(1.2, 2.4), (-1.8, 2.4), (-1.6, 3.4), (0.8, 3.4)], 0.1, 0.13, LIVERY)
     h.pair(wing)
-    h.pair(lambda s: nozzle(h, -6, y, 0.8, 0.55, 0.7))
-    gear(h, [(-4, 1.0), (-4, -1.0), (4.5, 0)], y - 1.2, 0.12)
+    h.pair(lambda s: nozzle(h, -6, y, 1.2, 0.6, 0.7))
+    gear(h, [(-4, 1.4), (-4, -1.4), (4.5, 0)], y - 1.9, 0.12)
 
 def ship_republic_medium(h):
     # a gunship: a boxy troop bay with sliding doors, the glazed nose of two cockpits, ball turrets on its flanks, short wings with missile pods,
@@ -1115,6 +1137,22 @@ def ship_separatist_small(h):
     h.pair(pod)
     gear(h, [(-3, 0.6), (-3, -0.6), (3, 0)], y - 0.6, 0.08)
 
+def ship_separatist_small_shuttle(h):
+    # a droid army's shuttle: a ribbed, rounded cabin with an insect's head for a nose, two pairs of arching legs to land on and twin engines;
+    # 14.7 x 10.4 x 5.6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (6.2, 3.5, 0))
+    h.mark("ramp", (-5.8, 2.6, 0), "w")
+    y = 3.2
+    h.loft_x([(-5.8, y, 0, 1.7, 2.6, 4), (-4.8, y + 0.05, 0, 2.0, 3.25, 5), (3.4, y + 0.05, 0, 2.0, 3.25, 5), (4.6, y, 0, 1.6, 2.5, 4)], 12, HULL)
+    for x in (-3.4, -1.0, 1.4):
+        h.box((x, y + 0.05, 0), (0.35, 4.15, 6.7), PANEL)
+    sep_head(h, 6.2, y + 0.3, 4.0, 1.4)
+    h.pair(lambda s: sep_crescent(h, (-0.5, y + 1.6, 0), 3.6, 0.3, 0.15 * math.pi, 0.4 * math.pi, HULL, 0.3))
+    h.pair(lambda s: (h.rod((-3.5, y - 1.2, 2.6), (-4.2, 0.2, 5.0), 0.2, METAL), h.rod((2.5, y - 1.2, 2.6), (3.2, 0.2, 5.0), 0.2, METAL)))
+    for z in (-1.2, 1.2):
+        nozzle(h, -5.8, y + 0.2, z, 0.75, 0.7)
+
 def ship_separatist_medium(h):
     # an insect shuttle: a segmented, curving body with an eyed head, swept antennae and four arching legs to land on; 24 x 12 x 7 m
     # (the helm and the ramp, for the inside's outline)
@@ -1253,6 +1291,26 @@ def ship_mandalorian_small(h):
         nozzle(h, -4.2, y - 0.2, 1.3, 0.3, 0.4)
     h.pair(wing)
     gear(h, [(-3.5, 0.5), (-3.5, -0.5), (3, 0)], y - 0.5, 0.08)
+
+def ship_mandalorian_small_shuttle(h):
+    # a gunship-shuttle (the line of the Kom'rk and the Razor Crest): a chamfered slab of a cabin, the T-visor at its bow, an engine pod either side
+    # with a blade fin over it; 14.2 x 10.1 x 6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (5.6, 3.5, 0))
+    h.mark("ramp", (0.0, 2.6, -3.15), "n")
+    y = 3.2
+    h.box((-0.6, y, 0), (11.2, 3.7, 6.3), HULL, top=(10.6, 5.9))
+    h.box((5.6, y - 0.2, 0), (1.8, 3.0, 5.0), HULL, front=(1.8, 3.6))
+    man_visor(h, 6.7, y + 0.1, 3.4, 2.6)
+    h.box((-1.0, y + 2.05, 0), (8, 0.5, 1.6), PANEL, top=(7, 1.2))
+    stripe(h, 1.0, 4.0, y + 1.86, 0, 3.0, 0.08)
+    def pod(s):
+        h.loft_x([(-6.4, y - 0.2, 4.2, 0.85, 0.85, 3, HULL), (-0.5, y - 0.2, 4.2, 0.85, 0.85, 3), (1.0, y - 0.2, 4.2, 0.45, 0.5, 2.6)], 10, HULL)
+        nozzle(h, -6.4, y - 0.2, 4.2, 0.7, 0.7)
+        h.plate([(-5.5, y + 0.6), (-2.0, y + 0.6), (-3.2, y + 2.6), (-5.4, y + 2.6)], 4.15, 4.25, LIVERY)
+        h.box((-2.5, y - 0.2, 3.6), (2.0, 0.6, 1.0), METAL)
+    h.pair(pod)
+    gear(h, [(-4, 2.0), (-4, -2.0), (3.5, 0)], y - 1.85, 0.16)
 
 def ship_mandalorian_medium(h):
     # a gauntlet: an upright central slab, the T-visor at its bow, two great blade wings turned up for landing, engines at the wing roots; 30 x 18 x 10 m
@@ -1396,6 +1454,24 @@ def ship_criminal_small(h):
     crim_fin(h, -2.0, y + 0.6, 0, 2.2, 1.0)
     gear(h, [(-3, 0.7), (-3, -0.7), (4, 0)], y - 0.6, 0.1)
 
+def ship_criminal_small_shuttle(h):
+    # a freight shuttle that asks no questions: a boxy hold patched with salvaged plates and a gold band, a swollen nose with a glass dome, swept fins
+    # and stub wings; 14.7 x 10.4 x 7 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (5.8, 3.4, 0))
+    h.mark("ramp", (-6.3, 2.6, 0), "w")
+    y = 3.2
+    h.box((-1.0, y, 0), (10.6, 3.6, 6.2), HULL, top=(10.2, 6.0))
+    crim_yacht(h, 2.5, 7.6, y - 0.1, 1.9)
+    h.box((-0.5, y, 0), (0.6, 3.7, 6.35), LIVERY, top=(0.6, 6.15))
+    h.sphere((5.6, y + 1.1, 0), 0.8, GLASS, 10, 5, (1.6, 0.6, 1.1))
+    h.pair(lambda s: crim_plates(h, -5.5, 3.5, y - 1.4, y + 1.4, 3.12, 5, 7))
+    crim_fin(h, -3.5, y + 1.8, 0, 3.0, 1.8)
+    h.pair(lambda s: h.prism([(1.0, 3.0), (-3.0, 3.0), (-4.2, 5.2), (-2.6, 5.2)], y - 0.9, y - 0.7, HULL))
+    h.pair(lambda s: crim_fin(h, -3.8, y - 0.7, 5.0, 2.0, 1.2, 0.6))
+    h.pair(lambda s: nozzle(h, -6.3, y, 1.8, 0.75, 0.8))
+    gear(h, [(-4, 2.0), (-4, -2.0), (3.5, 0)], y - 1.8, 0.16)
+
 def ship_criminal_medium(h):
     # a luxury yacht: a long swollen hull with a gold band, a glazed lounge, swept fins and three engines; 36 x 16 x 9 m
     # (the helm and the ramp, for the inside's outline)
@@ -1538,6 +1614,29 @@ def ship_civilian_small(h):
     nozzle(h, -7, y + 0.8, 0, 0.5, 0.6)
     gear(h, [(-4, 2.5), (-4, -2.5), (4, 0)], y, 0.12)
 
+def ship_civilian_small_shuttle(h):
+    # a passenger shuttle of the freight lines: a boxy cabin with a row of windows and the owner's stripe, a blunt glazed nose, engine pods on
+    # short pylons; 13.6 x 10.1 x 5.6 m
+    # (the helm and the ramp, for the inside's outline)
+    h.mark("cockpit", (5.6, 3.4, 0))
+    h.mark("ramp", (0.5, 2.6, -3.1), "n")
+    y = 3.2
+    h.box((-0.8, y, 0), (11.4, 3.6, 6.2), HULL, top=(11.0, 6.0))
+    h.box((5.6, y - 0.2, 0), (1.6, 3.0, 5.4), HULL, top=(1.2, 4.6), front=(1.6, 4.2))
+    h.box((6.35, y + 0.3, 0), (0.12, 0.9, 3.6), GLASS)
+    def side(s):
+        h.box((-0.5, y + 0.3, 3.12), (10.2, 0.35, 0.06), LIVERY)
+        for k in range(7):
+            h.box((-5.0 + k * 1.4, y + 0.9, 3.13), (0.7, 0.55, 0.06), GLASS)
+    h.pair(side)
+    h.box((-0.8, y + 1.85, 0), (9, 0.12, 2.0), PANEL)
+    def pod(s):
+        h.box((-4.0, y - 0.4, 3.6), (2.0, 0.4, 1.2), METAL)
+        h.loft_x([(-6.6, y - 0.4, 4.3, 0.75, 0.75, 2.4), (-2.0, y - 0.4, 4.3, 0.75, 0.75, 2.4), (-1.0, y - 0.4, 4.3, 0.4, 0.4, 2)], 10, HULL)
+        nozzle(h, -6.6, y - 0.4, 4.3, 0.6, 0.6)
+    h.pair(pod)
+    gear(h, [(-4, 2.0), (-4, -2.0), (3.5, 0)], y - 1.8, 0.16)
+
 def ship_civilian_medium(h):
     # a light freighter: the saucer, two mandibles forward, the cockpit on its tube to starboard, a dish on top, a band of engine glow round the
     # stern and quad guns above and below; 34 x 26 x 8 m
@@ -1645,6 +1744,8 @@ for f in FACTIONS:
         SHIPS.append((f, s, "", globals()[f"ship_{f}_{s}"]))
 SHIPS.append(("imperial", "small", "shuttle", ship_imperial_small_shuttle))
 SHIPS.append(("republic", "small", "shuttle", ship_republic_small_shuttle))
+for f in ("rebel", "separatist", "mandalorian", "criminal", "civilian"):
+    SHIPS.append((f, "small", "shuttle", globals()[f"ship_{f}_small_shuttle"]))
 
 # The kit parts on their own, for review in Mixar (each at a size typical of its use)
 KIT = {

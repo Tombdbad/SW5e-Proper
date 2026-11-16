@@ -26,6 +26,9 @@
 "ship_civilian_small":{"cell":[1.40661,1.40661],"origin":[-8.143,-5.626],"L":11,"B":8,"folded":false,"decks":[
 {"level":0,"floor":1.95,"head":2.4,"rows":[[],[],[],[],[],[],[],[]]}
 ],"cockpit":{"deck":0,"x":8,"y":4},"ramp":{"deck":0,"x":0,"y":4,"side":"w"},"engines":[],"windows":[],"hatches":[]},
+"ship_civilian_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-7.435,-5.626],"L":10,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.4,"head":2.4,"rows":[[],[],[1,8],[1,8],[1,8],[1,8],[],[]]}
+],"cockpit":{"deck":0,"x":7,"y":3},"ramp":{"deck":0,"x":5,"y":2,"side":"n"},"engines":[{"deck":0,"x":1,"y":2,"side":"w"},{"deck":0,"x":1,"y":5,"side":"w"}],"windows":[{"deck":0,"x":7,"y":4,"side":"e"}],"hatches":[]},
 "ship_civilian_tiny":{"cell":[1.40661,1.40661],"origin":[-2.593,-2.11],"L":4,"B":3,"folded":false,"decks":[
 {"level":0,"floor":1.01,"head":2.4,"rows":[[],[],[]]}
 ],"cockpit":{"deck":0,"x":3,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
@@ -57,6 +60,9 @@
 "ship_criminal_small":{"cell":[1.40661,1.40661],"origin":[-5.386,-4.22],"L":9,"B":6,"folded":false,"decks":[
 {"level":0,"floor":1.55,"head":2.4,"rows":[[],[],[],[],[],[]]}
 ],"cockpit":{"deck":0,"x":4,"y":3},"ramp":{"deck":0,"x":0,"y":3,"side":"w"},"engines":[],"windows":[],"hatches":[]},
+"ship_criminal_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-7.495,-5.626],"L":11,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.7,"head":2.4,"rows":[[],[],[1,8],[1,9],[1,9],[1,8],[],[]]}
+],"cockpit":{"deck":0,"x":8,"y":3},"ramp":{"deck":0,"x":1,"y":4,"side":"w"},"engines":[{"deck":0,"x":1,"y":2,"side":"w"},{"deck":0,"x":1,"y":5,"side":"w"}],"windows":[{"deck":0,"x":8,"y":3,"side":"e"},{"deck":0,"x":8,"y":3,"side":"n"},{"deck":0,"x":8,"y":4,"side":"e"},{"deck":0,"x":8,"y":4,"side":"s"}],"hatches":[]},
 "ship_criminal_tiny":{"cell":[1.40661,1.40661],"origin":[-2.369,-1.407],"L":4,"B":2,"folded":false,"decks":[
 {"level":0,"floor":1.01,"head":2.4,"rows":[[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
@@ -119,6 +125,9 @@
 "ship_mandalorian_small":{"cell":[1.40661,1.40661],"origin":[-5.326,-2.11],"L":8,"B":3,"folded":false,"decks":[
 {"level":0,"floor":0.7,"head":2.4,"rows":[[],[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
+"ship_mandalorian_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-7.712,-5.626],"L":11,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.3,"head":2.4,"rows":[[],[],[2,8],[2,9],[2,9],[2,8],[],[]]}
+],"cockpit":{"deck":0,"x":8,"y":3},"ramp":{"deck":0,"x":5,"y":2,"side":"n"},"engines":[{"deck":0,"x":2,"y":2,"side":"w"},{"deck":0,"x":2,"y":5,"side":"w"}],"windows":[{"deck":0,"x":8,"y":4,"side":"e"}],"hatches":[]},
 "ship_mandalorian_tiny":{"cell":[1.40661,1.40661],"origin":[-2.216,-2.11],"L":3,"B":3,"folded":false,"decks":[
 {"level":0,"floor":1.05,"head":2.4,"rows":[[],[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":0,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
@@ -150,6 +159,9 @@
 "ship_rebel_small":{"cell":[1.40661,1.40661],"origin":[-5.08,-5.626],"L":9,"B":8,"folded":false,"decks":[
 {"level":0,"floor":1.3,"head":2.4,"rows":[[],[],[],[],[],[],[],[]]}
 ],"cockpit":{"deck":0,"x":4,"y":4},"ramp":{"deck":0,"x":0,"y":4,"side":"w"},"engines":[],"windows":[],"hatches":[]},
+"ship_rebel_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-6.992,-5.626],"L":11,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.8,"head":2.4,"rows":[[],[],[1,8],[1,9],[1,9],[1,8],[],[]]}
+],"cockpit":{"deck":0,"x":8,"y":3},"ramp":{"deck":0,"x":5,"y":2,"side":"n"},"engines":[{"deck":0,"x":1,"y":2,"side":"w"},{"deck":0,"x":1,"y":5,"side":"w"}],"windows":[{"deck":0,"x":8,"y":3,"side":"e"},{"deck":0,"x":8,"y":3,"side":"n"},{"deck":0,"x":8,"y":4,"side":"e"},{"deck":0,"x":8,"y":4,"side":"s"}],"hatches":[]},
 "ship_rebel_tiny":{"cell":[1.40661,1.40661],"origin":[-2.738,-2.11],"L":4,"B":3,"folded":false,"decks":[
 {"level":0,"floor":0.91,"head":2.4,"rows":[[],[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
@@ -180,9 +192,9 @@
 "ship_republic_small":{"cell":[1.40661,1.40661],"origin":[-4.176,-2.813],"L":6,"B":4,"folded":false,"decks":[
 {"level":0,"floor":0.65,"head":2.4,"rows":[[],[],[],[]]}
 ],"cockpit":{"deck":0,"x":3,"y":1},"ramp":{"deck":0,"x":0,"y":2,"side":"w"},"engines":[],"windows":[],"hatches":[]},
-"ship_republic_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-7.193,-4.923],"L":11,"B":7,"folded":false,"decks":[
-{"level":0,"floor":0.8,"head":2.4,"rows":[[],[],[],[1,8],[],[],[]]}
-],"cockpit":{"deck":0,"x":7,"y":3},"ramp":{"deck":0,"x":1,"y":3,"side":"w"},"engines":[{"deck":0,"x":1,"y":3,"side":"w"}],"windows":[{"deck":0,"x":7,"y":3,"side":"e"}],"hatches":[]},
+"ship_republic_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-7.193,-5.626],"L":11,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.3,"head":2.4,"rows":[[],[],[2,8],[1,9],[1,9],[2,8],[],[]]}
+],"cockpit":{"deck":0,"x":8,"y":3},"ramp":{"deck":0,"x":1,"y":4,"side":"w"},"engines":[{"deck":0,"x":1,"y":3,"side":"w"},{"deck":0,"x":1,"y":4,"side":"w"}],"windows":[{"deck":0,"x":8,"y":3,"side":"e"},{"deck":0,"x":8,"y":3,"side":"n"},{"deck":0,"x":8,"y":4,"side":"e"},{"deck":0,"x":8,"y":4,"side":"s"}],"hatches":[]},
 "ship_republic_tiny":{"cell":[1.40661,1.40661],"origin":[-2.619,-1.407],"L":4,"B":2,"folded":false,"decks":[
 {"level":0,"floor":0.56,"head":2.4,"rows":[[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]},
@@ -213,6 +225,9 @@
 "ship_separatist_small":{"cell":[1.40661,1.40661],"origin":[-6.015,-4.22],"L":9,"B":6,"folded":false,"decks":[
 {"level":0,"floor":1.4,"head":2.4,"rows":[[],[],[],[],[],[]]}
 ],"cockpit":{"deck":0,"x":4,"y":3},"ramp":{"deck":0,"x":0,"y":3,"side":"w"},"engines":[],"windows":[],"hatches":[]},
+"ship_separatist_small_shuttle":{"cell":[1.40661,1.40661],"origin":[-6.895,-5.626],"L":11,"B":8,"folded":false,"decks":[
+{"level":0,"floor":1.84,"head":2.4,"rows":[[],[],[1,7],[1,8],[1,8],[1,7],[],[]]}
+],"cockpit":{"deck":0,"x":7,"y":3},"ramp":{"deck":0,"x":1,"y":4,"side":"w"},"engines":[{"deck":0,"x":1,"y":3,"side":"w"},{"deck":0,"x":1,"y":4,"side":"w"}],"windows":[],"hatches":[]},
 "ship_separatist_tiny":{"cell":[1.40661,1.40661],"origin":[-2.876,-2.11],"L":4,"B":3,"folded":false,"decks":[
 {"level":0,"floor":1.05,"head":2.4,"rows":[[],[],[]]}
 ],"cockpit":{"deck":0,"x":2,"y":1},"ramp":{"deck":0,"x":1,"y":1,"side":"w"},"engines":[],"windows":[],"hatches":[]}

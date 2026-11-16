@@ -737,17 +737,102 @@
    "size": "Small",
    "role": "shuttle",
    "box": [
-    -6.713,
+    -6.714,
     -0.0,
-    -4.606,
+    -5.262,
     7.8,
-    6.1,
-    4.606
+    6.6,
+    5.262
    ],
    "length": 14.51,
-   "beam": 9.21,
-   "height": 6.1,
+   "beam": 10.52,
+   "height": 6.6,
    "tris": 604
+  },
+  "ship_rebel_small_shuttle": {
+   "faction": "rebel",
+   "size": "Small",
+   "role": "shuttle",
+   "box": [
+    -6.512,
+    -0.0,
+    -5.326,
+    8.0,
+    5.393,
+    5.326
+   ],
+   "length": 14.51,
+   "beam": 10.65,
+   "height": 5.39,
+   "tris": 956
+  },
+  "ship_separatist_small_shuttle": {
+   "faction": "separatist",
+   "size": "Small",
+   "role": "shuttle",
+   "box": [
+    -6.517,
+    0.038,
+    -5.123,
+    8.2,
+    5.325,
+    5.123
+   ],
+   "length": 14.72,
+   "beam": 10.25,
+   "height": 5.29,
+   "tris": 1128
+  },
+  "ship_mandalorian_small_shuttle": {
+   "faction": "mandalorian",
+   "size": "Small",
+   "role": "shuttle",
+   "box": [
+    -7.116,
+    -0.0,
+    -5.05,
+    7.165,
+    5.8,
+    5.05
+   ],
+   "length": 14.28,
+   "beam": 10.1,
+   "height": 5.8,
+   "tris": 572
+  },
+  "ship_criminal_small_shuttle": {
+   "faction": "criminal",
+   "size": "Small",
+   "role": "shuttle",
+   "box": [
+    -7.117,
+    -0.0,
+    -5.2,
+    7.6,
+    6.98,
+    5.2
+   ],
+   "length": 14.72,
+   "beam": 10.4,
+   "height": 6.98,
+   "tris": 864
+  },
+  "ship_civilian_small_shuttle": {
+   "faction": "civilian",
+   "size": "Small",
+   "role": "shuttle",
+   "box": [
+    -7.214,
+    -0.0,
+    -5.05,
+    6.41,
+    5.11,
+    5.05
+   ],
+   "length": 13.62,
+   "beam": 10.1,
+   "height": 5.11,
+   "tris": 704
   }
  }
 }
