@@ -25,9 +25,19 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
-    // The rules data (shared/data/sw5e) and the 3D map are bundled whole, so the chunks are large by design
-    chunkSizeWarningLimit: 4000,
+    // The rules data (shared/data/sw5e) and the 3D map are bundled whole, so the chunks are large by design; the renderer and
+    // three.js have chunks of their own, so that a new build of the game's code leaves them cached on the phone. (The rules data is
+    // not forced into one chunk: its datasets are loaded one at a time by shared/data/index.ts)
+    chunkSizeWarningLimit: 3000,
     rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          const p = id.split("\\").join("/");
+          if (p.includes("/node_modules/@babylonjs/")) return "babylon";
+          if (/\/node_modules\/(three|three-stdlib|@react-three)\//.test(p)) return "three";
+          return undefined;
+        },
+      },
       onwarn(warning, warn) {
         // three-stdlib ships a lottie loader that uses eval; the game never loads it
         if (warning.code === "EVAL" && /node_modules[\/]three-stdlib/.test(warning.id ?? "")) return;
