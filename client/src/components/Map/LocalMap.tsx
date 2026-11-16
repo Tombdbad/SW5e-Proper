@@ -469,13 +469,14 @@ const STRIKE_S = 0.14; // a bolt's strike
 type Glint = { x: number; y: number; z: number; color: string; until: number; intensity: number; distance: number };
 function FightLights({ session, ctx }: { session: { id: string | number }; ctx: { current: { cx: number; cz: number } } }) {
   const saber = usePartyLook((s) => s.blade) ?? "#5aa9ff";
-  const seen = useRef(new Map<number, { x: number; y: number; z: number; color: string }>());
+  const seen = useRef(new Map<number, { x: number; y: number; z: number; color: string; life: number }>());
   const glints = useRef<Glint[]>([]);
+  const started = useRef(false);
   return (
     <LightPool
       count={8}
       fill={(camera, slots, now) => {
-        const sim = (window as unknown as { __shooter?: { _session?: string | number; units: { x: number; y: number; h: number; hp: number; side: string; blade?: { saber: boolean } }[]; bolts: { id: number; x: number; y: number; h: number; side: string; reflected?: boolean; natural?: boolean; harpoon?: boolean; blade?: boolean }[] } }).__shooter;
+        const sim = (window as unknown as { __shooter?: { _session?: string | number; units: { x: number; y: number; h: number; hp: number; side: string; gun?: unknown; swing: number; blocking: boolean; blade?: { saber: boolean } }[]; bolts: { id: number; x: number; y: number; h: number; side: string; life: number; reflected?: boolean; natural?: boolean; harpoon?: boolean; blade?: boolean }[] } }).__shooter;
         if (!sim || sim._session !== session.id) return;
         const { cx, cz } = ctx.current;
         const live = new Set<number>();
@@ -484,17 +485,19 @@ function FightLights({ session, ctx }: { session: { id: string | number }; ctx: 
           if (b.natural || b.harpoon || b.blade) continue;
           live.add(b.id);
           const color = b.reflected ? BOLT_LIGHT.reflected : BOLT_LIGHT[b.side] ?? BOLT_LIGHT.foe;
-          const at = { x: b.x - cx, y: b.h, z: b.y - cz, color };
-          // (a new bolt: its muzzle flashes where it left)
-          if (!seen.current.has(b.id)) glints.current.push({ x: at.x, y: at.y, z: at.z, color: "#fff2b0", until: now + FLASH_S, intensity: 10, distance: 6 });
+          const at = { x: b.x - cx, y: b.h, z: b.y - cz, color, life: b.life };
+          // (a new bolt: its muzzle flashes where it left; not those already in flight when the lights came)
+          if (started.current && !seen.current.has(b.id)) glints.current.push({ x: at.x, y: at.y, z: at.z, color: "#fff2b0", until: now + FLASH_S, intensity: 10, distance: 6 });
           seen.current.set(b.id, at);
-          candidates.push({ ...at, intensity: 3, distance: 4 });
+          candidates.push({ x: at.x, y: at.y, z: at.z, color, intensity: 3, distance: 4 });
         }
-        // (a bolt gone: it struck where it was last seen)
-        for (const [id, at] of seen.current) if (!live.has(id)) { seen.current.delete(id); glints.current.push({ ...at, until: now + STRIKE_S, intensity: 8, distance: 4.5 }); }
+        started.current = true;
+        // (a bolt gone with flight left in it struck something where it was last seen; one that ran out of range just fades)
+        for (const [id, at] of seen.current) if (!live.has(id)) { seen.current.delete(id); if (at.life > 0.1) glints.current.push({ x: at.x, y: at.y, z: at.z, color: at.color, until: now + STRIKE_S, intensity: 8, distance: 4.5 }); }
         glints.current = glints.current.filter((g) => g.until > now);
         for (const g of glints.current) candidates.push({ x: g.x, y: g.y, z: g.z, color: g.color, intensity: g.intensity, distance: g.distance });
-        for (const u of sim.units) if (u.blade?.saber && u.hp > 0) candidates.push({ x: u.x - cx, y: u.h + 1.1, z: u.y - cz, color: u.side === "foe" ? "#ff4040" : saber, intensity: 4, distance: 5 });
+        // (a saber lights only while it is in use: a fighter with no gun, or one swinging or guarding with it; a gun drawn, the blade is off)
+        for (const u of sim.units) if (u.blade?.saber && u.hp > 0 && (!u.gun || u.swing > 0 || u.blocking)) candidates.push({ x: u.x - cx, y: u.h + 1.1, z: u.y - cz, color: u.side === "foe" ? "#ff4040" : saber, intensity: 4, distance: 5 });
         // (the flashes and strikes first, then the nearest)
         const near = nearest(candidates, (s) => [s.x, s.y, s.z], camera, 32).sort((a, b) => b.intensity - a.intensity);
         for (const s of near) slots.push(s);
@@ -504,6 +507,12 @@ function FightLights({ session, ctx }: { session: { id: string | number }; ctx: 
 }
 // The party's own light (a glowrod switched on, a luminous weapon: GameBoard's protections().light) lights the map round it outside a fight too
 export const useCarriedLight = create<{ on: boolean }>(() => ({ on: false }));
+// (carried at the chest; dark until the renderer has clustered its lights, and where it cannot: babylon.ts CLUSTER, checked each frame)
+function CarriedLight() {
+  const light = useRef<THREE.PointLight>(null);
+  useFrame(() => { if (light.current) light.current.intensity = CLUSTER.on ? 6 : 0; });
+  return <pointLight ref={light} position={[0, 1.3, 0.3]} color="#fff1d6" intensity={0} distance={9} decay={2} />;
+}
 
 const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
   const eyes = useView((v) => v.eyes);
@@ -5911,7 +5920,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
             {/* The party's own light, carried at the chest (a clustered light: none where the device cannot cluster, see babylon.ts CLUSTER) */}
-            {glowrod && !shootSession && CLUSTER.on && <pointLight position={[0, 1.3, 0.3]} color="#fff1d6" intensity={6} distance={9} decay={2} />}
+            {glowrod && !shootSession && <CarriedLight />}
             {/* In the saddle: the beast under the character, who sits on its back (and while getting off it) */}
             {underRider && <Figure kind="beast" ring={SIDE_COLORS.player} name={underRider.name} large={isLarge(underRider.size)} creature={underRider.creature} size={underRider.size} />}
             {/* At the helm of a water craft: the craft under the character, who sits in its pilot's seat, the followers who fit in the others */}

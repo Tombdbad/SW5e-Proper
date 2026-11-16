@@ -739,7 +739,8 @@ class Mirror {
       p.samples = smoothing === "msaa" ? 4 : 1;
       p.fxaaEnabled = smoothing === "fxaa";
       p.bloomEnabled = EFFECTS.bloom !== "off";
-      p.bloomThreshold = 1;
+      // (where the device cannot draw in floats, the picture is clamped at white, and the bloom takes what is near it as before)
+      p.bloomThreshold = (p as unknown as { _hdr: boolean })._hdr ? 1 : 0.98;
       p.bloomWeight = 0.35;
       p.bloomKernel = DESKTOP ? 64 : 32;
       p.bloomScale = 0.5;
@@ -1229,7 +1230,7 @@ class Mirror {
   // bloom is on, over white, so that the bloom (threshold 1) takes it and not what is only lit by the lamps and the sun; elsewhere as it is
   private glowOf(m: THREE.Material) {
     const g = m.userData?.glow as number | undefined;
-    return g && g > 1 && this.pipeline?.bloomEnabled ? g : 1;
+    return g && g > 1 && this.pipeline?.bloomEnabled && (this.pipeline as unknown as { _hdr: boolean })._hdr ? g : 1;
   }
   // The rest, when the three material changes or its maps come
   private dress(mat: PBRMaterial, m: THREE.Material, patch: ShaderPatch | null | undefined) {

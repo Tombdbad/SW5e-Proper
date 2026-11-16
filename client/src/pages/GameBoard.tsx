@@ -5074,21 +5074,21 @@ export default function GameBoard() {
     toast[damage ? "error" : "success"](`You ${out.text.replace(/\b(falls|drops|fires|lands)\b/g, (v) => v.slice(0, -1)).replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")}${damage ? ` and take ${damage} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}` : ""}.${pull.g !== 1 ? ` The pull here is ${pull.label} (house rule).` : ""}`);
     return damage;
   };
+  // A glowrod switched on, or a luminous weapon: the party's own light (also lights the 3D map round it: LocalMap useCarriedLight)
+  const carriedLight = ((character?.equipment ?? []) as string[]).some((n) => /^glowrod/i.test(n) && running(n)) || (character ? carriedWeapons(character).some((w) => w.properties.some((p) => /^(luminous|bright)/i.test(p))) : false);
+  useEffect(() => { useCarriedLight.setState({ on: carriedLight }); }, [carriedLight]);
   const protections = (): Protections => ({
     wearing: wearingNow,
     carried: (character?.equipment ?? []) as string[],
     resist: [...wearingNow.flatMap((n) => suitFacts(n)?.resist ?? []), ...speciesTraits.flatMap((t) => Array.from(String(t.description ?? "").matchAll(/resistance to (\w+) damage/gi)).map((m) => m[1].toLowerCase()))],
     darkvision: speciesTraits.some((t) => /^darkvision/i.test(t.name)) || ((character as any)?.itemSenses?.darkvision ?? 0) > 0,
-    light: ((character?.equipment ?? []) as string[]).some((n) => /^glowrod/i.test(n) && running(n)) || (character ? carriedWeapons(character).some((w) => w.properties.some((p) => /^(luminous|bright)/i.test(p))) : false),
+    light: carriedLight,
     generators: ((character?.equipment ?? []) as string[]).filter((n) => running(n)).map((n) => (/heat generator/i.test(n) ? "cold" : /gravity generator/i.test(n) ? "gravity" : "")).filter(Boolean) as EnvHazard[],
     water: supplies.water > 0,
     air: (() => { const b = breather(); return b ? play.air?.[b] ?? airCapacity(b) : 0; })(),
     gills: speciesTraits.some((t) => /breathe air and water|can breathe water|breathe underwater/i.test(String(t.description ?? ""))),
     suits: Object.fromEntries(wearingNow.map((n) => [n, suitFacts(n)?.protects ?? []])),
   });
-  // (the party's own light lights the 3D map round it: LocalMap useCarriedLight)
-  const carriedLight = !!protections().light;
-  useEffect(() => { useCarriedLight.setState({ on: carriedLight }); }, [carriedLight]);
   // ---- What the character carries (Player's Handbook, Lifting and Carrying; the Variant: Encumbrance on by default): everything in the
   // pack counts. Before 2026-10-26 the companions and beasts silently took whatever went over half the capacity, so the pack's weight
   // hardly ever told (the user: "it ignores the weight of the player inventory"); now only a hovercart pushed along takes its 2,000 lb (since then a cart on the map, `carts`),
