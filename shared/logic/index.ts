@@ -5827,7 +5827,8 @@ export function crewOf(seats: Seat[], assigned: Record<string, string> | undefin
 // in). A ship with more than a cockpit (hasInterior: a Small shuttle, Medium and up) has the plan of starshipInterior.ts, a building of several decks whose
 // boarding room is `deckIdOf` (made again if the ship was boarded before the plans: the ship's building carries the tag `interior:` and its version); the others
 // have the one deck of shipDeck.
-export const INTERIOR_VERSION = 1;
+// (2: the plan follows the hull's outline, shared/art/shipHulls.json; the building's tag `hull:` names the kit hull)
+export const INTERIOR_VERSION = 2;
 export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" | "role"> & Partial<Pick<Ship, "owner">>, berthId: string, from?: string): { world: World; deckId: string } {
   const deckId = deckIdOf(ship.id);
   const buildingId = shipBuildingIdOf(ship.id);
@@ -5838,7 +5839,7 @@ export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" 
   const old = areas[deckId];
   const tagsOf = (extra: string[]) => [`ship:${ship.id}`, `kit:${faction}`, ...extra];
   const fresh = !areas[buildingId]?.tags.includes(`interior:${INTERIOR_VERSION}`);
-  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: tagsOf(hasInterior(ship) ? [`interior:${INTERIOR_VERSION}`] : []), description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
+  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: tagsOf(hasInterior(ship) ? [`interior:${INTERIOR_VERSION}`, ...(fresh ? [] : (areas[buildingId]?.tags ?? []).filter((t) => t.startsWith("hull:")))] : []), description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
   areas[buildingId] = building;
   let paths = world.paths;
   const comeFrom = from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:"));
@@ -5848,6 +5849,8 @@ export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" 
       for (const a of Object.values(areas)) if (a.parentId === buildingId) delete areas[a.id];
       paths = paths.filter((p) => !p.id.startsWith(`${buildingId}-p`));
       const built = shipInteriorOf(ship, buildingId, deckId, hashOf(`${world.seed}|${ship.id}`));
+      // (the hull whose outline the plan follows: the map draws its outline round the decks)
+      if (built.plan.hullName) building.tags = [...building.tags, `hull:${built.plan.hullName}`];
       for (const room of built.rooms) areas[room.id] = room;
       paths = [...paths, ...built.paths];
     }
