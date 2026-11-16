@@ -39,7 +39,10 @@ export const SHOOT = {
   // the zoom the iron sights give, and the shot at long range that an aimed scope makes less bad (the share of the long-range penalty left)
   ads: { time: 0.22, spread: 0.55, scoped: 0.8, pace: 0.55, iron: 1.25, farScoped: 0.5, kick: 0.65 },
   // How often a foe looks for its way round a wall (seconds), and how many squares it will search
-  path: { every: 0.6, limit: 1500 },
+  path: { every: 0.6, limit: 4000, ahead: 6 },
+  // (2026-11-16) One that runs goes this far off, by a way it can walk, and looks for another when it gets there or this often (seconds); one
+  // run off in fear (a power, a burst that frightens) comes back when its fear is over, and does not leave the fight (house rule)
+  flee: { far: 9, every: 1.5 },
   // Powers (house rule: the books' turns do not exist here): how wide the cone is that a power finds its target in (half angle), the pause after
   // one, how fast something pushed or pulled flies (squares a second), and the longest a condition lasts
   power: { cone: 0.5, pause: 0.9, knock: 9, longest: 8 },
@@ -442,6 +445,10 @@ export interface Unit {
   path?: { x: number; y: number }[];
   pathT: number;
   stuckT: number;
+  // (2026-11-16) Where one that runs makes for and when it looks again; run off in fear (it comes back when that is over)
+  fleeTo?: { x: number; y: number };
+  fleeT?: number;
+  scared?: boolean;
   // ---- What the rules add (2026-11-02): seconds poisoned (a worse aim, a slower swing) and burning (and how hard), temporary hit points, damage
   // types it shrugs off, takes double or ignores, conditions it cannot be given, damage its armour takes off every blow (at least 1 stays),
   // hit points a stat block's regeneration gives every six seconds
@@ -839,29 +846,69 @@ export function unstick(u: Unit, env: Env): boolean {
 
 // The way round a wall: the squares from one point to another over ground a body can stand on (eight ways, never cutting a corner), or
 // null when there is none within `limit` squares searched
-export function route(env: Env, from: { x: number; y: number }, to: { x: number; y: number }, limit: number = SHOOT.path.limit): { x: number; y: number }[] | null {
+export function route(env: Env, from: { x: number; y: number }, to: { x: number; y: number }, limit: number = SHOOT.path.limit, nearest = false): { x: number; y: number }[] | null {
+  // (2026-11-16, batch G) A* over the squares, eight ways, a diagonal costing its length, no corner cut; `limit` squares looked at at most. With
+  // `nearest`, a goal that cannot be reached gives the way to the square nearest it that can (a foe below a party on a roof comes as near as
+  // it can, not into the wall).
   const a = { x: Math.floor(from.x), y: Math.floor(from.y) };
   const b = { x: Math.floor(to.x), y: Math.floor(to.y) };
   if (a.x === b.x && a.y === b.y) return [];
-  const key = (x: number, y: number) => `${x},${y}`;
-  const prev = new Map<string, { x: number; y: number }>([[key(a.x, a.y), a]]);
-  const queue = [a];
+  const key = (x: number, y: number) => (x + 32768) * 65536 + (y + 32768);
+  const h = (x: number, y: number) => { const [dx, dy] = [Math.abs(b.x - x), Math.abs(b.y - y)]; return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy); };
+  const g = new Map<number, number>([[key(a.x, a.y), 0]]);
+  const prev = new Map<number, number>();
+  const closed = new Set<number>();
+  const heap: { f: number; x: number; y: number }[] = [{ f: h(a.x, a.y), x: a.x, y: a.y }];
+  const push = (n: { f: number; x: number; y: number }) => {
+    heap.push(n);
+    for (let i = heap.length - 1; i > 0;) { const up = (i - 1) >> 1; if (heap[up].f <= heap[i].f) break; [heap[up], heap[i]] = [heap[i], heap[up]]; i = up; }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ;) {
+        const [l, r] = [2 * i + 1, 2 * i + 2];
+        let m = i;
+        if (l < heap.length && heap[l].f < heap[m].f) m = l;
+        if (r < heap.length && heap[r].f < heap[m].f) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
   let found = false;
-  for (let head = 0, n = 0; head < queue.length && n < limit; head++, n++) {
-    const c = queue[head];
+  let best = { x: a.x, y: a.y, h: h(a.x, a.y) };
+  for (let n = 0; heap.length && n < limit;) {
+    const c = pop();
+    const ck = key(c.x, c.y);
+    if (closed.has(ck)) continue;
+    closed.add(ck);
+    n++;
     if (c.x === b.x && c.y === b.y) { found = true; break; }
+    const hc = h(c.x, c.y);
+    if (hc < best.h) best = { x: c.x, y: c.y, h: hc };
+    const gc = g.get(ck)!;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
       const [nx, ny] = [c.x + dx, c.y + dy];
-      if (prev.has(key(nx, ny))) continue;
+      const nk = key(nx, ny);
+      if (closed.has(nk)) continue;
       if (!(env.walkable(nx + 0.5, ny + 0.5) || (nx === b.x && ny === b.y))) continue;
       if (dx && dy && !(env.walkable(c.x + dx + 0.5, c.y + 0.5) && env.walkable(c.x + 0.5, c.y + dy + 0.5))) continue;
-      prev.set(key(nx, ny), c);
-      queue.push({ x: nx, y: ny });
+      const ng = gc + (dx && dy ? Math.SQRT2 : 1);
+      if (ng >= (g.get(nk) ?? Infinity)) continue;
+      g.set(nk, ng);
+      prev.set(nk, ck);
+      push({ f: ng + h(nx, ny), x: nx, y: ny });
     }
   }
-  if (!found) return null;
+  if (!found && (!nearest || (best.x === a.x && best.y === a.y))) return null;
+  const end = found ? b : best;
   const out: { x: number; y: number }[] = [];
-  for (let c = b; !(c.x === a.x && c.y === a.y); c = prev.get(key(c.x, c.y))!) out.unshift({ x: c.x + 0.5, y: c.y + 0.5 });
+  for (let k = key(end.x, end.y); k !== key(a.x, a.y); k = prev.get(k)!) out.unshift({ x: Math.floor(k / 65536) - 32768 + 0.5, y: (k % 65536) - 32768 + 0.5 });
   return out;
 }
 // Whether the way straight from one point to another is ground a body can walk
@@ -1030,7 +1077,7 @@ function afflict(sim: Sim, u: Unit, k: Pick<GrenadeKind, "blinds" | "stun" | "pr
   if (k.fear && !immune(/frighten/i)) {
     // (the party and its own do not run: they are shaken for a moment; nor do the brave)
     if (u.side !== "foe" || u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, k.fear));
-    else if (u.mode !== "flee") { startFleeing(u, events); u.flee = k.fear; }
+    else if (u.mode !== "flee") { startFleeing(u, events); u.flee = k.fear; u.scared = true; }
   }
 }
 // When the leader of a gang falls the rest break and run (as in the turn-based fight)
@@ -1283,7 +1330,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     else if (power.kind === "fear") {
       // (the brave do not run: they are shaken for a moment)
       if (u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, power.seconds));
-      else { u.mode = "flee"; u.flee = hold(power.seconds); }
+      else { u.mode = "flee"; u.flee = hold(power.seconds); u.scared = true; }
     } else if (power.kind === "push" || power.kind === "pull") {
       if (u.anchored) continue;
       const way = power.kind === "push" ? 1 : -1;
@@ -1711,7 +1758,14 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
   stepMines(sim, dt, env, events);
   stepBackup(sim, env, events);
   // The ones who ran are gone when their time is up
-  for (const u of sim.units) if (u.mode === "flee" && (u.flee -= dt) <= 0 && !u.dead) { u.mode = "gone"; u.fled = true; }
+  // (one run off in fear comes back when it is over: SHOOT.flee)
+  for (const u of sim.units) {
+    if (u.mode !== "flee" || (u.flee -= dt) > 0 || u.dead) continue;
+    if (u.scared) {
+      Object.assign(u, { mode: "engage", scared: false, fleeTo: undefined, path: undefined, wait: between(sim, SHOOT.react) });
+      events.push({ type: "status", id: u.id, text: "comes back" });
+    } else { u.mode = "gone"; u.fled = true; }
+  }
   return events;
 }
 // Damage that comes a little every frame (fire, gas) is added up and dealt in whole points (a blow is at least 1, which a frame's share is not)
@@ -1869,6 +1923,21 @@ function nearest(sim: Sim, u: Unit, list: Unit[]) {
   }
   return best;
 }
+// Where one that runs makes for: of the ground SHOOT.flee.far squares off (away from the hunter first), the farthest from it that it can walk to
+function fleeGoal(u: Unit, hunter: { x: number; y: number }, env: Env): { x: number; y: number } | undefined {
+  const away = Math.atan2(u.x - hunter.x, u.y - hunter.y);
+  const spots: { x: number; y: number; d: number }[] = [];
+  for (let k = 0; k < 16; k++) {
+    const a = away + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8);
+    for (const r of [SHOOT.flee.far, SHOOT.flee.far / 2]) {
+      const [x, y] = [Math.floor(u.x + Math.sin(a) * r) + 0.5, Math.floor(u.y + Math.cos(a) * r) + 0.5];
+      if (fitsAt(env, x, y)) spots.push({ x, y, d: Math.hypot(x - hunter.x, y - hunter.y) });
+    }
+  }
+  spots.sort((p, q) => q.d - p.d);
+  for (const p of spots.slice(0, 8)) if (p.d > dist(u, hunter) && route(env, u, p, 600)) return p;
+  return undefined;
+}
 // Goes for a target: straight at it where the way is clear, else along the way round the wall (looked for again every so often)
 function chase(u: Unit, target: { x: number; y: number }, speed: number, dt: number, env: Env, plain: boolean): boolean {
   u.pathT -= dt;
@@ -1876,11 +1945,17 @@ function chase(u: Unit, target: { x: number; y: number }, speed: number, dt: num
     u.path = undefined;
     return steer(u, target, speed, dt, env);
   }
+  let fresh = false;
   if (!u.path || !u.path.length || u.pathT <= 0) {
-    u.path = route(env, u, target) ?? undefined;
+    u.path = route(env, u, target, SHOOT.path.limit, true) ?? undefined;
     u.pathT = SHOOT.path.every;
+    fresh = true;
   }
-  while (u.path && u.path.length && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < 0.3) u.path.shift();
+  while (u.path && u.path.length && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < 0.3) { u.path.shift(); fresh = true; }
+  // (the corners cut where the way is clear: it walks to the farthest of the next few squares it can walk to straight, not square by square)
+  if (fresh && u.path && u.path.length > 1) {
+    for (let i = Math.min(SHOOT.path.ahead, u.path.length - 1); i > 0; i--) if (lineWalkable(env, u, u.path[i])) { u.path.splice(0, i); break; }
+  }
   const next = u.path?.[0];
   return steer(u, next ?? target, speed, dt, env);
 }
@@ -1935,8 +2010,16 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     return;
   }
   if (u.mode === "flee") {
+    // (it runs by a way it can walk, to ground well away from the nearest of the other side, not into the wall behind it)
     const hunter = nearest(sim, u, foes) ?? target;
-    steer(u, hunter, pace * 1.15, dt, env, true);
+    u.fleeT = (u.fleeT ?? 0) - dt;
+    if (!u.fleeTo || u.fleeT <= 0 || dist(u, u.fleeTo) < 0.6) {
+      u.fleeTo = fleeGoal(u, hunter, env);
+      u.fleeT = SHOOT.flee.every;
+      u.path = undefined;
+    }
+    if (u.fleeTo) chase(u, u.fleeTo, pace * 1.15, dt, env, true);
+    else steer(u, hunter, pace * 1.15, dt, env, true);
     return;
   }
   // (it has lost the party: it goes to where it was last seen and looks about)
@@ -2184,7 +2267,7 @@ function npcCast(sim: Sim, u: Unit, w: RtPower, t: Unit, env: Env, events: Event
       events.push({ type: "status", id: o.id, text: "slowed" });
     } else if (w.kind === "fear" && !immune(/fright/i) && !o.buffs?.some((b) => b.fearless)) {
       // (a foe of the party's that is not brave runs; the brave, the party and its companions are shaken a moment)
-      if (o.side === "foe" && !o.brave && !o.leader) { o.mode = "flee"; o.flee = hold(w.seconds); }
+      if (o.side === "foe" && !o.brave && !o.leader) { o.mode = "flee"; o.flee = hold(w.seconds); o.scared = true; }
       else o.stagger = Math.max(o.stagger, Math.min(1.5, hold(w.seconds)));
     } else if ((w.kind === "push" || w.kind === "pull") && !o.anchored) {
       const way = w.kind === "push" ? 1 : -1;
