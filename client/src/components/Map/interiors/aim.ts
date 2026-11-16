@@ -101,7 +101,21 @@ export function poseOf(mode: Exclude<ViewMode, "overhead">, feet: THREE.Vector3,
 // player character are obscured by the wall"; "ONLY ... walls/doors/shelves/etc BEHIND the player, between the chase cam and character").
 // Rays from the camera to the character's head, chest and knees: a mesh they pass through before the character is faded to FADE.see (and back
 // when it is out of the way), never the floor under the camera's line, a figure, a tap box, what is beyond the character or anything in first person.
-export const FADE = { see: 0.25, rate: 10, margin: 0.35, every: 0.08 };
+export const FADE = { see: 0.25, rate: 10, margin: 0.35, every: 0.08, big: 2.5, before: 0.45 };
+// A piece too big to fade alone (a room's walls built as one mesh: fading it would fade every wall) is cut away instead, on the camera's side of a
+// plane FADE.before in front of the character, facing the camera: [a, b, c, d] with the cut side where a x + b y + c z + d > 0 (as Babylon clips)
+export function cutPlane(camera: THREE.Vector3, feet: THREE.Vector3): [number, number, number, number] {
+  const n = new THREE.Vector3(camera.x - feet.x, 0, camera.z - feet.z);
+  if (n.lengthSq() < 1e-6) n.set(0, 0, 1);
+  n.normalize();
+  const p = feet.clone().addScaledVector(n, FADE.before);
+  return [n.x, 0, n.z, -n.dot(p)];
+}
+// Whether a mesh is too big to fade alone (its bounds reach past FADE.big squares from its middle)
+export function tooBig(m: THREE.Mesh): boolean {
+  if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+  return (m.geometry.boundingSphere?.radius ?? 0) * m.matrixWorld.getMaxScaleOnAxis() > FADE.big;
+}
 // Whether a ray's hit is a thing in the way: before the character (by the margin), and not the ground (a face turned up, low by the feet)
 export function inTheWay(hit: { distance: number; normalY: number; pointY: number }, toTarget: number, feetY: number): boolean {
   if (hit.distance >= toTarget - FADE.margin) return false;

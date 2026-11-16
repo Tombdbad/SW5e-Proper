@@ -4265,7 +4265,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     props: (): Prop[] => {
       const l = inside?.layout;
       if (!l) return [];
-      return shown.filter((a) => a.kind === "furniture" && !a.side && !a.height && !bulkOf(a).fixed).map((a) => {
+      return shown.filter((a) => a.kind === "furniture" && !a.side && !a.height && !bulkOf(a).fixed && a.name !== "Loose flagstone" && a.name !== "Pit trap").map((a) => {
         const bulk = bulkOf(a);
         const br = breakOf(a);
         return {

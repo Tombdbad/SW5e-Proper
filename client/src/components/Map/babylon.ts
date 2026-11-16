@@ -20,6 +20,7 @@ import { Constants } from "@babylonjs/core/Engines/constants";
 import { Scene } from "@babylonjs/core/scene";
 import { Camera } from "@babylonjs/core/Cameras/camera";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Plane } from "@babylonjs/core/Maths/math.plane";
 import { Frustum } from "@babylonjs/core/Maths/math.frustum";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
@@ -584,6 +585,9 @@ const sameMaps = (sig: unknown[], m: Mapped, height: THREE.Texture | null) =>
 interface TexEntry { tex: Texture; version: number; users: number }
 interface Node {
   kind: "mesh" | "lines" | "points" | "sprite" | "text" | "light";
+  // (a piece cut away on the camera's side: its own copy of the material, with the clip plane, and the one it was copied from)
+  cutMat?: Material;
+  cutFrom?: Material;
   mesh?: Mesh;
   light?: Light;
   shadow?: ShadowGenerator;
@@ -1581,9 +1585,31 @@ class Mirror {
     mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
     mesh.alphaIndex = o.renderOrder;
     // (2026-11-16, batch G) What stands between the over-the-shoulder camera and the character is seen through (interiors/aim.ts `fadeBetween`):
-    // the mesh's own visibility, so a material shared with walls elsewhere stays as it is
+    // a copy of its material of its own, blended at the fade's alpha (an explicit opaque mode would ignore a mesh's visibility), so the walls
+    // elsewhere that share the material stay as they are; a big piece in the way (a room's walls built as one mesh) is cut away instead, on the
+    // camera's side of the character, by a clip plane on that copy
     const fade = typeof o.userData.fade === "number" ? o.userData.fade : 1;
-    if (mesh.visibility !== fade) mesh.visibility = fade;
+    const cut = o.userData.cut as [number, number, number, number] | undefined;
+    if ((fade < 1 || cut) && mesh.material && !shader) {
+      if (!node.cutMat || node.cutFrom !== mesh.material) {
+        node.cutMat?.dispose();
+        node.cutFrom = mesh.material;
+        node.cutMat = mesh.material.clone(`${mesh.material.name}-seen`) ?? undefined;
+      }
+      const own = node.cutMat as PBRMaterial | undefined;
+      const base = node.cutFrom as PBRMaterial;
+      if (own) {
+        own.transparencyMode = fade < 1 ? PBRMaterial.PBRMATERIAL_ALPHABLEND : base.transparencyMode;
+        own.alpha = base.alpha * fade;
+        if (cut) { const pl = (own.clipPlane ??= new Plane(0, 0, 1, 0)); pl.normal.set(cut[0], cut[1], cut[2]); pl.d = cut[3]; }
+        else own.clipPlane = null;
+        mesh.material = own;
+      }
+    } else if (node.cutMat) {
+      node.cutMat.dispose();
+      node.cutMat = undefined;
+      node.cutFrom = undefined;
+    }
     mesh.receiveShadows = o.receiveShadow;
     mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
     // Instancing: three's instance matrices are already in the mesh's own frame, as Babylon's thin instances are. A scatter in a street or a

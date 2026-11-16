@@ -1335,8 +1335,14 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
   }
   // ---- A loose piece under the crosshair, for a power that moves objects (its text: the largest and heaviest, how far by size)
   if ((power.kind === "push" || power.kind === "pull") && power.objects && aim) {
-    const piece = propAt(sim, aim.x, aim.y, 0.45);
-    if (piece && Math.hypot(piece.x + piece.w / 2 - p.x, piece.y + piece.d / 2 - p.y) <= range + 1) {
+    // (the piece under the crosshair, else the one nearest the line of the aim within the power's cone, if no foe is nearer that line)
+    const [ax, ay] = dirOf(p.facing);
+    const offOf = (x: number, y: number) => Math.acos(clamp(((x - p.x) * ax + (y - p.y) * ay) / (Math.hypot(x - p.x, y - p.y) || 1), -1, 1));
+    const reach = (x: number, y: number) => Math.hypot(x - p.x, y - p.y) <= range + 1;
+    const near = (sim.props ?? []).filter((o) => !o.gone && reach(o.x + o.w / 2, o.y + o.d / 2) && offOf(o.x + o.w / 2, o.y + o.d / 2) <= SHOOT.power.cone).sort((a, b) => offOf(a.x + a.w / 2, a.y + a.d / 2) - offOf(b.x + b.w / 2, b.y + b.d / 2))[0];
+    const foeOff = Math.min(Infinity, ...sim.units.filter((u) => u.side === "foe" && alive(u) && !u.decoy && reach(u.x, u.y)).map((u) => offOf(u.x, u.y)));
+    const piece = propAt(sim, aim.x, aim.y, 0.45) ?? (near && offOf(near.x + near.w / 2, near.y + near.d / 2) < foeOff ? near : undefined);
+    if (piece && reach(piece.x + piece.w / 2, piece.y + piece.d / 2)) {
       const o = power.objects;
       if (o.maxPounds !== undefined && piece.pounds > o.maxPounds) return `${power.name}: the ${piece.name.toLowerCase()} is too heavy (about ${piece.pounds.toLocaleString()} lb)`;
       const squares = SIZE_ORDER.indexOf(piece.size) <= SIZE_ORDER.indexOf(o.size) ? o.squares[piece.size] ?? 0 : 0;

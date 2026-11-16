@@ -141,3 +141,16 @@ test("the wall between the camera and the character is faded; not the floor, the
   assert.equal(inTheWay({ distance: 1, normalY: 1, pointY: 0.1 }, 2.5, 0), false, "the ground");
   assert.equal(inTheWay({ distance: 1, normalY: -1, pointY: 2.4 }, 2.5, 0), true, "a ceiling or lintel above");
 });
+
+test("a room's walls built as one mesh are cut away on the camera's side of the character, not faded whole", async () => {
+  const { cutPlane, tooBig, FADE } = await import("../../client/src/components/Map/interiors/aim");
+  const shell = box([0, 1, 0], [12, 2, 9]);
+  const door = box([0, 1, 1.2], [1, 1.4, 0.3]);
+  assert.equal(tooBig(shell), true);
+  assert.equal(tooBig(door), false);
+  const [a, b, c, d] = cutPlane(new THREE.Vector3(0, 1.4, 2.2), new THREE.Vector3(0, 0, 0));
+  const side = (x: number, y: number, z: number) => a * x + b * y + c * z + d;
+  assert.ok(side(0, 1, 1.5) > 0, "the wall behind the character, on the camera's side, is cut");
+  assert.ok(side(0, 1, -2) < 0, "the wall beyond the character stays");
+  assert.ok(side(0, 1, FADE.before - 0.1) < 0, "nor is the character itself cut");
+});
