@@ -48,7 +48,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, HullOutline, ShipDoor, ShipViewOut, SideRamp, Turbolift, shipMakeOf, type ShipFaction, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -1209,7 +1209,7 @@ function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: 
 
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal, deep }: { deep?: number; portal?: { family: Family; wall: string; pack?: ExtPack | null }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal, deep, ship }: { ship?: { make: ShipFaction; out: 1 | -1 }; deep?: number; portal?: { family: Family; wall: string; pack?: ExtPack | null }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   // A cave's ways (2026-10-30, the user: "The entry to caves (a standard door) looks all wrong"): no frame and no leaf; the way out is an
@@ -1226,9 +1226,30 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint
   const mode = /hangar|bay|dock/i.test(name) ? "rise" : "hinge";
   const metal = /hangar|bay|dock|gate|vault|cell|airlock/i.test(name);
   const tap = onTap ? () => { setOpen((o) => !o); onTap(); } : undefined;
+  // A ship's (models.tsx "A ship's inside"): the boarding ramp let down through its wall, its doors in the maker's shape, its glass looking out
+  if (ship && kind === "furniture" && /^boarding ramp/i.test(name)) {
+    return (
+      <>
+        <SideRamp make={ship.make} out={ship.out} />
+        {label && <Label at={[0, 1.9, 0]} size={0.3} color={color}>{label}</Label>}
+        {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} label={label ?? name} />}
+      </>
+    );
+  }
+  if (ship && isDoor && !bend && mode === "hinge") {
+    return (
+      <>
+        <ShipDoor make={ship.make} open={open} color={color} />
+        {open && <DoorVoid deep={deep} />}
+        {label && <Label at={[0, 1.9, 0]} size={0.3} color={color}>{label}</Label>}
+        {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}
+      </>
+    );
+  }
   return (
     <>
       <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
+      {ship && kind === "window" && !bend && <ShipViewOut outline={openingOutline("window", style, paneScaleOf(kind, pane))} out={ship.out} wide={pane?.size === "wide"} />}
       {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} timber={portal.family === "timber"} pack={portal.pack} position={[0, 0, 0.13]} />}
       {/* (what shades the door from the street, by the pack: the desert's awning on poles, the frontier's canvas) */}
       {portal?.pack && isDoor && !bend && awningOf(portal.pack) && <ModPiece name={awningOf(portal.pack)!} pack={portal.pack} wall={portal.wall} position={[0, 0, 0.02]} />}
@@ -1299,8 +1320,10 @@ function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children
 }
 const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], lightKey, canopy, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], lightKey, canopy, shipKit, children }: {
   width: number;
+  // A ship's room (its building's `kit:` tag): the maker's doors, glass with a view out and turbolift (models.tsx, "A ship's inside")
+  shipKit?: string;
   // The room is of a tree or stilt village (shared/logic canopyOf): a deck, a bridge or a rope bridge of it is drawn from on it as it is from outside
   canopy?: CanopyKind;
   // Which switch this room's lights are on (useRoomLights): a room with light fittings has a switch by its first door
@@ -1352,6 +1375,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
 }) {
   // What the shop shows today (a droid dealer's droids and parts), set by Play
   const onShow = useDisplay();
+  // (the maker of a ship this room is aboard: its own kit, or the starship's that its mood or the room it is like names)
+  const shipMake = shipMakeOf(shipKit ?? [mood, like].find((m) => m?.buildingType === "starship")?.kit);
   // (a shelf or counter standing on a round room's ring of squares inside its curve: drawn along the curve, CurvedPiece)
   const ringed = (a: RoomAsset) => {
     if (!plan?.shape || a.kind !== "furniture" || !curvedKind(a.name) || !ringSpan(a, width, height)) return false;
@@ -1512,6 +1537,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </Suspense>
       )}
       {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? (rustic ? RUSTIC.deck : RAMP_DECK) : undefined} rustic={rustic && !!plan.open} />}
+      {shipMake && plan?.form === "lift" && plan.climb && <Turbolift w={width} h={height} up={climbs} toward={plan.climb.toward} />}
       {/* A covered walkway is the kit's tube from within, as it is from without (its deck a hair over the floor's) */}
       {canopyWay
         ? null
@@ -1596,7 +1622,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => (walls || p.a.kind !== "window") && !p.a.seam).map(({ a, at, turn, bend }) => (
         <group key={keyOf.get(a) ?? a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
-          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} ship={shipMake ? { make: shipMake, out: a.side === "n" || a.side === "w" ? -1 : 1 } : undefined} />
         </group>
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
@@ -1614,7 +1640,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
                   <CurvedPiece kind={curvedKind(a.name)!} span={ringSpan(a, width, height)!} width={width} height={height} color={look?.wood ?? "#6b5a48"} trim={look?.metal ?? "#9aa3ad"} />
                 </group>
               ) : <>
-                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height, !!plan?.shape)} round={!!plan?.shape} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height, !!plan?.shape)} round={!!plan?.shape} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} hull={a.ref?.startsWith("hull:") ? a.ref.slice(5) : undefined} />
                 {/* A fighting beast in its pen (an arena's pens: models.tsx draws the cage) */}
                 {a.name === "Beast pen" && <group position={[a.w / 2, 0.06, a.h / 2]} rotation={[0, hue(a.id) % 6, 0]}><Figure kind="beast" ring="#9ca3af" name={PEN_BEASTS[hue(a.id) % PEN_BEASTS.length]} /></group>}
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height, !!plan?.shape)} />}
@@ -5190,6 +5216,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           ) : null;
         })}
 
+        {/* A ship's hull round its decks, from the kit's outline (models.tsx HullOutline; nothing where the hull is not measured) */}
+        {hullDark && <HullOutline name={building.tags.find((t) => t.startsWith("hull:"))?.slice(5)} make={shipMakeOf(kit)} upTo={opened?.layout?.level ?? 0} levelH={LEVEL_H} />}
         {!planned && (
           <group position={[cx, 0, cz]} onClick={(e) => tapPlace(e, building.id)}>
             <group scale={2.4}><BuildingModel type={building.type} wall={wall} /></group>
@@ -5248,6 +5276,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
                   style={style}
                   mood={(formOf(room) && building.type !== "cave") || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome, kit }}
+                  shipKit={kit}
                   biome={biome}
                   like={likeOf(room)}
                   width={l.width}
