@@ -4,14 +4,14 @@
 // __BUILD_ID__ is set by tools/optimizeDist.mjs when the site is built; a new build is a new worker, which drops the old caches.
 const BUILD = "__BUILD_ID__";
 const SCRIPTS = `sw5e-build-${BUILD}`; // the hashed files of this build: they never change under their name
-const MEDIA = "sw5e-media-v1"; // models, textures and sounds under a fixed name: answered at once, then refreshed for the next visit
+const MEDIA = `sw5e-media-${BUILD}`; // models, textures and sounds: answered at once, then refreshed; kept per build, so that new code never meets the last build's models
 
 self.addEventListener("install", () => self.skipWaiting());
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      for (const key of await caches.keys()) if (key.startsWith("sw5e-build-") && key !== SCRIPTS) await caches.delete(key);
+      for (const key of await caches.keys()) if (key.startsWith("sw5e-") && key !== SCRIPTS && key !== MEDIA) await caches.delete(key);
       await self.clients.claim();
     })(),
   );
