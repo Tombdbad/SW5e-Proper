@@ -3462,7 +3462,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // are drawn from the asset library and the squares they fill cannot be walked over
   const tier = useQuality((q) => q.tier);
   const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
-  const seams = useMemo(() => (districtPlan?.seams ? seamMarks(world, districtPlan) : []), [districtPlan]);
+  const seams = useMemo(() => (districtPlan?.seams ? seamMarks(world, districtPlan) : []), [districtPlan, roomKey]);
   // The rise and fall of the open ground under an open sky (2026-11-11, shared/logic districtGround): every building's box, room, garden, stall and curtain
   // wall stands on a level pad and the ways between them are graded to it, all at the street's level (y 0, where every room and door is drawn); the ground
   // between them and out to the rim of the map is the biome's land, a few metres up and down. None on the sea or under it, aboard a ship, on a station or a
@@ -5859,7 +5859,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       {mode !== "overhead" && viewing ? (
         <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (
-        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} ground={reliefGround ? (x, z) => groundY(x + cx, z + cz) : undefined} />
+        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} ground={reliefGround && !underground ? (x, z) => groundY(x + cx, z + cz) : undefined} />
       )}
       <DistanceDetail />
       <Sky indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />

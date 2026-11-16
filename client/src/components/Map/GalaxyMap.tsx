@@ -150,6 +150,11 @@ export function Rig({ target, offset, min, max, fov = 75, follow, ground }: { ta
       }
     }
     if (ground && controls.current && !rigControls.hold) clearGround(camera, controls.current, ground);
+    else if (!ground && camera.near !== 0.1) {
+      // (no ground to keep over any more, a cellar opened or a view without relief: the near plane back to the scene's own)
+      camera.near = 0.1;
+      camera.updateProjectionMatrix();
+    }
   });
   useEffect(() => {
     rigControls.current = controls.current;

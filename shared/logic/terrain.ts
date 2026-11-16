@@ -1245,21 +1245,28 @@ export function districtGround(spec: DistrictGroundSpec): DistrictGround | null 
     const sills = (spec.aprons ?? []).filter((a) => a.h !== undefined);
     if (sills.length) {
       const G = WAY_GRADE * SQUARE_M;
-      for (let j = 0; j < n; j++) {
-        const pz = j - size / 2 + spec.cz;
-        for (let i = 0; i < n; i++) {
-          const px = i - size / 2 + spec.cx;
-          let [low, high] = [-Infinity, Infinity];
-          for (const a of sills) {
+      // (a sill's cones reach only as far as the land stands above or below its floor, at the grade: beyond that they hold nothing back, so each is
+      // laid only over the squares within that reach)
+      let [lo, hi] = [Infinity, -Infinity];
+      for (let c = 0; c < n * n; c++) { if (t.h[c] < lo) lo = t.h[c]; if (t.h[c] > hi) hi = t.h[c]; }
+      const low = new Float32Array(n * n).fill(-Infinity);
+      const high = new Float32Array(n * n).fill(Infinity);
+      const grid = (v: number, c: number) => Math.round(v - c + size / 2);
+      for (const a of sills) {
+        const f = (a.h as number) * SQUARE_M;
+        const r = Math.ceil(Math.max(hi - f, f - lo, 0) / G) + 1;
+        for (let j = Math.max(0, grid(a.y, spec.cz) - r); j <= Math.min(n - 1, grid(a.y + a.height, spec.cz) + r); j++) {
+          const pz = j - size / 2 + spec.cz;
+          for (let i = Math.max(0, grid(a.x, spec.cx) - r); i <= Math.min(n - 1, grid(a.x + a.width, spec.cx) + r); i++) {
+            const px = i - size / 2 + spec.cx;
             const d = Math.hypot(Math.max(a.x - px, 0, px - (a.x + a.width)), Math.max(a.y - pz, 0, pz - (a.y + a.height)));
-            const f = (a.h as number) * SQUARE_M;
-            if (f - G * d > low) low = f - G * d;
-            if (f + G * d < high) high = f + G * d;
+            const c = j * n + i;
+            if (f - G * d > low[c]) low[c] = f - G * d;
+            if (f + G * d < high[c]) high[c] = f + G * d;
           }
-          const c = j * n + i;
-          t.h[c] = low > high ? (low + high) / 2 : t.h[c] < low ? low : t.h[c] > high ? high : t.h[c];
         }
       }
+      for (let c = 0; c < n * n; c++) t.h[c] = low[c] > high[c] ? (low[c] + high[c]) / 2 : t.h[c] < low[c] ? low[c] : t.h[c] > high[c] ? high[c] : t.h[c];
     }
     // The ground before each way in, level with its floor
     for (const a of spec.aprons ?? []) { const [x, z, w, d] = toM(a); levelBox(t, x, z, w, d, APRON_FLAT * SQUARE_M, APRON_BLEND * SQUARE_M, padLevel(a)); }
