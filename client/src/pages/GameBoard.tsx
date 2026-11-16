@@ -22,7 +22,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, useP
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, handsKindOf, handsMargin, handsPlan, handsTotal, type HandsKind, type HandsPlan, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, extraAttackShare, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, handsKindOf, handsMargin, handsPlan, handsTotal, type HandsKind, type HandsPlan, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -40,7 +40,7 @@ import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { watchFight } from "@/lib/barks";
-import { realtimePowers } from "@/lib/sw5e/realtimePowers";
+import { realtimeFeatures, realtimePowers } from "@/lib/sw5e/realtimePowers";
 import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
@@ -428,6 +428,15 @@ export default function GameBoard() {
       ...(kit.high && !kit.high.low ? { high: { t: 60, temp: avgDice(kit.high.temp), every: 0 } } : {}),
     });
     fightWithItems(party, kit);
+    // (2026-11-16, batch G) The class features and maneuvers in real time, read from their texts (realtimeFeatures): those used go on the belt,
+    // the rest are the party's own (extra attacks as more on each shot and blow, evasion, extra dice once a turn, a reaction)
+    const feats = realtimeFeatures(combatFeatures(character), play.featureUses ?? {});
+    belt.push(...feats.gear);
+    if (feats.evade) party.evade = true;
+    if (feats.knack.extra || feats.knack.react) party.knack = feats.knack;
+    const share = extraAttackShare(feats.attacks);
+    if (share > 1 && party.gun) party.gun.damage *= share;
+    if (share > 1 && party.blade) party.blade = { ...party.blade, damage: party.blade.damage * share };
     for (const g of belt) if (g.rest) restGear.current[g.name] = g.rest;
     const others = useCombat.getState().combatants.filter((c) => !c.isPlayer && c.hp > 0);
     // Help a foe with a comlink can call (house rule: SHOOT.backup): up to two more of the weakest of them, waiting off the map
@@ -3095,6 +3104,13 @@ export default function GameBoard() {
           // the pack: fightWithItems's restGear, the belt's `rest`)
           const featureUses: Record<string, number> = { ...(current.playState?.featureUses ?? {}) };
           for (const [name, n] of Object.entries(shotUsed)) {
+            // (a class feature used on the belt: its pool's uses, as the turn-based fight counts them)
+            if (name.startsWith("feature:")) {
+              const pool = name.slice("feature:".length);
+              featureUses[pool] = (featureUses[pool] ?? 0) + n;
+              delete shotUsed[name];
+              continue;
+            }
             const rest = restGear.current[name] ?? (/subroutine$/i.test(name) ? "long" : undefined);
             if (!rest) continue;
             const key = `${rest === "short" ? "item~" : "item:"}${/subroutine$/i.test(name) ? "Subroutines" : name}`;

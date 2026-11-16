@@ -7,7 +7,8 @@
 // hides, a hologram, a kill or a stun below a number of hit points, a companion brought back, poison cured, a gun pulled away, a droid turned, a
 // blade thrown, a dash and a blow. A power whose effect the text leaves to the table is not offered (the turn-based fight still has it). The first
 // nine are on keys 1 to 9 (0 shows the next nine).
-import { avgDice, type Buff, type RtPower } from "@shared/logic/shooter";
+import { avgDice, blastOf, SHOOT, type Buff, type FightGear, type RtPower, type Unit } from "@shared/logic/shooter";
+import type { CombatFeature, Amount } from "./characterCalculation";
 import { castingStats, powerCost, powerEffect, powerMotion } from "./rules";
 
 const feetOf = (range?: string): number => {
@@ -205,3 +206,57 @@ function readMore(text: string, base: RtPower, level: number, mod: number, secon
   return undefined;
 }
 const secondsFor = (s: number) => (s > 0 ? s : 60);
+
+// ---- Class features and maneuvers in real time (2026-11-16, batch G) -------------------------------------------------------------------
+// The user: class features and maneuvers "are not in real time". What combatFeatures read in each feature's and maneuver's text (characterCalculation.ts)
+// becomes what the shooter plays; nothing is named here. HOUSE RULES where the books' actions, turns and saves do not exist (numbers in
+// shooter.ts SHOOT.feature): on the item belt (Z uses, T shows the next), by their uses for the rest (a maneuver spends one superiority die
+// of the pool all maneuvers share): a state entered at will (a rage: its damage on each blow of a blade, its resistances, a minute), hit points
+// for oneself (a second wind, a rally), an extra action (shots come twice as fast for six seconds), an effect that makes those near save (each
+// foe in its range and in sight takes its damage and what it brings: no save here), a maneuver used on the attack or the hit (the next hit
+// carries the superiority die's average and what the maneuver's save would bring). Of themselves: extra attacks (each one more adds
+// SHOOT.feature.extraAttack to every shot and blow), evasion (half from bursts, cones and breath), extra dice on a hit once a turn (once in
+// six seconds) with the edge the text asks for, a reaction that cuts or turns a blow once in six seconds. Features that cost power or focus
+// points, bonus attacks, a reaction with uses, and dice the text leaves to the player are not played (the tabletop still has them).
+
+const amountOf = (a?: Amount) => (a ? avgDice(a.dice) + a.flat : 0);
+export function realtimeFeatures(features: CombatFeature[], used: Record<string, number>): { gear: FightGear[]; knack: NonNullable<Unit["knack"]>; evade: boolean; attacks: number } {
+  const gear: FightGear[] = [];
+  const knack: NonNullable<Unit["knack"]> = {};
+  let evade = false;
+  let attacks = 1;
+  for (const f of features) {
+    attacks = Math.max(attacks, f.attacksPerAction ?? 1);
+    if (f.evasion) evade = true;
+    // (of themselves: extra dice once a turn, a reaction that has no uses to count)
+    if (f.extraDamage && !f.extraDamage.perPoint && !f.cost) {
+      const e = f.extraDamage;
+      const damage = avgDice(e.dice);
+      if (damage > (knack.extra?.damage ?? 0)) knack.extra = { damage, every: e.oncePerTurn ? SHOOT.feature.turn : 0, needs: e.needs, melee: e.weapon !== "any", ...(f.marks ? { marks: true } : {}), t: 0, name: f.name };
+    }
+    if (f.activation === "reaction" && !f.uses && !f.cost) {
+      if (f.reduce && !knack.react) knack.react = { ...(f.reduce.halve ? { halve: true } : {}), ...(f.reduce.amount ? { cut: amountOf(f.reduce.amount) } : {}), against: f.reduce.against, every: SHOOT.feature.turn, t: 0, name: f.name };
+      else if ((f.acBonus || f.acDie) && !knack.react) knack.react = { ac: f.acBonus ? amountOf(f.acBonus) : avgDice(f.acDie), against: "melee", every: SHOOT.feature.turn, t: 0, name: f.name };
+      continue;
+    }
+    // (used from the belt: by its uses left for the rest; points are not spent from the belt)
+    if (f.cost && f.cost.pool !== "die") continue;
+    const left = f.uses ? Math.max(0, f.uses.max - (used[f.pool] ?? 0)) : 0;
+    if (f.uses && !left) continue;
+    const add = (act: FightGear["act"]) => gear.push(f.uses ? { name: f.name, count: left, act, pool: f.pool } : { name: f.name, count: 1, act, keep: true });
+    const m = f.maneuver;
+    if (m && (m.timing === "hit" || m.timing === "attack")) {
+      const conditions = m.save?.conditions ?? [];
+      const afflict = conditions.length ? blastOf(f.name, { radius: 0, damage: [], conditions, rounds: 1 }) : undefined;
+      if (m.damage || afflict) add({ act: "strike", damage: m.damage ? (m.die + 1) / 2 : 0, ...(m.damageType ? { type: m.damageType } : {}), ...(afflict ? { afflict } : {}) });
+    } else if (m && m.timing === "use" && m.heal) {
+      const amount = (m.die + 1) / 2 + m.modifier;
+      add({ act: "rally", hp: m.heal === "hp" ? amount : 0, temp: m.heal === "temp" ? amount : 0 });
+    } else if (f.extraAction) add({ act: "surge", seconds: SHOOT.feature.surge });
+    else if (f.activation === "passive") continue;
+    else if (f.stance) add({ act: "stance", seconds: SHOOT.feature.stance, melee: f.stance.damage, resist: f.stance.resist });
+    else if (f.heal && f.heal.target === "self") add({ act: "rally", hp: amountOf(f.heal.amount), temp: 0 });
+    else if (f.save && f.save.range > 0) add({ act: "wave", damage: amountOf(f.save.damage), type: f.save.type || "force", range: f.save.range / 5 });
+  }
+  return { gear, knack, evade, attacks };
+}

@@ -226,7 +226,11 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     // (a net or bolas is picked up again after the fight: `keep`; what is spent for the rest is counted the same, and the game routes it)
     const spend = (g: FightGear) => {
       g.count--;
-      if (!g.keep) st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
+      // (a class feature's use is counted in its pool, which its other options share: the maneuvers' superiority dice)
+      if (g.pool) {
+        for (const o of st.gear) if (o !== g && o.pool === g.pool) o.count = Math.max(0, o.count - 1);
+        st.used[`feature:${g.pool}`] = (st.used[`feature:${g.pool}`] ?? 0) + 1;
+      } else if (!g.keep) st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
     };
     if (p.gun?.launcher) p.gun.shell = throwable?.act.act === "throw" ? throwable.act.blast : undefined;
     if (!p.dead && !st.ending) {

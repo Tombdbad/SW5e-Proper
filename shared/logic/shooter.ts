@@ -81,7 +81,13 @@ export const SHOOT = {
   // condition it lays on the party holds (the party makes no save in real time: the hold is short instead, house rule), and the farthest it
   // shoves the party (squares)
   npc: { windup: 0.6, every: [3.5, 6.5] as [number, number], partyHold: 2, partyShove: 3 },
+  // (2026-11-16, batch G) The class features in real time (house rules; client realtimeFeatures): each attack an Attack action makes beyond the
+  // first adds this share to each shot and blow; a state entered at will (a rage) lasts this long, an extra action this long; a feature's "once
+  // a turn" is once in this many seconds, and so is a reaction
+  feature: { extraAttack: 0.5, stance: 60, surge: 6, turn: 6 },
 };
+// What each shot and blow does with an Attack action of so many attacks (Extra Attack), as a share of one (house rule: SHOOT.feature)
+export const extraAttackShare = (attacks: number) => 1 + SHOOT.feature.extraAttack * Math.max(0, Math.floor(attacks) - 1);
 // How often an attack roll lands: a d20 + the bonus against the Armor Class (a 1 always misses, a 20 always hits), as a chance and not a die
 export const hitChance = (bonus: number, ac: number) => clamp((21 - ac + bonus) / 20, 0.05, 0.95);
 // A monster (2026-11-02, the user: "Monsters should not use grenades, weapons, or items"): a beast, a plant, an aberration, the undead, an
@@ -522,7 +528,15 @@ export interface Unit {
   // hears where shots come from; a light carried; a far eye's zoom
   senses?: { through?: number; truesight?: number; hearing?: number; light?: number; zoom?: number };
   // A weapon imbued by a power for its next blow or shot (the "As part of the action used to cast this power" cantrips, a saber strike's extra)
-  imbue?: { damage: number; type: string; stagger?: number; slow?: boolean };
+  imbue?: { damage: number; type: string; stagger?: number; slow?: boolean; afflict?: GrenadeKind; name?: string };
+  // (2026-11-16, batch G) What the party's class features do of themselves in real time (read from their texts: client realtimeFeatures): extra
+  // dice on a hit once every so many seconds (a sneak attack's once a turn), with the edge the text asks for (a foe unaware, staggered, blind,
+  // held or marked, or a companion beside it), only with a blade if so, only on the one it marked if so; and a reaction every so many seconds
+  // that cuts a blow or bolt (by an amount, by half) or turns a blow aside (Armor Class against the hit)
+  knack?: {
+    extra?: { damage: number; every: number; needs: "advantage" | "none"; melee: boolean; marks?: boolean; marked?: string; t: number; name: string };
+    react?: { cut?: number; halve?: boolean; ac?: number; against: "melee" | "ranged" | "any"; every: number; t: number; name: string };
+  };
 }
 // What a power (or an item casting one) gives the party for so many seconds (2026-11-03, house rules after the powers' texts; a duration of an
 // hour or more lasts the fight): AC, temporary hit points, resistances or immunity, a faster pace (a share added), damage back at whoever strikes
@@ -550,6 +564,9 @@ export interface Buff {
   orbit?: { dps: number; radius: number; type: string };
   // foes sensed through walls within so many squares, what is hidden seen within so many (a Force or tech sense)
   sense?: { through?: number; truesight?: number };
+  // (2026-11-16, a class feature's) more damage on each blow of a blade (a rage's), and a share off the time between shots (an extra action)
+  melee?: number;
+  quick?: number;
 }
 // What a foe has to use besides its attack (2026-11-02, house rule): the area actions of its stat block (a flamethrower's cone, a grenade's
 // sphere: thrown, `left` times or every so many seconds as its recharge goes), medpacs for itself, an antidote and an extinguisher for its own
@@ -641,10 +658,21 @@ export type GearAct =
   | { act: "cast"; power: RtPower }
   | { act: "leap"; range: number }
   | { act: "eye"; range: number }
-  | { act: "light" };
+  | { act: "light" }
+  // (2026-11-16, batch G) The class features used in a fight (read from their texts: client realtimeFeatures; house rules where the books'
+  // actions and turns do not exist): hit points or temporary ones at once (a second wind, a rallying maneuver); a state for so many seconds (a
+  // rage: more damage on the blade's blows, resistances); an extra action (a surge: shots come quicker for a moment); damage to each foe near
+  // and in sight, with what it brings (a feature that makes those near save: no save here, it takes hold); the next hit carries more and what
+  // it brings (a maneuver on the attack or the hit)
+  | { act: "rally"; hp: number; temp: number }
+  | { act: "stance"; seconds: number; melee: number; resist: string[] }
+  | { act: "surge"; seconds: number }
+  | { act: "wave"; damage: number; type: string; range: number; afflict?: GrenadeKind }
+  | { act: "strike"; damage: number; type?: string; afflict?: GrenadeKind };
 // (`rest`: used up for the rest, not from the pack: the game counts it in the character's feature uses until a short or long rest)
 // (`keep`: not used up: a net or bolas, a harpoon, picked up or reeled in again)
-export interface FightGear { name: string; count: number; act: GearAct; rest?: "short" | "long"; keep?: boolean }
+// (`pool`: a class feature's, its uses counted in the character's feature uses under this key, shared with the others of the same pool)
+export interface FightGear { name: string; count: number; act: GearAct; rest?: "short" | "long"; keep?: boolean; pool?: string }
 export type Event =
   | { type: "shot"; from: string; x: number; y: number; h: number }
   | { type: "hit"; target: string; by: string; amount: number; head?: boolean; x: number; y: number; h: number }
@@ -730,7 +758,7 @@ export const playerOf = (sim: Sim) => sim.units.find((u) => u.side === "player")
 // (a droid turned for a while is still one of them: the fight is not won while it stands)
 export const foesLeft = (sim: Sim) => sim.units.filter((u) => (u.side === "foe" || (u.turned ?? 0) > 0) && alive(u) && !u.decoy);
 // ---- What buffs and states come to (2026-11-03) ------------------------------------------------------------------------------------------
-const sumOf = (u: Unit, k: "ac" | "speed" | "aim") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
+const sumOf = (u: Unit, k: "ac" | "speed" | "aim" | "quick") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
 // The AC a blow or shot is aimed at: the sheet's, what buffs add, what a curse took off
 export const acOf = (u: Unit) => u.ac + sumOf(u, "ac") - (u.acDown ?? 0);
 // A share of the walking pace: a buff's haste, a slowed level, held fast, anchored feet (the scene moves the party by it)
@@ -903,7 +931,7 @@ function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | u
 // The party's hit on a foe (2026-11-03): its damage, then what comes with it: the weapon's riders (more dice, an opener's first hit, a slow, a
 // quickening of the party, a cone set off, a shove, a chain to the next foe: the last three once a rest), a mark's damage, a buff's, the blow
 // imbued by a power, a lowered AC (more damage: SHOOT.acDown); points back when it falls (once a rest)
-function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rider: Rider | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false) {
+function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rider: Rider | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false, melee = false) {
   const once = (item: string) => {
     if (!p.once?.[item]) return false;
     delete p.once[item];
@@ -918,12 +946,27 @@ function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rid
   u.opened = true;
   if (u.mark && u.mark.t > 0 && u.mark.damage) add(u.mark.damage, u.mark.type);
   for (const b of p.buffs ?? []) if (b.empower) add(b.empower.damage, b.empower.type);
+  // (a rage's more damage on the blade's blows)
+  if (melee) for (const b of p.buffs ?? []) if (b.melee) add(b.melee);
+  // (a class feature's extra dice, once every so many seconds, with the edge its text asks for)
+  const k = p.knack?.extra;
+  if (k && k.t <= 0 && (!k.melee || melee) && (!k.marks || !k.marked || k.marked === u.id) && alive(u)) {
+    const edge = u.mode === "idle" || u.stagger > 0 || u.blind > 0 || (u.held ?? 0) > 0 || !!u.mark?.edge || cloakedNow(p) || sim.units.some((o) => o.side === "ally" && alive(o) && !o.decoy && dist(o, u) <= 1.6);
+    if (k.needs === "none" || edge) {
+      add(k.damage);
+      k.t = k.every;
+      if (k.marks) k.marked = u.id;
+      events.push({ type: "once", name: k.name });
+    }
+  }
   if (p.imbue) {
     const im = p.imbue;
     p.imbue = undefined;
     add(im.damage, im.type);
     if (im.stagger) u.stagger = Math.max(u.stagger, im.stagger);
     if (im.slow) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = SHOOT.slowLevel; }
+    if (im.afflict) afflict(sim, u, im.afflict, events);
+    if (im.name) events.push({ type: "status", id: u.id, text: im.name });
   }
   if (rider?.slow && alive(u)) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = Math.max(u.slowBy ?? 0, rider.slow); events.push({ type: "status", id: u.id, text: "slowed" }); }
   if (rider?.haste) addBuff(p, { name: "quickened", t: 3, speed: rider.haste });
@@ -1036,7 +1079,7 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   if (g.left <= 0) return false;
   if (g.launcher && !g.shell) return false;
   g.left--;
-  p.fire = g.interval;
+  p.fire = g.interval * Math.max(0.3, 1 - sumOf(p, "quick"));
   reveal(sim, p, events);
   // (past the normal range the aim is worse, unless a scope takes the long range's penalty away: a Focusing Scope does it for the shot that is aimed, as the books say, and
   // a scope looked through takes some of it away)
@@ -1556,6 +1599,38 @@ export function applyGear(sim: Sim, gear: FightGear, env: Env, events: Event[], 
     sim.lit = !sim.lit;
     said(sim.lit ? "the light is on (it shows you the way, and you to them)" : "the light is off");
     return KEPT;
+  } else if (a.act === "rally") {
+    if (p.hp >= p.maxHp && !a.temp) return `${gear.name}: already unhurt`;
+    const was = p.hp;
+    p.hp = Math.min(p.maxHp, p.hp + a.hp);
+    p.temp = Math.max(p.temp, a.temp);
+    said([p.hp > was && `+${Math.round(p.hp - was)}`, a.temp && `${Math.round(a.temp)} temporary hit points`].filter(Boolean).join(", "));
+  } else if (a.act === "stance") {
+    if (p.buffs?.some((b) => b.name === gear.name)) return `${gear.name}: already on`;
+    addBuff(p, { name: gear.name, t: a.seconds, ...(a.melee ? { melee: a.melee } : {}), ...(a.resist.length ? { resist: a.resist } : {}) });
+    said(describeBuff({ name: gear.name, t: a.seconds, resist: a.resist }) + (a.melee ? `, +${a.melee} a blow` : ""));
+    return "";
+  } else if (a.act === "surge") {
+    addBuff(p, { name: gear.name, t: a.seconds, quick: 0.5, speed: 0.25 });
+    p.fire = 0;
+    p.powerCd = 0;
+    said("a burst of speed: shots come quicker");
+    return "";
+  } else if (a.act === "wave") {
+    let n = 0;
+    for (const u of sim.units) {
+      if (u.side !== "foe" || !alive(u) || u.decoy || dist(p, u) > a.range + SHOOT.radius || !sees(env, p, u)) continue;
+      if (a.damage > 0) hurt(sim, u, a.damage, a.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+      if (a.afflict) afflict(sim, u, a.afflict, events);
+      n++;
+    }
+    if (!n) return `${gear.name}: no foe near enough`;
+    events.push({ type: "power", id: p.id, kind: "damage", name: gear.name, x: p.x, y: p.y, h: p.h + 1, tx: p.x, ty: p.y, th: p.h + 1 });
+    reveal(sim, p, events);
+  } else if (a.act === "strike") {
+    p.imbue = { damage: a.damage, type: a.type ?? (p.gun && !p.blade ? p.gun.type : p.blade?.type ?? "kinetic"), ...(a.afflict ? { afflict: a.afflict } : {}), name: gear.name };
+    said(`the next hit${a.damage ? ` +${Math.round(a.damage)}` : ""}`);
+    return "";
   }
   if (a.act === "throw" || a.act === "rocket" || a.act === "snare" || a.act === "hidden" || a.act === "overload") reveal(sim, p, events);
   busy();
@@ -1591,6 +1666,8 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
     for (const k of ["fire", "strafe", "blind", "stagger", "swing", "reloading", "focusLock", "wait", "burst"] as const) u[k] = Math.max(0, u[k] - dt);
     u.chain = Math.max(0, u.chain - dt);
     if (u.chain === 0 && u.swing === 0) u.combo = 0;
+    if (u.knack?.extra) u.knack.extra.t = Math.max(0, u.knack.extra.t - dt);
+    if (u.knack?.react) u.knack.react.t = Math.max(0, u.knack.react.t - dt);
   }
   // The party's reload completes; its focus comes back when the saber is down
   if (!p.dead) {
@@ -1766,7 +1843,7 @@ function landSwing(sim: Sim, p: Unit, events: Event[]) {
     if (u.blade?.saber && u.swing === 0 && !u.mark?.edge && rand(sim) < 0.3) { events.push({ type: "blocked", id: u.id }); continue; }
     // (an edge's doubled die: with advantage, a foe unaware, staggered or blind, the two dice match one time in twenty)
     const doubled = b.rider?.doubles && (u.mode === "idle" || u.stagger > 0 || u.blind > 0) && rand(sim) < 0.05 ? b.rider.doubles * (b.damage / 2) : 0;
-    partyStrike(sim, p, u, damage + doubled, b.type, b.rider, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+    partyStrike(sim, p, u, damage + doubled, b.type, b.rider, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 }, false, true);
     if (crit && b.rider?.critFollow) u.mark = { t: 3, damage: u.mark?.damage ?? 0, type: u.mark?.type, edge: true };
     u.stagger = Math.max(u.stagger, 0.25);
     // The dose of poison on the blade goes in with the first blow that lands
@@ -2182,6 +2259,16 @@ function callForHelp(sim: Sim, u: Unit, events: Event[]) {
   u.act = { kind: "call", t: SHOOT.act.call };
   events.push({ type: "act", id: u.id, act: "call", seconds: SHOOT.act.call });
 }
+// A class feature's reaction that cuts what lands (by an amount, or by half: an uncanny dodge, a parry), once every so many seconds (house rule:
+// the books' once a round)
+function reacted(target: Unit, damage: number, ranged: boolean, events: Event[]): number {
+  const r = target.knack?.react;
+  if (!r || r.t > 0 || r.ac || (r.against === "ranged" && !ranged) || (r.against === "melee" && ranged) || (!r.halve && !r.cut)) return damage;
+  r.t = r.every;
+  const left = Math.max(0, (r.halve ? damage / 2 : damage) - (r.cut ?? 0));
+  events.push({ type: "use", id: target.id, name: r.name, text: `${Math.round(damage - left)} less` });
+  return left;
+}
 function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
   // (the stat block's attack roll, as a chance: SHOOT.melee; held fast, at disadvantage)
   const roll = rand(sim);
@@ -2189,6 +2276,13 @@ function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
   if (roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target))) return void events.push({ type: "miss", id: u.id, target: target.id });
   if (target.decoy) return void hurt(sim, target, 1, "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 });
   if (target.side !== "foe" && warded(sim, target, u.blade?.type ?? "kinetic", events)) return;
+  // (a class feature's reaction that adds to Armor Class against the attack that hit: it turns the blow aside if that is enough)
+  const r = target.knack?.react;
+  if (r && r.ac && r.t <= 0 && r.against !== "ranged" && roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target) + r.ac)) {
+    r.t = r.every;
+    events.push({ type: "use", id: target.id, name: r.name, text: "turned the blow aside" });
+    return void events.push({ type: "miss", id: u.id, target: target.id });
+  }
   // (a natural 20 is a critical, unless armour turns it to a normal hit)
   const crit = roll < 0.05 && !target.critImmune;
   const damage = (u.blade?.damage ?? u.gun?.damage ?? 4) * (crit ? SHOOT.critBy : 1);
@@ -2202,7 +2296,7 @@ function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
       return;
     }
   }
-  hurt(sim, target, damage, u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 }, crit);
+  hurt(sim, target, reacted(target, damage, false, events), u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 }, crit);
   if (u.rider) afflict(sim, target, u.rider, events);
   // (a shield of lightning or the Force about the one struck: the striker takes its damage)
   for (const b of target.buffs ?? []) if (b.retort && (b.temp === undefined || target.temp > 0)) hurt(sim, u, b.retort.damage, b.retort.type, target, events, { x: u.x, y: u.y, h: u.h + 0.8 });
@@ -2289,7 +2383,8 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
         // (a foe's natural 20 on the party: a critical, unless armour turns it to a normal hit)
         const crit = b.side === "foe" && u.side !== "foe" && !u.critImmune && rand(sim) < SHOOT.crit;
         const damage = b.damage * (head && b.side !== "foe" ? SHOOT.headshot : 1) * (crit ? SHOOT.critBy : 1);
-        if (b.side === "player" && owner && !b.plain && u.side === "foe") partyStrike(sim, owner, u, damage, b.type, b.reflected ? undefined : b.rider, events, at, head);
+        if (b.side === "player" && owner && !b.plain && u.side === "foe") partyStrike(sim, owner, u, damage, b.type, b.reflected ? undefined : b.rider, events, at, head, !!b.blade);
+        else if (b.side === "foe" && u.side === "player") hurt(sim, u, reacted(u, damage, true, events), b.type, owner, events, at, crit);
         else hurt(sim, u, damage, b.type, owner, events, at, (head && b.side !== "foe") || crit);
         if (owner?.rider && !b.reflected) afflict(sim, u, owner.rider, events);
         if (b.burst) blow(sim, { x: b.x, y: b.y, h: b.h }, b.burst, b.owner, env, events);
