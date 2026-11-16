@@ -494,7 +494,8 @@ function parkFighters(room: Area, faction: ShipFaction) {
   const l = room.layout;
   if (!kit || !l) return;
   const [fw, fh] = [Math.ceil(kit.length / SQUARE_M), Math.ceil(kit.beam / SQUARE_M)];
-  const most = Math.floor((l.width * l.height) / (fw * fh * 3));
+  // (a third of the floor at most, but one wherever one fits with its walkway round it)
+  const most = Math.max(1, Math.floor((l.width * l.height) / (fw * fh * 3)));
   let n = 0;
   for (let y = 1; y + fh + 1 <= l.height && n < most; y++) {
     for (let x = 1; x + fw + 1 <= l.width && n < most; x++) {
