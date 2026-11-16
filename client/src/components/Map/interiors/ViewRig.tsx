@@ -7,7 +7,7 @@ import { createRoot } from "react-dom/client";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { DEAD, groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
-import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
+import { AIM, aimAt, EYE, FADE, fadeBetween, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
 import { NoticeEye, ShootButtons, ShooterHud } from "./ShooterHud";
 import { ADS, useShoot } from "./shoot";
@@ -108,7 +108,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   start?: number;
   fov?: number;
 }) {
-  const { camera, gl } = useThree();
+  const { camera, gl, scene } = useThree();
   const yaw = useRef(facing.current ?? start);
   const pitch = useRef(0);
   const keys = useRef(new Set<string>());
@@ -118,6 +118,11 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   const stick = useRef<[number, number]>([0, 0]);
   const aimed = useRef<Aimed | null>(null);
   const since = useRef(1);
+  // (what is seen through now, and how far faded; what the last look found in the way)
+  const faded = useRef(new Map<THREE.Mesh, number>());
+  const fadeWant = useRef(new Set<THREE.Mesh>());
+  const fadeT = useRef(0);
+  useEffect(() => () => { for (const m of faded.current.keys()) delete m.userData.fade; faded.current.clear(); }, []);
   const marker = useRef<THREE.Mesh>(null);
   const shown = useRef({ kind: "none", label: "", feet: -1, blocked: false, note: "" });
 
@@ -304,6 +309,21 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const pose = poseOf(mode, new THREE.Vector3(...at), yaw.current, pitch.current, AIM.solids);
     camera.position.copy(pose.position);
     camera.lookAt(pose.look);
+    // (over the shoulder: what stands between the camera and the character is seen through, eased in and out; aim.ts fadeBetween)
+    fadeT.current -= dt;
+    if (mode === "shoulder" && fadeT.current <= 0) {
+      fadeT.current = FADE.every;
+      camera.updateMatrixWorld();
+      fadeWant.current = fadeBetween(scene, camera.position, new THREE.Vector3(...at), EYE);
+    } else if (mode !== "shoulder") fadeWant.current.clear();
+    for (const m of fadeWant.current) if (!faded.current.has(m)) faded.current.set(m, 1);
+    for (const [m, was] of faded.current) {
+      const want = fadeWant.current.has(m) ? FADE.see : 1;
+      const now = was + (want - was) * Math.min(1, dt * FADE.rate);
+      if (want === 1 && now > 0.98) { delete m.userData.fade; faded.current.delete(m); continue; }
+      m.userData.fade = now;
+      faded.current.set(m, now);
+    }
     since.current += dt;
     if (since.current < 0.1) return;
     since.current = 0;

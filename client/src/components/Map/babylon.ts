@@ -1580,6 +1580,10 @@ class Mirror {
     else this.bind(node, mesh, o.material, g, entry.colors, plain);
     mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
     mesh.alphaIndex = o.renderOrder;
+    // (2026-11-16, batch G) What stands between the over-the-shoulder camera and the character is seen through (interiors/aim.ts `fadeBetween`):
+    // the mesh's own visibility, so a material shared with walls elsewhere stays as it is
+    const fade = typeof o.userData.fade === "number" ? o.userData.fade : 1;
+    if (mesh.visibility !== fade) mesh.visibility = fade;
     mesh.receiveShadows = o.receiveShadow;
     mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
     // Instancing: three's instance matrices are already in the mesh's own frame, as Babylon's thin instances are. A scatter in a street or a

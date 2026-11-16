@@ -114,3 +114,30 @@ test("on rolling ground (a district's open ground: a height at each point) the a
   // Looking up and away, the ground is never met
   assert.equal(aimFrom(from, new THREE.Vector3(0, 0.3, 1), ground, undefined, [], []).kind, "none");
 });
+
+// (2026-11-16, batch G) What stands between the over-the-shoulder camera and the character is seen through: only that
+test("the wall between the camera and the character is faded; not the floor, the character, a wall beyond it or a tap box", async () => {
+  const { fadeBetween, inTheWay } = await import("../../client/src/components/Map/interiors/aim");
+  const scene = new THREE.Scene();
+  const feet = new THREE.Vector3(0, 0, 0);
+  const camera = new THREE.Vector3(0, 1.4, 2.2);
+  const between = box([0, 1, 1.2], [3, 2.5, 0.2]);
+  const beyond = box([0, 1, -1.5], [3, 2.5, 0.2]);
+  const floor = box([0, -0.05, 0], [10, 0.1, 10]);
+  const body = box([0, 0.6, 0], [0.5, 1.2, 0.5]);
+  body.userData.pivots = [];
+  const tap = box([0, 0.6, 0.9], [0.8, 1.2, 0.3]);
+  AIM.targets.add(tap);
+  scene.add(between, beyond, floor, body, tap);
+  scene.updateMatrixWorld(true);
+  const got = fadeBetween(scene, camera, feet, EYE);
+  AIM.targets.delete(tap);
+  assert.ok(got.has(between), "the wall in the way");
+  assert.ok(!got.has(beyond), "not what is beyond the character");
+  assert.ok(!got.has(floor), "not the floor");
+  assert.ok(!got.has(body), "not a figure");
+  assert.ok(!got.has(tap), "not a tap box");
+  assert.equal(inTheWay({ distance: 2, normalY: 0, pointY: 1 }, 2.1, 0), false, "at the character itself");
+  assert.equal(inTheWay({ distance: 1, normalY: 1, pointY: 0.1 }, 2.5, 0), false, "the ground");
+  assert.equal(inTheWay({ distance: 1, normalY: -1, pointY: 2.4 }, 2.5, 0), true, "a ceiling or lintel above");
+});
