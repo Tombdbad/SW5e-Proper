@@ -31,7 +31,7 @@ async function compressGlbs(dir, log) {
   await MeshoptDecoder.ready;
   const { EXTMeshoptCompression } = ext;
   const io = new NodeIO()
-    .registerExtensions(Object.values(ext).filter((x) => typeof x === "function" && x.EXTENSION_NAME))
+    .registerExtensions(ext.ALL_EXTENSIONS)
     .registerDependencies({ "meshopt.encoder": MeshoptEncoder, "meshopt.decoder": MeshoptDecoder });
   const warn = console.warn;
   console.warn = () => {};
