@@ -542,6 +542,9 @@ export interface Unit {
   // dice on a hit once every so many seconds (a sneak attack's once a turn), with the edge the text asks for (a foe unaware, staggered, blind,
   // held or marked, or a companion beside it), only with a blade if so, only on the one it marked if so; and a reaction every so many seconds
   // that cuts a blow or bolt (by an amount, by half) or turns a blow aside (Armor Class against the hit)
+  // (2026-11-16, co-op) A member's own spread and crosshair point, kept while another member's input is played (see withActor)
+  spreadNow?: number;
+  aimAt?: { x: number; y: number; h: number };
   knack?: {
     extra?: { damage: number; every: number; needs: "advantage" | "none"; melee: boolean; marks?: boolean; marked?: string; t: number; name: string };
     react?: { cut?: number; halve?: boolean; ac?: number; against: "melee" | "ranged" | "any"; every: number; t: number; name: string };
@@ -778,7 +781,12 @@ export interface Sim {
   lit?: boolean;
   // (2026-11-16) The loose pieces of the place
   props?: Prop[];
+  // (2026-11-16, the co-op shared fight) The party member whose input is being played (the actions act for them), and where each member stands
+  // this step (their own screens move them); absent, the one party unit and the pose `step` is given
+  actor?: string;
+  poses?: Record<string, Pose>;
 }
+export interface Pose { x: number; y: number; h: number; facing: number; moving?: boolean; airborne?: boolean }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 // mulberry32, seeded by the sim and what step it is on
@@ -792,7 +800,24 @@ const between = (sim: Sim, [lo, hi]: [number, number]) => lo + (hi - lo) * rand(
 export const dirOf = (yaw: number): [number, number] => [Math.sin(yaw), Math.cos(yaw)];
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 const alive = (u: Unit) => !u.dead && u.mode !== "gone";
-export const playerOf = (sim: Sim) => sim.units.find((u) => u.side === "player")!;
+// The party unit: the member whose input is being played, else the first (a fight of one has one)
+export const playerOf = (sim: Sim, id: string | undefined = sim.actor) => (id !== undefined ? sim.units.find((u) => u.side === "player" && u.id === id) : undefined) ?? sim.units.find((u) => u.side === "player")!;
+export const playersOf = (sim: Sim) => sim.units.filter((u) => u.side === "player");
+// Plays one member's input: the actions act for them, with their own spread and crosshair point
+export function withActor<T>(sim: Sim, id: string, play: () => T): T {
+  const was = { actor: sim.actor, spread: sim.spread, aim: sim.aim };
+  const u = playerOf(sim, id);
+  sim.actor = id;
+  sim.spread = u.spreadNow ?? SHOOT.spread.base;
+  sim.aim = u.aimAt;
+  try {
+    return play();
+  } finally {
+    u.spreadNow = sim.spread;
+    u.aimAt = sim.aim;
+    Object.assign(sim, was);
+  }
+}
 // (a droid turned for a while is still one of them: the fight is not won while it stands)
 export const foesLeft = (sim: Sim) => sim.units.filter((u) => (u.side === "foe" || (u.turned ?? 0) > 0) && alive(u) && !u.decoy);
 // ---- What buffs and states come to (2026-11-03) ------------------------------------------------------------------------------------------
@@ -1781,17 +1806,20 @@ function snareAt(sim: Sim, g: Grenade, events: Event[]) {
 
 // ---- A frame -------------------------------------------------------------------------------------------------------------------------
 // `player` is where the party is and where it looks (the scene moves it). Returns what happened.
-export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: number; h: number; facing: number; moving?: boolean; airborne?: boolean }): Event[] {
+export function step(sim: Sim, dt: number, env: Env, player: Pose): Event[] {
   const events: Event[] = [];
   sim.time += dt;
   const p = playerOf(sim);
-  if (!p.dead) {
-    p.x = player.x; p.y = player.y; p.h = player.h; p.facing = player.facing;
+  // (each member of the party stands where their own screen has them: `player` for the first, `sim.poses` for the others in a shared fight)
+  for (const m of playersOf(sim)) {
+    const pose = sim.poses?.[m.id] ?? (m === p ? player : undefined);
+    if (!m.dead && pose) { m.x = pose.x; m.y = pose.y; m.h = pose.h; m.facing = pose.facing; }
+    if (m.spreadNow !== undefined) m.spreadNow = Math.max(SHOOT.spread.base, m.spreadNow - SHOOT.spread.settle * dt * 2);
+    // the gun comes up to the shoulder (and goes down when the party reloads, is hurt or put down: it cannot be aimed then)
+    const up = !!m.aimHeld && !!m.gun && !m.dead && m.reloading <= 0 && m.stagger <= 0 && !m.blocking;
+    m.ads = clamp((m.ads ?? 0) + ((up ? 1 : -2) * dt) / SHOOT.ads.time, 0, 1);
   }
   sim.spread = Math.max(SHOOT.spread.base, sim.spread - SHOOT.spread.settle * dt * 2);
-  // the gun comes up to the shoulder (and goes down when the party reloads, is hurt or put down: it cannot be aimed then)
-  const up = !!p.aimHeld && !!p.gun && !p.dead && p.reloading <= 0 && p.stagger <= 0 && !p.blocking;
-  p.ads = clamp((p.ads ?? 0) + ((up ? 1 : -2) * dt) / SHOOT.ads.time, 0, 1);
   // timers
   for (const u of sim.units) {
     for (const k of ["fire", "strafe", "blind", "stagger", "swing", "reloading", "focusLock", "wait", "burst"] as const) u[k] = Math.max(0, u[k] - dt);
@@ -1800,19 +1828,18 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
     if (u.knack?.extra) u.knack.extra.t = Math.max(0, u.knack.extra.t - dt);
     if (u.knack?.react) u.knack.react.t = Math.max(0, u.knack.react.t - dt);
   }
-  // The party's reload completes; its focus comes back when the saber is down
-  if (!p.dead) {
-    if (!p.blocking && p.focusLock === 0) p.focus = Math.min(SHOOT.focus.max, p.focus + SHOOT.focus.regen * dt);
+  for (const m of playersOf(sim)) {
+    // The party's reload completes; its focus comes back when the saber is down
+    if (!m.dead && !m.blocking && m.focusLock === 0) m.focus = Math.min(SHOOT.focus.max, m.focus + SHOOT.focus.regen * dt);
+    finishReload(m);
+    // The party's swing lands
+    if (m.swing > 0 && !m.landed && m.swing <= SHOOT.saber.swing - SHOOT.saber.lands) {
+      m.landed = true;
+      landSwing(sim, m, events, env);
+    }
+    if (m.swing === 0) m.landed = false;
+    m.powerCd = Math.max(0, (m.powerCd ?? 0) - dt);
   }
-  finishReload(p);
-  // The party's swing lands
-  if (p.swing > 0 && !p.landed && p.swing <= SHOOT.saber.swing - SHOOT.saber.lands) {
-    p.landed = true;
-    landSwing(sim, p, events, env);
-  }
-  if (p.swing === 0) p.landed = false;
-
-  p.powerCd = Math.max(0, (p.powerCd ?? 0) - dt);
   // Something pushed or pulled flies until its time is up, or a wall stops it (and hurts it, if the power said so)
   for (const u of sim.units) {
     if (!u.knock || !alive(u)) continue;
@@ -2517,13 +2544,15 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
         break;
       }
       // The party's saber, held up in front, turns a bolt from the front back along the aim
-      if (b.side === "foe" && p.blocking && !p.dead && dist(b, p) < 0.85 && Math.abs(b.h - (p.h + 0.8)) < 0.9) {
+      const guard = b.side === "foe" ? playersOf(sim).find((m) => m.blocking && !m.dead && dist(b, m) < 0.85 && Math.abs(b.h - (m.h + 0.8)) < 0.9) : undefined;
+      if (guard) {
+        const p = guard;
         const [fx, fy] = dirOf(p.facing);
         const off = Math.acos(clamp(((ox - p.x) * fx + (oy - p.y) * fy) / (Math.hypot(ox - p.x, oy - p.y) || 1), -1, 1));
         if (off < 1.4 && p.focus >= SHOOT.focus.perBolt) {
           p.focus -= SHOOT.focus.perBolt;
           if (p.focus < SHOOT.focus.perBolt) { p.blocking = false; p.focusLock = SHOOT.focus.broken; }
-          const to = sim.aim ?? { x: p.x + fx * 10, y: p.y + fy * 10, h: p.h + 1 };
+          const to = (p.aimAt ?? (p === playerOf(sim) ? sim.aim : undefined)) ?? { x: p.x + fx * 10, y: p.y + fy * 10, h: p.h + 1 };
           const dx = to.x - b.x, dy = to.y - b.y, dh = to.h - b.h, d = Math.hypot(dx, dy, dh) || 1;
           const speed = SHOOT.boltSpeed * 1.1;
           Object.assign(b, { side: "player" as Side, owner: p.id, reflected: true, vx: (dx / d) * speed, vy: (dy / d) * speed, vh: (dh / d) * speed, life: 1.6 });
@@ -2636,8 +2665,7 @@ function blow(sim: Sim, at: { x: number; y: number; h: number }, kind: GrenadeKi
 // ---- How it ends -----------------------------------------------------------------------------------------------------------------
 export type Result = "ongoing" | "victory" | "down";
 export function resultOf(sim: Sim): Result {
-  const p = playerOf(sim);
-  if (p.dead || p.hp <= 0) return "down";
+  if (playersOf(sim).every((p) => p.dead || p.hp <= 0 || p.mode === "gone")) return "down";
   return foesLeft(sim).length === 0 ? "victory" : "ongoing";
 }
 // Rounds the fight counts as (the game's clock runs a minute to ten rounds of six seconds)
@@ -2674,4 +2702,125 @@ export function placeUnits(sim: Sim, env: Env, around: { x: number; y: number; f
     u.h = env.floorAt(u.x, u.y);
     taken.push({ x: u.x, y: u.y });
   }
+}
+
+// ---- The co-op shared fight (2026-11-16, batch G; design approved by the user: design-G-coop.md) ----------------------------------------------
+// The co-op server (server/coop.ts) runs one sim for every member in the place, at 20 steps a second: each member's screen sends where it stands
+// and what it pressed (`Command`), the server plays them for that member (`applyCommand`, through `withActor`) and steps the sim, and every member
+// is sent the field as it is (`snapOf`) to draw. The walls are the map's own, baked once by the member who began it (`bakeGrid`, `gridEnv`).
+type Spot = { x: number; y: number; h: number };
+export type Command =
+  | { k: "fire"; from: Spot; to: Spot; moving: boolean; airborne: boolean }
+  | { k: "swing" }
+  | { k: "block"; on: boolean }
+  | { k: "reload" }
+  | { k: "power"; i: number; aim?: Spot | null }
+  | { k: "gear"; name: string; aim?: Spot | null }
+  | { k: "throw"; name: string; from: Spot; dir: [number, number, number] }
+  | { k: "crouch"; on: boolean }
+  | { k: "aim"; on: boolean; to?: Spot | null };
+// One command for one member: what it did, or why not (a gear used is taken from their belt here: `used` counts it by name)
+export function applyCommand(sim: Sim, id: string, cmd: Command, env: Env, events: Event[], opts: { gear?: FightGear[]; used?: Record<string, number>; place?: (x: number, y: number) => boolean } = {}): string {
+  return withActor(sim, id, () => {
+    const p = playerOf(sim);
+    if (p.id !== id) return "";
+    const belt = opts.gear ?? [];
+    const spend = (g: FightGear) => {
+      g.count--;
+      if (opts.used) {
+        const key = g.pool ? `feature:${g.pool}` : g.keep ? "" : g.name;
+        if (key) opts.used[key] = (opts.used[key] ?? 0) + 1;
+      }
+      if (g.pool) for (const o of belt) if (o !== g && o.pool === g.pool) o.count = Math.max(0, o.count - 1);
+    };
+    switch (cmd.k) {
+      case "fire": return firePlayer(sim, cmd.from, cmd.to, events, cmd.moving, cmd.airborne) ? "" : "no";
+      case "swing": return swingPlayer(sim, events) ? "" : "no";
+      case "block": setBlock(sim, cmd.on); return "";
+      case "reload": return reloadPlayer(sim, events) ? "" : "no";
+      case "crouch": p.crouch = cmd.on; return "";
+      case "aim": p.aimHeld = cmd.on; if (cmd.to) sim.aim = cmd.to; return "";
+      case "power": return castPower(sim, cmd.i, env, events, cmd.aim, opts.place);
+      case "gear": {
+        const g = belt.find((x) => x.name === cmd.name && x.count > 0);
+        if (!g) return `No ${cmd.name} left`;
+        const why = applyGear(sim, g, env, events, cmd.aim, opts.place);
+        if (!why) spend(g);
+        return why === KEPT ? "" : why;
+      }
+      case "throw": {
+        const g = belt.find((x) => x.name === cmd.name && x.count > 0 && x.act.act === "throw");
+        if (!g || g.act.act !== "throw") return "You carry no grenades";
+        throwGrenade(sim, g.act.blast, cmd.from, cmd.dir);
+        spend(g);
+        return "";
+      }
+    }
+  });
+}
+
+// The map's walls as the server keeps them: for each square of a box round the fight, whether a body can stand there, its floor (twentieths of a
+// square) and how high what stands on it stops a shot (-1 nothing; a counter's 0.9 over the floor; a wall's 4; a building's top)
+export interface Grid { x0: number; y0: number; w: number; h: number; walk: string; floor: number[]; top: number[] }
+export function bakeGrid(env: Env, x0: number, y0: number, w: number, h: number): Grid {
+  const walk: string[] = [];
+  const floor: number[] = [];
+  const top: number[] = [];
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const [x, y] = [x0 + i + 0.5, y0 + j + 0.5];
+    const f = env.floorAt(x, y);
+    walk.push(env.walkable(x, y) ? "1" : "0");
+    floor.push(Math.round(f * 20));
+    // (how high it stops a shot: the first of a ladder of heights it does not stop, then halved to a twentieth of a square; nothing, or a tower)
+    let t = -1;
+    if (env.blocks(x, y, f + 0.02)) {
+      const ladder = [0.5, 1, 2, 4, 8, 60];
+      const free = ladder.findIndex((up) => !env.blocks(x, y, f + up));
+      if (free < 0) t = f + 999;
+      else {
+        let [lo, hi] = [free ? ladder[free - 1] : 0.02, ladder[free]];
+        while (hi - lo > 0.025) { const mid = (lo + hi) / 2; if (env.blocks(x, y, f + mid)) lo = mid; else hi = mid; }
+        t = f + hi;
+      }
+    }
+    top.push(t < 0 ? -1 : Math.round(t * 20));
+  }
+  return { x0, y0, w, h, walk: walk.join(""), floor, top };
+}
+export function gridEnv(g: Grid): Env {
+  const at = (x: number, y: number) => {
+    const [i, j] = [Math.floor(x) - g.x0, Math.floor(y) - g.y0];
+    return i >= 0 && j >= 0 && i < g.w && j < g.h ? j * g.w + i : -1;
+  };
+  return {
+    walkable: (x, y) => { const k = at(x, y); return k >= 0 && g.walk[k] === "1"; },
+    floorAt: (x, y) => { const k = at(x, y); return k >= 0 ? g.floor[k] / 20 : 0; },
+    blocks: (x, y, h) => { const k = at(x, y); return k < 0 ? h < 4 : g.top[k] >= 0 && h < g.top[k] / 20; },
+  };
+}
+
+// What a member is sent of the field (each step's few): every unit (their own whole; the others without what only the server needs), what flies,
+// burns and lies set, the loose pieces, the events since the last, and how it stands
+export interface Snap { t: number; units: Unit[]; bolts: Bolt[]; grenades: Grenade[]; mines: Mine[]; fields: Field[]; props?: Prop[]; events: Event[]; result: Result; jammed?: boolean; lit?: boolean; eye?: Sim["eye"] }
+const round2 = (n: number) => Math.round(n * 100) / 100;
+export function snapOf(sim: Sim, events: Event[], forId: string): Snap {
+  const units = sim.units.map((u) => {
+    if (u.id === forId) return u;
+    const { powers: _p, kit: _k, path: _path, struck: _s, channel: _c, once: _o, knack: _kn, ...rest } = u;
+    return { ...rest, x: round2(u.x), y: round2(u.y), h: round2(u.h), facing: round2(u.facing) } as Unit;
+  });
+  return { t: round2(sim.time), units, bolts: sim.bolts, grenades: sim.grenades, mines: sim.mines, fields: sim.fields, ...(sim.props ? { props: sim.props } : {}), events, result: resultOf(sim), ...(sim.jammed ? { jammed: true } : {}), ...(sim.lit ? { lit: true } : {}), ...(sim.eye ? { eye: sim.eye } : {}) };
+}
+// A member's screen takes the field as the server has it (its own sim object is kept, so what it holds on to stays good)
+export function applySnap(sim: Sim, snap: Snap) {
+  sim.time = snap.t;
+  sim.units = snap.units;
+  sim.bolts = snap.bolts;
+  sim.grenades = snap.grenades;
+  sim.mines = snap.mines;
+  sim.fields = snap.fields;
+  if (snap.props) sim.props = snap.props;
+  sim.jammed = snap.jammed;
+  sim.lit = snap.lit;
+  sim.eye = snap.eye;
 }
