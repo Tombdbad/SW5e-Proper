@@ -1,11 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { create } from "zustand";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
-import { shipFactionOf, speederKind, type ShipFaction } from "@shared/logic";
+import { FACTIONS, insideHull, shipFactionOf, shipKitName as kitNameOf, speederKind, type HullDeck, type HullFile, type HullPlan, type ShipFaction } from "@shared/logic";
 import { genderOf } from "@shared/logic/relations";
 import { boxUV, surfaceMaterial, SURFACE_GRAIN, WALL_TILE, wallMaterial, type WallSet } from "./surfaces";
 import { shaderPatch } from "./babylon";
@@ -24,6 +24,7 @@ import { MOD_REGIONS, MOD_TEXTURED, TIMBER_REGIONS, INTERIOR_LOOK, runOf, roofEd
 import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import shipKitJson from "@shared/art/shipKit.json";
+import shipHullsJson from "@shared/art/shipHulls.json";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
@@ -846,7 +847,11 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 // A piece of a room's furniture: from the room's pack where the pack has it (turned to face away from its wall, fitted to its
 // footprint and the height the piece may reach, repeated along a long side, and in the room's palette: `tone`), else drawn by
 // the code (CodeFurniture). Until the pack's file is in, the code's piece stands.
-export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare, round }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean; round?: boolean }) {
+// `hull`: the kit hull a piece holds (a parked starfighter's, its ref `hull:<name>`)
+export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare, round, hull }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean; round?: boolean; hull?: string }) {
+  // (a ship's own pieces: the starfighter parked in its bay, at its real size, and the boarding ramp let down through a hatch in the floor)
+  if (/^parked starfighter/i.test(name)) return <ParkedStarfighter hull={hull} w={w} h={h} />;
+  if (/^boarding ramp/i.test(name)) return <BellyRamp make={shipMakeOf(/^ship_(\w+)/.exec(pack ?? "")?.[1]) ?? "civilian"} w={w} h={h} />;
   // (in a round or oval room a piece against the wall is the curved one where there is one)
   const file = pieceOf(pack, name, !bare, !!round && Math.min(w, h) <= 2);
   if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} tone={tone} face={face} />;
@@ -909,6 +914,7 @@ function furnitureLights(n: string, w: number, h: number): ReactNode {
   if (/reactor core/.test(n)) return <pointLight position={[w / 2, 1, h / 2]} color={C.glow} intensity={2} distance={6} />;
   if (/campfire/.test(n)) return <pointLight position={[w / 2, 0.5, h / 2]} color="#ffb347" intensity={2} distance={5} />;
   if (/holo-table/.test(n)) return <Hologram at={[w / 2, 0.95, h / 2]} r={Math.min(w, h) * 0.26} />;
+  if (/viewscreen/.test(n)) return <TacticalDisplay w={w} h={h} />;
   return null;
 }
 
@@ -1518,6 +1524,14 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     k.box([0.52, 0.04, 0.36], instrument ? C.glow : C.amber, { at: [0, 0.54, 0], round: 0.015, finish: instrument ? "glow" : "sheen" });
     for (const [x, z] of [[-0.22, -0.16], [0.22, -0.16], [-0.22, 0.16], [0.22, 0.16]]) k.cyl(0.07, 0.05, C.black, { at: [x, 0.07, z], rot: [Math.PI / 2, 0, 0], seg: 12 });
     k.torus(0.16, 0.015, C.steel, { at: [-0.34, 0.6, 0], rot: [0, Math.PI / 2, 0], arc: Math.PI, finish: "sheen", seg: [5, 12] });
+    return;
+  }
+  if (/viewscreen/.test(n)) {
+    // A ship's wall screen: a dark frame on its bracket, the lit display on it (furnitureLights: the tactical picture)
+    k.box([L - 0.1, 1.0, 0.1], C.black, { at: [0, 1.25, back + 0.07], round: 0.03, finish: "sheen" });
+    k.box([L - 0.24, 0.84, 0.02], "#0a1c26", { at: [0, 1.25, back + 0.13] });
+    k.box([L - 0.6, 0.06, 0.14], C.steelDark, { at: [0, 0.7, back + 0.08], round: 0.02, finish: "sheen" });
+    for (let i = 0; i < 3; i++) k.box([0.08, 0.03, 0.02], [C.glow, C.amber, C.green][i], { at: [L / 2 - 0.3 - i * 0.12, 0.79, back + 0.13], finish: "glow" });
     return;
   }
   if (/boarding ramp/.test(n)) {
@@ -2403,15 +2417,9 @@ export const SHIP_KIT = (shipKitJson as { ships: Record<string, KitShip> }).ship
 // (the same list names the faction of a ship's inside: shared/logic/starshipInterior.ts)
 export type { ShipFaction };
 export const shipFaction = shipFactionOf;
-const KIT_SIZES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
-// The kit's hull for a ship: its faction's of its size (a shuttle's own where the faction has one), else the freighter yards'
-export function shipKitName(ship: Pick<ShipLook, "size" | "role" | "owner">): string {
-  const size = KIT_SIZES.find((s) => s === ship.size.toLowerCase()) ?? { fighter: "small", shuttle: "small", freighter: "medium", capital: "large" }[shipClass(ship)];
-  const faction = shipFaction(ship.owner);
-  const own = `ship_${faction}_${size}`;
-  const shuttle = /shuttle|transport/i.test(ship.role) ? `${own}_shuttle` : "";
-  return shuttle && SHIP_KIT[shuttle] ? shuttle : SHIP_KIT[own] ? own : `ship_civilian_${size}`;
-}
+// The kit's hull for a ship: its faction's of its size (a shuttle's own where the faction has one), else the freighter yards' (shared/logic starshipInterior.ts,
+// which the inside's planner reads too, so the inside is laid out in the hull that is drawn)
+export const shipKitName = (ship: Pick<ShipLook, "size" | "role" | "owner">): string => kitNameOf(ship, (n) => !!SHIP_KIT[n]);
 // A faction's paint, by region (tools/blender/build-ships.py): hull, panels, engine glow, glass, livery, gunmetal. A freighter's hull and stripe
 // and a crime lord's colours vary by the ship's name.
 type Paint = [string, string, string, string, string, string];
@@ -2687,6 +2695,428 @@ export function ShipModel({ ship, w, h, ceiling, perMetre }: { ship: ShipLook; w
     <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4, ceiling ? ceiling / HULL_HEIGHT : Infinity), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
       <OldShipBody ship={ship} grain={grainFor(Math.sqrt((w / 6) * (h / 4)))} />
     </group>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A ship's inside drawn to match its outside (2026-11-15, the user: a ship's inside must match its outside). The rooms are a building's
+// (type "starship", LocalMap); round them, the hull's skin on every deck from the kit's measured outline (shared/art/shipHulls.json, the
+// HullPlan of shared/logic starshipInterior.ts), and in them the maker's doors, glass with a view out, the boarding ramp, the wall screen,
+// a parked starfighter and the turbolift. Nothing here changes what can be walked or used: the rooms and their assets are the planner's.
+// ---------------------------------------------------------------------------------------------
+
+// The maker a ship's `kit:` tag names, if it is one
+export const shipMakeOf = (kit?: string): ShipFaction | undefined => ((FACTIONS as string[]).includes(kit ?? "") ? (kit as ShipFaction) : undefined);
+const SHIP_HULLS: Record<string, HullPlan> = (shipHullsJson as unknown as Partial<HullFile>).hulls ?? {};
+export const hullPlanOf = (name?: string): HullPlan | undefined => (name ? SHIP_HULLS[name] : undefined);
+
+// Nothing in it takes a tap or a shot (the hull's skin, the lift's glass): the floor and the pieces under it keep theirs
+function Untappable({ children }: { children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  useLayoutEffect(() => {
+    group.current?.traverse((o) => { if ((o as THREE.Mesh).isMesh) o.raycast = () => {}; });
+  });
+  return <group ref={group}>{children}</group>;
+}
+
+// The hull's skin round the decks: for each deck up to the one the party is on (`upTo`, a map level; `levelH` the height of one), a plate
+// under the squares inside the hull and a rim just outside them, in the maker's paint, with the engines' glow at their marks. The rooms stand
+// on the plate, so a round hull's rooms are seen inside a disc, a dagger's in its taper. One baked model (a draw for each finish), no lights.
+const HULL_GAP = 0.1; // (between the outline and the skin: a room's wall stands 0.08 out of its squares)
+const HULL_SKIN = 0.3;
+const HULL_RIM = 0.7; // (above the deck: low enough to see over from the map's view)
+const HULL_PLATE = 0.3;
+type Span = [number, number, number, number]; // x0, z0, x1, z1
+function hullSkin(deck: Pick<HullDeck, "rows">, L: number, B: number): { plate: Span[]; rim: Span[] } {
+  const inside = (x: number, y: number) => insideHull(deck, x, y);
+  const [g, T] = [HULL_GAP, HULL_SKIN];
+  const rim: Span[] = [];
+  // the edges between a square inside and one outside, along x (north and south) and along y (west and east), each a strip of skin; a strip is
+  // carried round a corner that turns outward and stopped short of one that turns in
+  for (let y = 0; y < B; y++) {
+    for (const d of [-1, 1]) {
+      for (let x = 0; x < L; ) {
+        if (!(inside(x, y) && !inside(x, y + d))) { x++; continue; }
+        const a = x;
+        while (x < L && inside(x, y) && !inside(x, y + d)) x++;
+        const x0 = inside(a - 1, y + d) ? a + g : a - g - T;
+        const x1 = inside(x, y + d) ? x - g : x + g + T;
+        rim.push(d > 0 ? [x0, y + 1 + g, x1, y + 1 + g + T] : [x0, y - g - T, x1, y - g]);
+      }
+    }
+  }
+  for (let x = 0; x < L; x++) {
+    for (const d of [-1, 1]) {
+      for (let y = 0; y < B; ) {
+        if (!(inside(x, y) && !inside(x + d, y))) { y++; continue; }
+        const a = y;
+        while (y < B && inside(x, y) && !inside(x + d, y)) y++;
+        const z0 = inside(x + d, a - 1) ? a + g : a - g - T;
+        const z1 = inside(x + d, y) ? y - g : y + g + T;
+        rim.push(d > 0 ? [x + 1 + g, z0, x + 1 + g + T, z1] : [x - g - T, z0, x - g, z1]);
+      }
+    }
+  }
+  // the plate: each row's runs, a run that goes on unchanged in the next rows merged with them
+  const plate: Span[] = [];
+  let open = new Map<string, Span>();
+  for (let y = 0; y <= B; y++) {
+    const runs = deck.rows[y] ?? [];
+    const next = new Map<string, Span>();
+    for (let i = 0; y < B && i + 1 < runs.length; i += 2) {
+      const key = `${runs[i]},${runs[i + 1]}`;
+      const was = open.get(key);
+      if (was) { was[3] = y + 1; next.set(key, was); open.delete(key); } else next.set(key, [runs[i], y, runs[i + 1], y + 1]);
+    }
+    plate.push(...open.values());
+    open = next;
+  }
+  return { plate, rim };
+}
+export function HullOutline({ name, make, upTo, levelH, dropped = [] }: { name?: string; make?: ShipFaction; upTo: number; levelH: number; dropped?: number[] }) {
+  const hull = hullPlanOf(name);
+  if (!hull || !hull.decks?.length) return null;
+  const paint = shipPaint(make ?? (SHIP_KIT[name!]?.faction as ShipFaction | undefined) ?? "civilian", name!);
+  // (a deck the plan left out is not drawn: shared/logic boardShip tags it `dropped:`)
+  const decks = hull.decks.filter((d) => d.level <= upTo && !dropped.includes(d.level));
+  if (!decks.length) return null;
+  return (
+    <Untappable>
+      <Model
+        id={`hulloutline:${name}:${upTo}:${dropped.join(",")}:${paint.join("")}`}
+        shadow={false}
+        build={(k) => {
+          for (const deck of decks) {
+            const floor = deck.level * levelH - 0.012;
+            const { plate, rim } = hullSkin(deck, hull.L, hull.B);
+            for (const [x0, z0, x1, z1] of plate) k.box([x1 - x0, HULL_PLATE, z1 - z0], shade(paint[1], 0.55), { at: [(x0 + x1) / 2, floor - HULL_PLATE / 2, (z0 + z1) / 2], finish: "sheen" });
+            for (const [x0, z0, x1, z1] of rim) {
+              const high = HULL_RIM + HULL_PLATE;
+              k.box([x1 - x0, high, z1 - z0], paint[0], { at: [(x0 + x1) / 2, floor - HULL_PLATE + high / 2, (z0 + z1) / 2], finish: "sheen" });
+              k.box([x1 - x0 + 0.02, 0.07, z1 - z0 + 0.02], paint[4], { at: [(x0 + x1) / 2, floor + HULL_RIM - 0.06, (z0 + z1) / 2], finish: "sheen" });
+            }
+            // (the engines' exhausts: a glow on the skin behind their squares, on the deck they are on)
+            for (const e of hull.engines ?? []) {
+              if (e.deck !== hull.decks.indexOf(deck)) continue;
+              const [dx, dz] = e.side === "n" ? [0, -1] : e.side === "s" ? [0, 1] : e.side === "e" ? [1, 0] : [-1, 0];
+              const out = HULL_GAP + HULL_SKIN + 0.03;
+              k.box(dx ? [0.06, 0.4, 0.8] : [0.8, 0.4, 0.06], paint[2], { at: [e.x + 0.5 + dx * (0.5 + out), floor + 0.35, e.y + 0.5 + dz * (0.5 + out)], finish: "glow" });
+            }
+          }
+        }}
+      />
+    </Untappable>
+  );
+}
+
+// The view out of a ship's glass: a starfield (and, out of a wide viewport, a planet's limb under it) drawn once on a canvas, unlit, on a pane
+// just beyond the wall's outer face, the size of the hole (`outline`, models openingOutline); `out` is the way out along the doorway's z
+const VIEWS: Partial<Record<"wide" | "port", THREE.CanvasTexture>> = {};
+function viewTexture(wide: boolean): THREE.CanvasTexture | undefined {
+  const key = wide ? "wide" : "port";
+  if (VIEWS[key] || typeof document === "undefined") return VIEWS[key];
+  const c = document.createElement("canvas");
+  [c.width, c.height] = wide ? [512, 384] : [256, 256];
+  const g = c.getContext("2d")!;
+  const sky = g.createLinearGradient(0, 0, 0, c.height);
+  sky.addColorStop(0, "#02040a");
+  sky.addColorStop(1, "#070b18");
+  g.fillStyle = sky;
+  g.fillRect(0, 0, c.width, c.height);
+  // (a faint nebula, then the stars: the same every time, from a fixed sequence)
+  const neb = g.createRadialGradient(c.width * 0.7, c.height * 0.3, 0, c.width * 0.7, c.height * 0.3, c.width * 0.45);
+  neb.addColorStop(0, "rgba(110,70,160,0.28)");
+  neb.addColorStop(1, "rgba(110,70,160,0)");
+  g.fillStyle = neb;
+  g.fillRect(0, 0, c.width, c.height);
+  let s = wide ? 7 : 3;
+  const rand = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < (wide ? 420 : 160); i++) {
+    const r = rand() < 0.93 ? 0.6 + rand() * 0.6 : 1.3 + rand();
+    g.fillStyle = `rgba(${220 + rand() * 35},${225 + rand() * 30},255,${0.45 + rand() * 0.55})`;
+    g.beginPath();
+    g.arc(rand() * c.width, rand() * c.height, r, 0, Math.PI * 2);
+    g.fill();
+  }
+  if (wide) {
+    // a planet's limb along the foot of the glass, its air a thin bright rim
+    const [px, py, pr] = [c.width * 0.42, c.height * 2.35, c.height * 1.75];
+    const body = g.createRadialGradient(px - pr * 0.3, py - pr * 0.6, pr * 0.2, px, py, pr);
+    body.addColorStop(0, "#3d78a8");
+    body.addColorStop(0.85, "#1d3d5c");
+    body.addColorStop(1, "#0d1c2c");
+    g.fillStyle = body;
+    g.beginPath();
+    g.arc(px, py, pr, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "rgba(150,210,255,0.75)";
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(px, py, pr + 1.5, Math.PI * 1.1, Math.PI * 1.9);
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return (VIEWS[key] = t);
+}
+const VIEW_MATERIALS: Partial<Record<"wide" | "port", THREE.MeshBasicMaterial>> = {};
+function viewMaterial(wide: boolean): THREE.MeshBasicMaterial {
+  const key = wide ? "wide" : "port";
+  return (VIEW_MATERIALS[key] ??= new THREE.MeshBasicMaterial({ map: viewTexture(wide) ?? null, color: "#ffffff" }));
+}
+export function ShipViewOut({ outline, out, wide }: { outline: [number, number][]; out: 1 | -1; wide: boolean }) {
+  const xs = outline.map((p) => p[0]);
+  const ys = outline.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  return (
+    <mesh position={[(x0 + x1) / 2, (y0 + y1) / 2, out * (WINDOW_REACH + 0.02)]} rotation={[0, out > 0 ? Math.PI : 0, 0]} material={viewMaterial(wide)} raycast={() => {}}>
+      <planeGeometry args={[x1 - x0 + 0.08, y1 - y0 + 0.08]} />
+    </mesh>
+  );
+}
+
+// A ship's doorway in its maker's shape (the opening a walker passes is the same square: only the frame and the leaves differ): the Empire's
+// chamfered trapezoid of two leaves, the Rebels' round-topped pressure hatch, the Republic's rounded pair with its red band, the Separatists'
+// tall narrow point, the Mandalorians' T-slot, the underworld's gilded arch, the freighter yards' rounded hatch in its pressure ring.
+// The leaves slide into the wall (DOOR_OPEN_SECONDS); `color` is the way's lamp over it (locked, open, ...), as Opening's
+const DOOR_GAP = { w: DOOR_W - 0.2, h: DOOR_H - 0.1 };
+function shipDoorShape(make: ShipFaction): THREE.Shape {
+  const { w, h } = DOOR_GAP;
+  const poly = (pts: [number, number][]) => new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
+  switch (make) {
+    case "imperial": return poly([[-w / 2, 0], [w / 2, 0], [w / 2, h - 0.34], [w / 2 - 0.18, h], [-w / 2 + 0.18, h], [-w / 2, h - 0.34]]);
+    case "rebel": return roundedRect(w, h, [0.12, 0.12, w / 2, w / 2], -w / 2, 0);
+    case "republic": return roundedRect(w, h, [0.06, 0.06, 0.22, 0.22], -w / 2, 0);
+    case "separatist": return poly([[-0.3, 0], [0.3, 0], [0.3, h - 0.34], [0, h], [-0.3, h - 0.34]]);
+    case "mandalorian": return poly([[-0.24, 0], [0.24, 0], [0.24, h - 0.46], [w / 2, h - 0.34], [w / 2, h - 0.1], [w / 2 - 0.1, h], [-w / 2 + 0.1, h], [-w / 2, h - 0.1], [-w / 2, h - 0.34], [-0.24, h - 0.46]]);
+    case "criminal": return archShape(w, h);
+    default: return roundedRect(w, h, [0.04, 0.04, 0.16, 0.16], -w / 2, 0);
+  }
+}
+// The part of an outline on one side of x = 0 (`side` -1 the left, 1 the right): a leaf of a pair
+function halfOf(pts: THREE.Vector2[], side: 1 | -1): THREE.Vector2[] {
+  const out: THREE.Vector2[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const [p, q] = [pts[i], pts[(i + 1) % pts.length]];
+    const [pin, qin] = [p.x * side >= 0, q.x * side >= 0];
+    if (pin) out.push(p);
+    if (pin !== qin) { const t = p.x / (p.x - q.x); out.push(new THREE.Vector2(0, p.y + (q.y - p.y) * t)); }
+  }
+  return out;
+}
+const PAIRED: Record<ShipFaction, boolean> = { imperial: true, rebel: false, republic: true, separatist: true, mandalorian: true, criminal: true, civilian: false };
+export function ShipDoor({ make, open, color }: { make: ShipFaction; open: boolean; color: string }) {
+  const paint = SHIP_PAINT[make];
+  const pair = PAIRED[make];
+  const leaves = useRef<(THREE.Group | null)[]>([]);
+  const t = useRef(0);
+  useFrame((_, dt) => {
+    const target = open ? 1 : 0;
+    t.current += Math.sign(target - t.current) * Math.min(Math.abs(target - t.current), dt / DOOR_OPEN_SECONDS);
+    const e = t.current * t.current * (3 - 2 * t.current);
+    leaves.current.forEach((g, i) => { if (g) g.position.x = (pair ? (i ? 1 : -1) * (DOOR_GAP.w / 2 + 0.04) : -(DOOR_GAP.w + 0.06)) * e; });
+  });
+  const points = useMemo(() => {
+    const p = shipDoorShape(make).getPoints(10);
+    return p.length > 1 && p[0].distanceTo(p[p.length - 1]) < 1e-6 ? p.slice(0, -1) : p;
+  }, [make]);
+  const sides: (1 | -1 | 0)[] = pair ? [-1, 1] : [0];
+  return (
+    <>
+      <Model
+        id={`shipdoor:frame:${make}:${color}`}
+        build={(k) => {
+          const outer = roundedRect(DOOR_W + 0.24, DOOR_H + 0.2, [0, 0, 0.14, 0.14], -(DOOR_W + 0.24) / 2, 0);
+          outer.holes.push(shipDoorShape(make));
+          k.extrude(outer, 0.3, paint[1], { at: [0, 0, -0.15], bevel: 0.02, finish: "sheen" });
+          // the maker's trim on both faces
+          for (const z of [0.15, -0.17]) {
+            if (make === "criminal") {
+              const ring = archShape(DOOR_GAP.w + 0.16, DOOR_GAP.h + 0.08);
+              ring.holes.push(archShape(DOOR_GAP.w, DOOR_GAP.h));
+              k.extrude(ring, 0.02, C.gold, { at: [0, 0, z], finish: "sheen" });
+              k.sphere(0.05, C.gold, { at: [0, DOOR_GAP.h + 0.12, z + 0.01], seg: [8, 6], finish: "sheen" });
+            } else if (make === "civilian") {
+              k.torus(0.72, 0.03, paint[5], { at: [0, 0.74, z + 0.01], seg: [6, 32], finish: "sheen" });
+            } else if (make === "imperial") {
+              k.box([0.5, 0.04, 0.02], paint[2], { at: [0, DOOR_GAP.h + 0.08, z], finish: "glow" });
+            } else if (make === "separatist") {
+              for (const s of [-1, 1]) k.box([0.03, 0.9, 0.02], paint[4], { at: [s * 0.4, 0.55, z], finish: "sheen" });
+            } else if (make === "mandalorian") {
+              k.box([DOOR_W + 0.1, 0.05, 0.02], paint[4], { at: [0, DOOR_GAP.h + 0.1, z], finish: "sheen" });
+            } else if (make === "rebel") {
+              k.torus(DOOR_GAP.w / 2 + 0.06, 0.03, paint[4], { at: [0, DOOR_GAP.h - DOOR_GAP.w / 2, z + 0.01], arc: Math.PI, seg: [6, 18], finish: "sheen" });
+            }
+          }
+          k.box([0.3, 0.06, 0.32], color, { at: [0, DOOR_H + 0.08, 0], round: 0.025, finish: "glow" });
+        }}
+      />
+      {sides.map((side, i) => (
+        <group key={side} ref={(g) => { leaves.current[i] = g; }}>
+          <Model
+            id={`shipdoor:leaf:${make}:${side}`}
+            build={(k) => {
+              const shape = new THREE.Shape(side ? halfOf(points, side) : points);
+              const leaf = make === "imperial" || make === "mandalorian" ? paint[5] : paint[0];
+              k.extrude(shape, 0.07, leaf, { at: [0, 0, -0.035], finish: "sheen" });
+              for (const z of [0.04, -0.04]) {
+                const x = side ? side * DOOR_GAP.w * 0.25 : 0;
+                const wide = side ? DOOR_GAP.w / 2 - 0.06 : DOOR_GAP.w - 0.1;
+                if (make === "republic") k.box([wide, 0.12, 0.01], paint[4], { at: [x, 0.72, z] });
+                if (make === "imperial") k.box([wide, 0.03, 0.01], paint[1], { at: [x, 0.55, z] });
+                if (make === "mandalorian") k.box([0.04, 0.6, 0.01], paint[4], { at: [side * 0.2, 0.45, z] });
+                if (make === "rebel") {
+                  k.torus(0.13, 0.02, paint[5], { at: [0, 0.7, z], seg: [5, 16], finish: "sheen" });
+                  k.box([0.24, 0.025, 0.01], paint[5], { at: [0, 0.7, z] });
+                  k.box([0.025, 0.24, 0.01], paint[5], { at: [0, 0.7, z] });
+                }
+                if (make === "civilian") k.cyl(0.08, 0.01, paint[3], { at: [0, 1.0, z], rot: [Math.PI / 2, 0, 0], seg: 14, finish: "glass" });
+                if (make === "criminal") k.box([0.02, 0.9, 0.01], C.gold, { at: [side * 0.03, 0.5, z], finish: "sheen" });
+              }
+            }}
+          />
+        </group>
+      ))}
+    </>
+  );
+}
+
+// The boarding ramp let down through the hull's wall (an asset with a `side`): a hatch open in the wall, its door swung up over it, and a ramp
+// with rails running out and down from the deck. In the doorway's frame (x along the wall, `out` the way out along z).
+export function SideRamp({ make, out }: { make: ShipFaction; out: 1 | -1 }) {
+  const paint = SHIP_PAINT[make];
+  return (
+    <Model
+      id={`shipramp:side:${make}:${out}`}
+      build={(k) => {
+        const frame = roundedRect(1.24, 1.6, [0, 0, 0.16, 0.16], -0.62, 0);
+        frame.holes.push(roundedRect(0.96, 1.4, [0, 0, 0.12, 0.12], -0.48, 0));
+        k.extrude(frame, 0.32, paint[1], { at: [0, 0, -0.16], bevel: 0.02, finish: "sheen" });
+        k.box([0.96, 1.38, 0.3], "#05070a", { at: [0, 0.69, 0] });
+        // (the hatch's door, swung up and out over the way)
+        k.box([1.0, 0.06, 0.9], paint[0], { at: [0, 1.5, out * 0.55], rot: [out * 0.25, 0, 0], round: 0.02, finish: "sheen" });
+        // the ramp: down from the sill, its treads lit at the edges
+        const length = 2.6;
+        const drop = 0.05;
+        const tilt = Math.atan2(drop, length);
+        k.group([0, 0.04, out * (0.16 + length / 2)], [out * tilt, 0, 0], undefined, () => {
+          k.box([0.9, 0.08, length], paint[5], { round: 0.02, finish: "sheen" });
+          for (let i = 0; i < 7; i++) k.box([0.8, 0.02, 0.06], paint[1], { at: [0, 0.05, (-length / 2 + 0.25 + i * 0.36) * out] });
+          k.pair((s) => k.box([0.03, 0.02, length - 0.1], paint[2], { at: [s * 0.43, 0.05, 0], finish: "glow" }));
+        });
+        // the rails: high at the hatch, lower toward the foot
+        k.pair((s) => {
+          k.rod([s * 0.47, 0.95, out * 0.2], [s * 0.47, 0.55, out * (0.16 + length)], 0.025, C.steel, { finish: "sheen" });
+          for (const f of [0.2, 0.55, 0.95]) {
+            const z = out * (0.16 + length * f);
+            const top = 0.95 - 0.4 * f;
+            k.rod([s * 0.47, 0.05, z], [s * 0.47, top, z], 0.02, C.steelDark, { finish: "sheen" });
+          }
+        });
+      }}
+    />
+  );
+}
+
+// The boarding ramp under a belly hatch (an asset without a side): the hatch open in the deck, its edge striped, the ramp seen going down into
+// the dark under it with its rails. On its squares (w by h, the corner at the origin).
+function BellyRamp({ make, w, h }: { make: ShipFaction; w: number; h: number }) {
+  const paint = SHIP_PAINT[make];
+  return (
+    <Model
+      id={`shipramp:belly:${make}:${w}x${h}`}
+      build={(k) => {
+        k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => {
+          const [L, D] = [Math.max(w, h), Math.min(w, h)];
+          k.box([L - 0.1, 0.015, D - 0.1], "#04060a", { at: [0, 0.008, 0] });
+          // the coaming round the hatch, in warning stripes of the maker's livery
+          for (const [x, z, sx, sz] of [[0, -D / 2 + 0.05, L, 0.1], [0, D / 2 - 0.05, L, 0.1], [-L / 2 + 0.05, 0, 0.1, D], [L / 2 - 0.05, 0, 0.1, D]] as const) k.box([sx, 0.06, sz], paint[1], { at: [x, 0.03, z], round: 0.015, finish: "sheen" });
+          for (let i = 0; i < Math.round(L * 4); i++) for (const z of [-D / 2 + 0.05, D / 2 - 0.05]) k.box([0.07, 0.065, 0.1], i % 2 ? paint[4] : C.amber, { at: [-L / 2 + 0.12 + i * 0.25, 0.031, z] });
+          // the ramp's treads, darker as they go down, and its rails sinking with them
+          const n = 6;
+          for (let i = 0; i < n; i++) k.box([(L - 0.3) / n - 0.03, 0.01, D - 0.32], shade(paint[5], 1 - i / (n + 1)), { at: [-L / 2 + 0.15 + ((i + 0.5) * (L - 0.3)) / n, 0.018, 0] });
+          k.pair((s) => k.rod([-L / 2 + 0.15, 0.4, s * (D / 2 - 0.14)], [L / 2 - 0.2, 0.03, s * (D / 2 - 0.14)], 0.022, C.steel, { finish: "sheen" }));
+          k.box([0.05, 0.02, D - 0.32], paint[2], { at: [-L / 2 + 0.14, 0.03, 0], finish: "glow" });
+        });
+      }}
+    />
+  );
+}
+
+// A starfighter parked in a bay: the kit hull its ref names, at its real size (UNITS_PER_M), centred on its squares, the bow to +x
+function ParkedStarfighter({ hull, w, h }: { hull?: string; w: number; h: number }) {
+  const kit = hull ? SHIP_KIT[hull] : undefined;
+  const look: ShipLook = { size: kit?.size ?? "Small", role: kit?.role ?? "fighter", status: "landed", name: hull };
+  if (!kit || !hull) return <ShipModel ship={look} w={w} h={h} perMetre={UNITS_PER_M} />;
+  return (
+    <group position={[w / 2, 0, h / 2]}>
+      <KitHull ship={look} name={hull} s={shipScale(kit, w, h, undefined, UNITS_PER_M)} />
+    </group>
+  );
+}
+
+// A ship's wall screen's picture: a tactical plot (range rings, a sweep, contacts) on a canvas drawn once, unlit, on the screen's face
+let TACTICAL: THREE.MeshBasicMaterial | null = null;
+function tacticalMaterial(): THREE.MeshBasicMaterial | null {
+  if (TACTICAL || typeof document === "undefined") return TACTICAL;
+  const c = document.createElement("canvas");
+  [c.width, c.height] = [384, 128];
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#03141c";
+  g.fillRect(0, 0, c.width, c.height);
+  g.strokeStyle = "rgba(90,209,255,0.18)";
+  g.lineWidth = 1;
+  for (let x = 0; x <= c.width; x += 24) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, c.height); g.stroke(); }
+  for (let y = 0; y <= c.height; y += 24) { g.beginPath(); g.moveTo(0, y); g.lineTo(c.width, y); g.stroke(); }
+  const [cx, cy] = [c.width * 0.35, c.height / 2];
+  g.strokeStyle = "rgba(90,209,255,0.7)";
+  for (const r of [18, 36, 54]) { g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke(); }
+  const sweep = g.createLinearGradient(cx, cy, cx + 54, cy - 30);
+  sweep.addColorStop(0, "rgba(90,209,255,0.55)");
+  sweep.addColorStop(1, "rgba(90,209,255,0)");
+  g.fillStyle = sweep;
+  g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, 54, -0.9, -0.3); g.closePath(); g.fill();
+  for (const [x, y, col] of [[cx + 30, cy - 20, "#f0a03c"], [cx - 40, cy + 12, "#e5484d"], [cx + 12, cy + 38, "#58c98b"], [cx - 8, cy - 44, "#e5484d"]] as const) { g.fillStyle = col; g.fillRect(x - 3, y - 3, 6, 6); }
+  g.fillStyle = "rgba(90,209,255,0.85)";
+  for (let i = 0; i < 6; i++) g.fillRect(c.width * 0.66, 16 + i * 17, 40 + ((i * 37) % 70), 6);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return (TACTICAL = new THREE.MeshBasicMaterial({ map: t }));
+}
+function TacticalDisplay({ w, h }: { w: number; h: number }) {
+  const material = tacticalMaterial();
+  if (!material) return null;
+  const L = Math.max(w, h);
+  const along = w >= h;
+  return (
+    <mesh position={along ? [w / 2, 1.25, 0.145] : [0.145, 1.25, h / 2]} rotation={[0, along ? 0 : Math.PI / 2, 0]} material={material} raycast={() => {}}>
+      <planeGeometry args={[L - 0.3, 0.8]} />
+    </mesh>
+  );
+}
+
+// A ship's turbolift (a lift room, form "lift"): a round cab of glass on its steel posts about the lift's floor, a lit ring at each deck it
+// stops at and one under its head; its floor is the lift's own (it climbs as the room's floor does)
+export function Turbolift({ w, h, up, toward }: { w: number; h: number; up: number; toward: "n" | "e" | "s" | "w" }) {
+  const r = Math.min(w, h) / 2 - 0.12;
+  const tall = up + 2.3;
+  const ew = toward === "e" || toward === "w";
+  return (
+    <Untappable>
+      <Model
+        id={`turbolift:${w}x${h}:${up}:${ew ? 1 : 0}`}
+        shadow={false}
+        build={(k) => {
+          k.group([w / 2, 0, h / 2], undefined, undefined, () => {
+            // (the glass on the two sides the way through does not cross)
+            for (const c of ew ? [0, Math.PI] : [Math.PI / 2, -Math.PI / 2]) k.cyl(r, tall, "#9fc8e0", { at: [0, tall / 2, 0], open: true, start: c - 0.8, arc: 1.6, seg: 16, finish: "glass" });
+            for (const y of [0.04, up + 0.04]) k.torus(r, 0.035, C.glow, { at: [0, y, 0], rot: [Math.PI / 2, 0, 0], seg: [5, 32], finish: "glow" });
+            k.torus(r, 0.06, C.steelDark, { at: [0, tall, 0], rot: [Math.PI / 2, 0, 0], seg: [5, 32], finish: "sheen" });
+            for (const a of [0.8, Math.PI - 0.8, Math.PI + 0.8, -0.8].map((q) => q + (ew ? 0 : Math.PI / 2))) k.cyl(0.05, tall, C.steel, { at: [Math.sin(a) * r, tall / 2, Math.cos(a) * r], seg: 8, finish: "sheen" });
+          });
+        }}
+      />
+    </Untappable>
   );
 }
 
