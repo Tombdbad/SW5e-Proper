@@ -15,6 +15,7 @@ import {
   MAX_PLAYERS, MEMBER_COLORS, PERSONAL, applyChanges, cleanPets, crewIssues, defaultSeat, makeCode, rolesOf, unitsOf, withoutMember,
   type Changes, type CoopMember, type Craft, type TravelRoom,
 } from "../shared/logic/coop";
+import { applyCommand, gridEnv, newSim, resultOf, snapOf, step, type Command, type Env, type Event, type FightGear, type Grid, type Pose, type Prop, type Sim, type Unit } from "../shared/logic/shooter";
 
 interface Peer extends CoopMember {
   socket?: WebSocket;
@@ -35,6 +36,107 @@ interface Session {
   idle?: NodeJS.Timeout;
   // Characters the host has removed: they cannot come back into this game
   banned?: Set<string>;
+  // (2026-11-16) The shared real-time fights going on, by the place they are in
+  fights?: Map<string, Fight>;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shared fight (2026-11-16, batch G; the user approved the design, design-G-coop.md). In the shooter mode the members in one place fight
+// one fight, which this server plays (shared/logic/shooter.ts, the same rules as a fight of one): the member who begins it sends the map's walls
+// (a baked grid) and the field as their screen made it; the others in the place are told, and join with their own party unit and belt; each
+// screen sends where it stands and what it pressed, twenty times a second at most, and is sent the field to draw fifteen times a second. A
+// member who walks out leaves it; one who drops keeps their place in it for FIGHT_HOLD_MS (standing, as they were), then leaves. The one who
+// began it settles the world when it ends (the fallen, what they leave); each member settles their own character.
+// ---------------------------------------------------------------------------------------------
+interface FightMember { gear: FightGear[]; used: Record<string, number>; pose?: Pose; cmds: Command[]; notes: string[]; droppedAt?: number }
+interface Fight { area: string; owner: string; sim: Sim; env: Env; members: Map<string, FightMember>; events: Event[]; ticks: number; timer: NodeJS.Timeout }
+const FIGHT_STEP = 0.05;
+const FIGHT_SEND_EVERY = 3;
+const FIGHT_HOLD_MS = 10_000;
+const FIGHT_MAX_UNITS = 60;
+
+// A member's party unit and companions as their screen sent them (the party unit takes the member's id; companions keep theirs, kept apart)
+function memberUnits(id: string, units: unknown): Unit[] {
+  if (!Array.isArray(units)) return [];
+  return (units.slice(0, FIGHT_MAX_UNITS) as Unit[]).filter((u) => u && typeof u === "object" && typeof u.id === "string").map((u) => (u.side === "player" ? { ...u, id } : u));
+}
+function startFight(s: Session, id: string, msg: any) {
+  const area = String(msg.area ?? "");
+  if (!area || !msg.grid || s.members.get(id)?.areaId !== area) return;
+  const fights = (s.fights ??= new Map());
+  const was = fights.get(area);
+  if (was) return void joinFight(s, id, { area, units: (msg.units ?? []).filter((u: Unit) => u?.side === "player" || u?.side === "ally"), gear: msg.gear });
+  const g = msg.grid as Grid;
+  if (!(g.w > 0 && g.h > 0 && g.w * g.h <= 40_000 && typeof g.walk === "string" && g.walk.length === g.w * g.h)) return;
+  const sim = newSim(memberUnits(id, msg.units), { seed: Number(msg.seed) || 1, surprise: !!msg.surprise, props: Array.isArray(msg.props) ? (msg.props as Prop[]).slice(0, 200) : [] });
+  if (!sim.units.some((u) => u.id === id)) return;
+  sim.poses = {};
+  const fight: Fight = { area, owner: id, sim, env: gridEnv(g), members: new Map([[id, { gear: Array.isArray(msg.gear) ? msg.gear : [], used: {}, cmds: [], notes: [] }]]), events: [], ticks: 0, timer: setInterval(() => tickFight(s, fight), FIGHT_STEP * 1000) };
+  fight.timer.unref();
+  fights.set(area, fight);
+  // (the others in the place are told: their screens join with their own party unit)
+  for (const m of s.members.values()) if (m.id !== id && m.areaId === area && m.connected) send(m.socket, { t: "fight-on", area, by: id });
+}
+function joinFight(s: Session, id: string, msg: any) {
+  const fight = s.fights?.get(String(msg.area ?? ""));
+  if (!fight || s.members.get(id)?.areaId !== fight.area) return;
+  const had = fight.members.get(id);
+  if (had) { had.droppedAt = undefined; return; }
+  const mine = memberUnits(id, msg.units).filter((u) => !fight.sim.units.some((o) => o.id === u.id));
+  if (!mine.some((u) => u.id === id)) return;
+  fight.sim.units.push(...mine.slice(0, 8));
+  fight.members.set(id, { gear: Array.isArray(msg.gear) ? msg.gear : [], used: {}, cmds: [], notes: [] });
+}
+// A member out of the fight (walked out, dropped too long, the game left): their unit goes from the field; the next member settles the world
+function leaveFight(s: Session, fight: Fight, id: string) {
+  const m = fight.members.get(id);
+  if (!m) return;
+  send(s.members.get(id)?.socket, { t: "fight-end", area: fight.area, result: "left", owner: fight.owner, used: m.used, snap: snapOf(fight.sim, [], id) });
+  fight.members.delete(id);
+  const u = fight.sim.units.find((o) => o.id === id);
+  if (u) u.mode = "gone";
+  delete fight.sim.poses?.[id];
+  if (fight.owner === id) fight.owner = [...fight.members.keys()][0] ?? "";
+  if (!fight.members.size) endFight(s, fight, "left");
+}
+function endFight(s: Session, fight: Fight, result: string) {
+  clearInterval(fight.timer);
+  s.fights?.delete(fight.area);
+  for (const [id, m] of fight.members) send(s.members.get(id)?.socket, { t: "fight-end", area: fight.area, result, owner: fight.owner, used: m.used, snap: snapOf(fight.sim, fight.events, id) });
+}
+function tickFight(s: Session, fight: Fight) {
+  const sim = fight.sim;
+  const now = Date.now();
+  const events: Event[] = [];
+  for (const [id, m] of fight.members) {
+    if (m.droppedAt && now - m.droppedAt > FIGHT_HOLD_MS) { leaveFight(s, fight, id); continue; }
+    // (where the member stands, as their screen has it: on a crate, a roof or in the air as well as on the floor; the game has no login, and the
+    // screen is the one that walks the map)
+    const u = sim.units.find((o) => o.id === id);
+    if (m.pose && u && !u.dead) sim.poses![id] = m.pose;
+    const place = (x: number, y: number) => {
+      if (!fight.env.walkable(x + 0.5, y + 0.5)) return false;
+      events.push({ type: "reel", id, x: x + 0.5, y: y + 0.5 });
+      return true;
+    };
+    for (const cmd of m.cmds.splice(0, 20)) {
+      const why = applyCommand(sim, id, cmd, fight.env, events, { gear: m.gear, used: m.used, place });
+      if (why && why !== "no") m.notes.push(why);
+    }
+  }
+  if (!fight.members.size || !s.fights?.has(fight.area)) return;
+  // (the first party unit stands where it is when its screen has sent nothing yet)
+  const lead = sim.units.find((u) => u.side === "player")!;
+  events.push(...step(sim, FIGHT_STEP, fight.env, sim.poses?.[lead.id] ?? { x: lead.x, y: lead.y, h: lead.h, facing: lead.facing }));
+  fight.events.push(...events);
+  if (++fight.ticks % FIGHT_SEND_EVERY === 0) {
+    for (const [id, m] of fight.members) {
+      send(s.members.get(id)?.socket, { t: "fight", area: fight.area, owner: fight.owner, snap: snapOf(sim, fight.events, id), gear: m.gear.map((g) => [g.name, g.count]), notes: m.notes.splice(0) });
+    }
+    fight.events = [];
+  }
+  const result = resultOf(sim);
+  if (result !== "ongoing") endFight(s, fight, result === "victory" ? "victory" : "down");
 }
 
 const byCode = new Map<string, Session>();
@@ -94,6 +196,8 @@ const later = (s: Session) => {
 async function close(s: Session) {
   await flush(s);
   if (s.idle) clearTimeout(s.idle);
+  for (const fight of s.fights?.values() ?? []) clearInterval(fight.timer);
+  s.fights?.clear();
   byCode.delete(s.code);
   if (byCampaign.get(s.campaignId) === s) byCampaign.delete(s.campaignId);
   for (const m of s.members.values()) {
@@ -235,6 +339,10 @@ async function hello(socket: WebSocket, msg: any): Promise<{ s: Session; id: str
   send(socket, { t: "welcome", you: id, code: s.code, campaignId, name: s.name, members: membersOf(s), room: s.room });
   pushMembers(s);
   if (s.room && s.room.phase === "gather" && !s.room.joined.includes(id)) pushRoom(s);
+  const fight = s.fights?.get(peer.areaId);
+  const held = fight?.members.get(id);
+  if (held) held.droppedAt = undefined;
+  else if (fight) send(socket, { t: "fight-on", area: fight.area, by: fight.owner });
   return { s, id };
 }
 
@@ -279,6 +387,7 @@ function handle(s: Session, id: string, msg: any) {
           }
         }
       }
+      for (const fight of [...(s.fights?.values() ?? [])]) if (fight.area !== to && fight.members.has(id)) leaveFight(s, fight, id);
       me.areaId = to;
       persistHost(s);
       pushMembers(s);
@@ -378,6 +487,22 @@ function handle(s: Session, id: string, msg: any) {
     case "leave": {
       return void leave(s, id);
     }
+    // The shared fight (see "The shared fight"): begun, joined, a screen's input, walked out of
+    case "fight-open": return void startFight(s, id, msg);
+    case "fight-join": return void joinFight(s, id, msg);
+    case "fight-input": {
+      const m = s.fights?.get(String(msg.area ?? ""))?.members.get(id);
+      if (!m) return;
+      const p = msg.pose;
+      if (p && [p.x, p.y, p.h, p.facing].every((n: unknown) => typeof n === "number" && Number.isFinite(n))) m.pose = { x: p.x, y: p.y, h: p.h, facing: p.facing, moving: !!p.moving, airborne: !!p.airborne };
+      if (Array.isArray(msg.cmds)) m.cmds.push(...(msg.cmds as Command[]).slice(0, 20));
+      return;
+    }
+    case "fight-leave": {
+      const fight = s.fights?.get(String(msg.area ?? ""));
+      if (fight) leaveFight(s, fight, id);
+      return;
+    }
     case "kick": {
       // Only the host removes someone (never themselves); the one removed is told why and cannot rejoin this game
       const target = s.members.get(String(msg.id ?? ""));
@@ -404,6 +529,7 @@ function leave(s: Session, id: string, reason?: string) {
   send(m.socket, { t: "ended", reason });
   m.socket?.close();
   removeFromRoom(s, id);
+  for (const fight of [...(s.fights?.values() ?? [])]) leaveFight(s, fight, id);
   s.members.delete(id);
   broadcast(s, { t: "gone", id, name: m.name });
   if (m.host && s.members.size) [...s.members.values()][0].host = true;
@@ -427,6 +553,8 @@ function dropped(s: Session, id: string, socket: WebSocket) {
     pushRoom(s);
   }
   broadcast(s, { t: "pos", id, a: "", x: 0, y: 0, f: 0 });
+  // (in a shared fight their place is kept a while: FIGHT_HOLD_MS)
+  for (const fight of s.fights?.values() ?? []) { const fm = fight.members.get(id); if (fm) fm.droppedAt = Date.now(); }
   pushMembers(s);
   watchIdle(s);
 }

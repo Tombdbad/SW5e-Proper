@@ -23,6 +23,8 @@ export interface Session {
   // The powers that can be cast in real time (keys 1 to 4), and the force or tech points the party has for them
   powers?: RtPower[];
   points?: number;
+  // (2026-11-16) A co-op game's fight: played by the server for everyone in the place (`area`); `me` is this member's id there
+  shared?: { area: string; me: string };
 }
 export interface Hud {
   hp: number; maxHp: number;
@@ -64,16 +66,24 @@ export const ADS = { k: 0, zoom: 1 };
 interface ShootStore {
   session: Session | null;
   // What the last fight used up (grenades thrown, medpacs, a kit's uses: by item name), for the game to take out of the pack
-  last: { used: Record<string, number> } | null;
+  last: { used: Record<string, number>; guest?: boolean } | null;
   begin: (s: Omit<Session, "id">) => void;
-  end: (used?: Record<string, number>) => void;
+  end: (used?: Record<string, number>, guest?: boolean) => void;
   taps: Record<ShootKey, number>;
   held: Record<ShootKey, boolean>;
   down: (key: ShootKey) => void;
   up: (key: ShootKey) => void;
   hud: Hud;
   setHud: (hud: Partial<Hud>) => void;
+  // (2026-11-16, batch G) The loose pieces of the room the party is in that a power moved or a blow broke (by asset id: the corner in the room's
+  // squares, or gone). The map draws and walks by it; the room is set right when the party is somewhere else (house rule: a place is as it was
+  // when the party next comes)
+  pieces: { area: string; at: Record<string, Piece> };
+  setPiece: (area: string, id: string, piece: Piece) => void;
 }
+export interface Piece { x: number; y: number; gone?: boolean }
+// Where a room's piece stands now (moved or broken in a fight), or where the room has it
+export const pieceNow = <A extends { id: string; x: number; y: number }>(a: A, at: Record<string, Piece>): A & { gone?: boolean } => (at[a.id] ? { ...a, x: at[a.id].x, y: at[a.id].y, gone: at[a.id].gone } : a);
 let counter = 0;
 const KEY_LIST: ShootKey[] = ["aim", "sights", "fire", "grenade", "reload", "block", "swap", "crouch", "item", "next", "power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8", "page", "zoom"];
 const noKeys = () => Object.fromEntries(KEY_LIST.map((k) => [k, false])) as Record<ShootKey, boolean>;
@@ -82,13 +92,15 @@ export const useShoot = create<ShootStore>((set, get) => ({
   session: null,
   last: null,
   begin: (s) => set({ session: { ...s, id: ++counter }, last: null, hud: blankHud(), held: noKeys() }),
-  end: (used = {}) => set({ session: null, last: { used }, hud: blankHud() }),
+  end: (used = {}, guest = false) => set({ session: null, last: { used, ...(guest ? { guest } : {}) }, hud: blankHud() }),
   taps: noTaps(),
   held: noKeys(),
   down: (key) => set({ taps: { ...get().taps, [key]: get().taps[key] + 1 }, held: { ...get().held, [key]: true } }),
   up: (key) => set({ held: { ...get().held, [key]: false } }),
   hud: blankHud(),
   setHud: (hud) => set({ hud: { ...get().hud, ...hud } }),
+  pieces: { area: "", at: {} },
+  setPiece: (area, id, piece) => set({ pieces: { area, at: { ...(get().pieces.area === area ? get().pieces.at : {}), [id]: piece } } }),
 }));
 
 const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap", KeyC: "crouch", KeyZ: "item", KeyT: "next", Digit1: "power0", Digit2: "power1", Digit3: "power2", Digit4: "power3", Digit5: "power4", Digit6: "power5", Digit7: "power6", Digit8: "power7", Digit9: "power8", Digit0: "page", KeyY: "zoom", KeyH: "aim" };

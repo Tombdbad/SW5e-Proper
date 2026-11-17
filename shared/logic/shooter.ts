@@ -39,7 +39,10 @@ export const SHOOT = {
   // the zoom the iron sights give, and the shot at long range that an aimed scope makes less bad (the share of the long-range penalty left)
   ads: { time: 0.22, spread: 0.55, scoped: 0.8, pace: 0.55, iron: 1.25, farScoped: 0.5, kick: 0.65 },
   // How often a foe looks for its way round a wall (seconds), and how many squares it will search
-  path: { every: 0.6, limit: 1500 },
+  path: { every: 0.6, limit: 4000, ahead: 6 },
+  // (2026-11-16) One that runs goes this far off, by a way it can walk, and looks for another when it gets there or this often (seconds); one
+  // run off in fear (a power, a burst that frightens) comes back when its fear is over, and does not leave the fight (house rule)
+  flee: { far: 9, every: 1.5 },
   // Powers (house rule: the books' turns do not exist here): how wide the cone is that a power finds its target in (half angle), the pause after
   // one, how fast something pushed or pulled flies (squares a second), and the longest a condition lasts
   power: { cone: 0.5, pause: 0.9, knock: 9, longest: 8 },
@@ -76,7 +79,20 @@ export const SHOOT = {
   acDown: 0.05,
   // A thrown blade's speed (a saber throw, a thrown weapon), a dash's reach (squares: a saber strike's move)
   thrown: 16, dash: 6,
+  // (2026-11-16, batch G) A caster among the foes or the companions (a stat block's Forcecasting or Techcasting, a companion's powers): the
+  // moment the power takes to come (a hand thrown out: the party sees it and can stagger it), the pause before its next, the longest a
+  // condition it lays on the party holds (the party makes no save in real time: the hold is short instead, house rule), and the farthest it
+  // shoves the party (squares)
+  npc: { windup: 0.6, every: [3.5, 6.5] as [number, number], partyHold: 2, partyShove: 3 },
+  // (2026-11-16, batch G) The class features in real time (house rules; client realtimeFeatures): each attack an Attack action makes beyond the
+  // first adds this share to each shot and blow; a state entered at will (a rage) lasts this long, an extra action this long; a feature's "once
+  // a turn" is once in this many seconds, and so is a reaction
+  feature: { extraAttack: 0.5, stance: 60, surge: 6, turn: 6 },
+  // (2026-11-16) How high a loose piece stands (squares): a bolt below it strikes it, as the map's furniture stops one
+  propTop: 0.9,
 };
+// What each shot and blow does with an Attack action of so many attacks (Extra Attack), as a share of one (house rule: SHOOT.feature)
+export const extraAttackShare = (attacks: number) => 1 + SHOOT.feature.extraAttack * Math.max(0, Math.floor(attacks) - 1);
 // How often an attack roll lands: a d20 + the bonus against the Armor Class (a 1 always misses, a 20 always hits), as a chance and not a die
 export const hitChance = (bonus: number, ac: number) => clamp((21 - ac + bonus) / 20, 0.05, 0.95);
 // A monster (2026-11-02, the user: "Monsters should not use grenades, weapons, or items"): a beast, a plant, an aberration, the undead, an
@@ -426,11 +442,15 @@ export interface Unit {
   powers?: RtPower[];
   powerCd?: number;
   // Being pushed or pulled: a velocity (squares a second), for how long, and the damage if it strikes a wall
-  knock?: { vx: number; vy: number; t: number; strike: number; type: string };
+  knock?: { vx: number; vy: number; t: number; strike: number; type: string; by?: string };
   // The squares a foe is walking to get round a wall, how long until it looks again, and how long until it checks it is not stuck in one
   path?: { x: number; y: number }[];
   pathT: number;
   stuckT: number;
+  // (2026-11-16) Where one that runs makes for and when it looks again; run off in fear (it comes back when that is over)
+  fleeTo?: { x: number; y: number };
+  fleeT?: number;
+  scared?: boolean;
   // ---- What the rules add (2026-11-02): seconds poisoned (a worse aim, a slower swing) and burning (and how hard), temporary hit points, damage
   // types it shrugs off, takes double or ignores, conditions it cannot be given, damage its armour takes off every blow (at least 1 stays),
   // hit points a stat block's regeneration gives every six seconds
@@ -467,7 +487,10 @@ export interface Unit {
   // A monster (see `monstrous`): its shots are spat or flung, not fired from a gun
   natural?: boolean;
   // What its hands (or jaws) are about: a throw, a spray or breath, a call for help, under way for `t` seconds more (SHOOT.act)
-  act?: { kind: "throw" | "spray" | "call"; t: number; blast?: FoeBlast; target?: string };
+  act?: { kind: "throw" | "spray" | "call" | "cast"; t: number; blast?: FoeBlast; target?: string; power?: RtPower };
+  // (2026-11-16) A caster's uses left of its "3/day" powers (by power id), and its pause before the next power
+  perDay?: Record<string, number>;
+  castT?: number;
   // (the party only) half damage from a burst, a cone or a breath, by the item that gives it (Reflex Enhancer: "no damage if you succeed on
   // a saving throw, and only half damage if you fail", taken at its middle: house rule); once a fight, to drop to 1 hit point instead of 0
   evade?: boolean;
@@ -514,7 +537,18 @@ export interface Unit {
   // hears where shots come from; a light carried; a far eye's zoom
   senses?: { through?: number; truesight?: number; hearing?: number; light?: number; zoom?: number };
   // A weapon imbued by a power for its next blow or shot (the "As part of the action used to cast this power" cantrips, a saber strike's extra)
-  imbue?: { damage: number; type: string; stagger?: number; slow?: boolean };
+  imbue?: { damage: number; type: string; stagger?: number; slow?: boolean; afflict?: GrenadeKind; name?: string };
+  // (2026-11-16, batch G) What the party's class features do of themselves in real time (read from their texts: client realtimeFeatures): extra
+  // dice on a hit once every so many seconds (a sneak attack's once a turn), with the edge the text asks for (a foe unaware, staggered, blind,
+  // held or marked, or a companion beside it), only with a blade if so, only on the one it marked if so; and a reaction every so many seconds
+  // that cuts a blow or bolt (by an amount, by half) or turns a blow aside (Armor Class against the hit)
+  // (2026-11-16, co-op) A member's own spread and crosshair point, kept while another member's input is played (see withActor)
+  spreadNow?: number;
+  aimAt?: { x: number; y: number; h: number };
+  knack?: {
+    extra?: { damage: number; every: number; needs: "advantage" | "none"; melee: boolean; marks?: boolean; marked?: string; t: number; name: string };
+    react?: { cut?: number; halve?: boolean; ac?: number; against: "melee" | "ranged" | "any"; every: number; t: number; name: string };
+  };
 }
 // What a power (or an item casting one) gives the party for so many seconds (2026-11-03, house rules after the powers' texts; a duration of an
 // hour or more lasts the fight): AC, temporary hit points, resistances or immunity, a faster pace (a share added), damage back at whoever strikes
@@ -542,6 +576,9 @@ export interface Buff {
   orbit?: { dps: number; radius: number; type: string };
   // foes sensed through walls within so many squares, what is hidden seen within so many (a Force or tech sense)
   sense?: { through?: number; truesight?: number };
+  // (2026-11-16, a class feature's) more damage on each blow of a blade (a rage's), and a share off the time between shots (an extra action)
+  melee?: number;
+  quick?: number;
 }
 // What a foe has to use besides its attack (2026-11-02, house rule): the area actions of its stat block (a flamethrower's cone, a grenade's
 // sphere: thrown, `left` times or every so many seconds as its recharge goes), medpacs for itself, an antidote and an extinguisher for its own
@@ -588,6 +625,10 @@ export interface RtPower {
   tradition?: "force" | "tech";
   level?: number;
   item?: boolean;
+  // (2026-11-16) A push or pull that moves objects (rules.ts powerMotion, at the character's level): the largest it moves, the heaviest, and
+  // how many squares by the size of what is moved
+  // (`choice`: the text lets the caster push or pull; here it pulls while the party is aiming, and pushes otherwise: house rule)
+  objects?: { size: Prop["size"]; maxPounds?: number; choice?: boolean; squares: Partial<Record<Prop["size"], number>> };
 }
 // (`natural`: spat or flung by a monster, drawn as what it is: a glob, a spine)
 // (`rider`: the weapon's riders, carried by the party's shots; `blade`: a thrown blade, drawn as one; `plain`: no riders at all, a harpoon's or
@@ -633,10 +674,21 @@ export type GearAct =
   | { act: "cast"; power: RtPower }
   | { act: "leap"; range: number }
   | { act: "eye"; range: number }
-  | { act: "light" };
+  | { act: "light" }
+  // (2026-11-16, batch G) The class features used in a fight (read from their texts: client realtimeFeatures; house rules where the books'
+  // actions and turns do not exist): hit points or temporary ones at once (a second wind, a rallying maneuver); a state for so many seconds (a
+  // rage: more damage on the blade's blows, resistances); an extra action (a surge: shots come quicker for a moment); damage to each foe near
+  // and in sight, with what it brings (a feature that makes those near save: no save here, it takes hold); the next hit carries more and what
+  // it brings (a maneuver on the attack or the hit)
+  | { act: "rally"; hp: number; temp: number }
+  | { act: "stance"; seconds: number; melee: number; resist: string[] }
+  | { act: "surge"; seconds: number }
+  | { act: "wave"; damage: number; type: string; range: number; afflict?: GrenadeKind }
+  | { act: "strike"; damage: number; type?: string; afflict?: GrenadeKind };
 // (`rest`: used up for the rest, not from the pack: the game counts it in the character's feature uses until a short or long rest)
 // (`keep`: not used up: a net or bolas, a harpoon, picked up or reeled in again)
-export interface FightGear { name: string; count: number; act: GearAct; rest?: "short" | "long"; keep?: boolean }
+// (`pool`: a class feature's, its uses counted in the character's feature uses under this key, shared with the others of the same pool)
+export interface FightGear { name: string; count: number; act: GearAct; rest?: "short" | "long"; keep?: boolean; pool?: string }
 export type Event =
   | { type: "shot"; from: string; x: number; y: number; h: number }
   | { type: "hit"; target: string; by: string; amount: number; head?: boolean; x: number; y: number; h: number }
@@ -660,7 +712,7 @@ export type Event =
   | { type: "call"; id: string; jammed: boolean }
   | { type: "arrive"; id: string }
   // a foe begins something with its hands that takes a moment (the scene plays its wind-up), or is stopped in it; a blow that misses
-  | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal"; seconds: number }
+  | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal" | "cast"; seconds: number; name?: string }
   | { type: "broken"; id: string }
   | { type: "miss"; id: string; target: string }
   // (2026-11-03) a once-a-rest feature spent (by item name), what befell a foe (held, slowed, charmed, turned...: the scene marks it), a line
@@ -669,10 +721,13 @@ export type Event =
   | { type: "once"; name: string }
   | { type: "status"; id: string; text: string }
   | { type: "line"; x: number; y: number; h: number; tx: number; ty: number; th: number }
-  | { type: "reel"; x: number; y: number }
+  | { type: "reel"; x: number; y: number; id?: string }
   | { type: "decoy"; id: string }
   | { type: "image"; id: string }
-  | { type: "revealed"; id: string };
+  | { type: "revealed"; id: string }
+  // (2026-11-16) a loose piece moved (its corner now) or broken
+  | { type: "prop"; id: string; x: number; y: number }
+  | { type: "broke"; id: string; x: number; y: number };
 
 export interface Env {
   // Whether a bolt, or a thrown thing, is stopped at this point (a wall, or something higher than it flies)
@@ -680,7 +735,27 @@ export interface Env {
   // Whether a body can stand in this square
   walkable: (x: number, y: number) => boolean;
   floorAt: (x: number, y: number) => number;
+  // (2026-11-16) Moves a loose piece of the place (Prop) up to so many squares along a direction, by the map's own rule (shared/logic shoveAsset):
+  // where its corner ends, how far it went, and the square where it came up against something (`who` says whether a body stands there)
+  shove?: (id: string, dir: { x: number; y: number }, squares: number, who: (x: number, y: number) => boolean) => { x: number; y: number; squares: number; struck?: { x: number; y: number } } | null;
 }
+// A loose piece of the place the fight is in (2026-11-16, batch G; the user: Force pull and push "should be able to move furniture assets ... anything
+// that has weight, but is NOT attached to the floor", and "destructible furniture"): its corner and squares (the map's grid), its size and weight
+// (shared/logic bulkOf, house rule), and its hit points if it breaks (breakOf), with the burst a fuel drum makes. The scene keeps where it stands.
+export interface Prop {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  size: "Tiny" | "Small" | "Medium" | "Large" | "Huge" | "Gargantuan";
+  pounds: number;
+  hp?: number;
+  burst?: GrenadeKind;
+  gone?: boolean;
+}
+const SIZE_ORDER = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"];
 export interface Sim {
   units: Unit[];
   bolts: Bolt[];
@@ -704,7 +779,14 @@ export interface Sim {
   lastSeen?: { x: number; y: number };
   eye?: { x: number; y: number; h: number; t: number };
   lit?: boolean;
+  // (2026-11-16) The loose pieces of the place
+  props?: Prop[];
+  // (2026-11-16, the co-op shared fight) The party member whose input is being played (the actions act for them), and where each member stands
+  // this step (their own screens move them); absent, the one party unit and the pose `step` is given
+  actor?: string;
+  poses?: Record<string, Pose>;
 }
+export interface Pose { x: number; y: number; h: number; facing: number; moving?: boolean; airborne?: boolean }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 // mulberry32, seeded by the sim and what step it is on
@@ -718,11 +800,29 @@ const between = (sim: Sim, [lo, hi]: [number, number]) => lo + (hi - lo) * rand(
 export const dirOf = (yaw: number): [number, number] => [Math.sin(yaw), Math.cos(yaw)];
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 const alive = (u: Unit) => !u.dead && u.mode !== "gone";
-export const playerOf = (sim: Sim) => sim.units.find((u) => u.side === "player")!;
+// The party unit: the member whose input is being played, else the first (a fight of one has one)
+export const playerOf = (sim: Sim, id: string | undefined = sim.actor) => (id !== undefined ? sim.units.find((u) => u.side === "player" && u.id === id) : undefined) ?? sim.units.find((u) => u.side === "player")!;
+export const playersOf = (sim: Sim) => sim.units.filter((u) => u.side === "player");
+// Plays one member's input: the actions act for them, with their own spread and crosshair point
+export function withActor<T>(sim: Sim, id: string, play: () => T): T {
+  const u = sim.units.find((o) => o.side === "player" && o.id === id);
+  if (!u) return play();
+  const was = { actor: sim.actor, spread: sim.spread, aim: sim.aim };
+  sim.actor = id;
+  sim.spread = u.spreadNow ?? SHOOT.spread.base;
+  sim.aim = u.aimAt;
+  try {
+    return play();
+  } finally {
+    u.spreadNow = sim.spread;
+    u.aimAt = sim.aim;
+    Object.assign(sim, was);
+  }
+}
 // (a droid turned for a while is still one of them: the fight is not won while it stands)
 export const foesLeft = (sim: Sim) => sim.units.filter((u) => (u.side === "foe" || (u.turned ?? 0) > 0) && alive(u) && !u.decoy);
 // ---- What buffs and states come to (2026-11-03) ------------------------------------------------------------------------------------------
-const sumOf = (u: Unit, k: "ac" | "speed" | "aim") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
+const sumOf = (u: Unit, k: "ac" | "speed" | "aim" | "quick") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
 // The AC a blow or shot is aimed at: the sheet's, what buffs add, what a curse took off
 export const acOf = (u: Unit) => u.ac + sumOf(u, "ac") - (u.acDown ?? 0);
 // A share of the walking pace: a buff's haste, a slowed level, held fast, anchored feet (the scene moves the party by it)
@@ -757,10 +857,10 @@ export function blankUnit(base: Pick<Unit, "id" | "name" | "side" | "x" | "y" | 
     focus: SHOOT.focus.max, blocking: false, landed: false, wasReloading: false, pathT: 0, stuckT: 0, poisoned: 0, burning: 0, temp: 0, ...base,
   };
 }
-export function newSim(units: Unit[], opts: { seed?: number; surprise?: boolean } = {}): Sim {
+export function newSim(units: Unit[], opts: { seed?: number; surprise?: boolean; props?: Prop[] } = {}): Sim {
   // (those waiting for a call are off the map until it comes)
   for (const u of units) if (u.reserve) u.mode = "gone";
-  return { units, bolts: [], grenades: [], time: 0, seq: 1, seed: opts.seed ?? 1, spread: SHOOT.spread.base, surprise: !!opts.surprise, mines: [], fields: [] };
+  return { units, bolts: [], grenades: [], time: 0, seq: 1, seed: opts.seed ?? 1, spread: SHOOT.spread.base, surprise: !!opts.surprise, mines: [], fields: [], ...(opts.props?.length ? { props: opts.props } : {}) };
 }
 
 // ---- Seeing and standing -----------------------------------------------------------------------------------------------------------
@@ -803,29 +903,69 @@ export function unstick(u: Unit, env: Env): boolean {
 
 // The way round a wall: the squares from one point to another over ground a body can stand on (eight ways, never cutting a corner), or
 // null when there is none within `limit` squares searched
-export function route(env: Env, from: { x: number; y: number }, to: { x: number; y: number }, limit: number = SHOOT.path.limit): { x: number; y: number }[] | null {
+export function route(env: Env, from: { x: number; y: number }, to: { x: number; y: number }, limit: number = SHOOT.path.limit, nearest = false): { x: number; y: number }[] | null {
+  // (2026-11-16, batch G) A* over the squares, eight ways, a diagonal costing its length, no corner cut; `limit` squares looked at at most. With
+  // `nearest`, a goal that cannot be reached gives the way to the square nearest it that can (a foe below a party on a roof comes as near as
+  // it can, not into the wall).
   const a = { x: Math.floor(from.x), y: Math.floor(from.y) };
   const b = { x: Math.floor(to.x), y: Math.floor(to.y) };
   if (a.x === b.x && a.y === b.y) return [];
-  const key = (x: number, y: number) => `${x},${y}`;
-  const prev = new Map<string, { x: number; y: number }>([[key(a.x, a.y), a]]);
-  const queue = [a];
+  const key = (x: number, y: number) => (x + 32768) * 65536 + (y + 32768);
+  const h = (x: number, y: number) => { const [dx, dy] = [Math.abs(b.x - x), Math.abs(b.y - y)]; return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy); };
+  const g = new Map<number, number>([[key(a.x, a.y), 0]]);
+  const prev = new Map<number, number>();
+  const closed = new Set<number>();
+  const heap: { f: number; x: number; y: number }[] = [{ f: h(a.x, a.y), x: a.x, y: a.y }];
+  const push = (n: { f: number; x: number; y: number }) => {
+    heap.push(n);
+    for (let i = heap.length - 1; i > 0;) { const up = (i - 1) >> 1; if (heap[up].f <= heap[i].f) break; [heap[up], heap[i]] = [heap[i], heap[up]]; i = up; }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ;) {
+        const [l, r] = [2 * i + 1, 2 * i + 2];
+        let m = i;
+        if (l < heap.length && heap[l].f < heap[m].f) m = l;
+        if (r < heap.length && heap[r].f < heap[m].f) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
   let found = false;
-  for (let head = 0, n = 0; head < queue.length && n < limit; head++, n++) {
-    const c = queue[head];
+  let best = { x: a.x, y: a.y, h: h(a.x, a.y) };
+  for (let n = 0; heap.length && n < limit;) {
+    const c = pop();
+    const ck = key(c.x, c.y);
+    if (closed.has(ck)) continue;
+    closed.add(ck);
+    n++;
     if (c.x === b.x && c.y === b.y) { found = true; break; }
+    const hc = h(c.x, c.y);
+    if (hc < best.h) best = { x: c.x, y: c.y, h: hc };
+    const gc = g.get(ck)!;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
       const [nx, ny] = [c.x + dx, c.y + dy];
-      if (prev.has(key(nx, ny))) continue;
+      const nk = key(nx, ny);
+      if (closed.has(nk)) continue;
       if (!(env.walkable(nx + 0.5, ny + 0.5) || (nx === b.x && ny === b.y))) continue;
       if (dx && dy && !(env.walkable(c.x + dx + 0.5, c.y + 0.5) && env.walkable(c.x + 0.5, c.y + dy + 0.5))) continue;
-      prev.set(key(nx, ny), c);
-      queue.push({ x: nx, y: ny });
+      const ng = gc + (dx && dy ? Math.SQRT2 : 1);
+      if (ng >= (g.get(nk) ?? Infinity)) continue;
+      g.set(nk, ng);
+      prev.set(nk, ck);
+      push({ f: ng + h(nx, ny), x: nx, y: ny });
     }
   }
-  if (!found) return null;
+  if (!found && (!nearest || (best.x === a.x && best.y === a.y))) return null;
+  const end = found ? b : best;
   const out: { x: number; y: number }[] = [];
-  for (let c = b; !(c.x === a.x && c.y === a.y); c = prev.get(key(c.x, c.y))!) out.unshift({ x: c.x + 0.5, y: c.y + 0.5 });
+  for (let k = key(end.x, end.y); k !== key(a.x, a.y); k = prev.get(k)!) out.unshift({ x: Math.floor(k / 65536) - 32768 + 0.5, y: (k % 65536) - 32768 + 0.5 });
   return out;
 }
 // Whether the way straight from one point to another is ground a body can walk
@@ -895,7 +1035,7 @@ function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | u
 // The party's hit on a foe (2026-11-03): its damage, then what comes with it: the weapon's riders (more dice, an opener's first hit, a slow, a
 // quickening of the party, a cone set off, a shove, a chain to the next foe: the last three once a rest), a mark's damage, a buff's, the blow
 // imbued by a power, a lowered AC (more damage: SHOOT.acDown); points back when it falls (once a rest)
-function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rider: Rider | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false) {
+function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rider: Rider | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false, melee = false) {
   const once = (item: string) => {
     if (!p.once?.[item]) return false;
     delete p.once[item];
@@ -910,12 +1050,27 @@ function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rid
   u.opened = true;
   if (u.mark && u.mark.t > 0 && u.mark.damage) add(u.mark.damage, u.mark.type);
   for (const b of p.buffs ?? []) if (b.empower) add(b.empower.damage, b.empower.type);
+  // (a rage's more damage on the blade's blows)
+  if (melee) for (const b of p.buffs ?? []) if (b.melee) add(b.melee);
+  // (a class feature's extra dice, once every so many seconds, with the edge its text asks for)
+  const k = p.knack?.extra;
+  if (k && k.t <= 0 && (!k.melee || melee) && (!k.marks || !k.marked || k.marked === u.id) && alive(u)) {
+    const edge = u.mode === "idle" || u.stagger > 0 || u.blind > 0 || (u.held ?? 0) > 0 || !!u.mark?.edge || cloakedNow(p) || sim.units.some((o) => o.side === "ally" && alive(o) && !o.decoy && dist(o, u) <= 1.6);
+    if (k.needs === "none" || edge) {
+      add(k.damage);
+      k.t = k.every;
+      if (k.marks) k.marked = u.id;
+      events.push({ type: "once", name: k.name });
+    }
+  }
   if (p.imbue) {
     const im = p.imbue;
     p.imbue = undefined;
     add(im.damage, im.type);
     if (im.stagger) u.stagger = Math.max(u.stagger, im.stagger);
     if (im.slow) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = SHOOT.slowLevel; }
+    if (im.afflict) afflict(sim, u, im.afflict, events);
+    if (im.name) events.push({ type: "status", id: u.id, text: im.name });
   }
   if (rider?.slow && alive(u)) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = Math.max(u.slowBy ?? 0, rider.slow); events.push({ type: "status", id: u.id, text: "slowed" }); }
   if (rider?.haste) addBuff(p, { name: "quickened", t: 3, speed: rider.haste });
@@ -979,7 +1134,7 @@ function afflict(sim: Sim, u: Unit, k: Pick<GrenadeKind, "blinds" | "stun" | "pr
   if (k.fear && !immune(/frighten/i)) {
     // (the party and its own do not run: they are shaken for a moment; nor do the brave)
     if (u.side !== "foe" || u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, k.fear));
-    else if (u.mode !== "flee") { startFleeing(u, events); u.flee = k.fear; }
+    else if (u.mode !== "flee") { startFleeing(u, events); u.flee = k.fear; u.scared = true; }
   }
 }
 // When the leader of a gang falls the rest break and run (as in the turn-based fight)
@@ -1028,7 +1183,7 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   if (g.left <= 0) return false;
   if (g.launcher && !g.shell) return false;
   g.left--;
-  p.fire = g.interval;
+  p.fire = g.interval * Math.max(0.3, 1 - sumOf(p, "quick"));
   reveal(sim, p, events);
   // (past the normal range the aim is worse, unless a scope takes the long range's penalty away: a Focusing Scope does it for the shot that is aimed, as the books say, and
   // a scope looked through takes some of it away)
@@ -1083,6 +1238,20 @@ export function setBlock(sim: Sim, on: boolean) {
 // cold that slows, a d12 kept; subroutines spend more points for more (distant: double range; twinned: a second target; improved: the dice
 // rerolled, taken as a sixth more; heightened: a condition half as long again; extended: a buff twice as long; quickened: no pause after),
 // each a number of times a rest (Unit.channel.subUses)
+// The loose piece whose squares hold a point (within a margin), not broken
+export function propAt(sim: Sim, x: number, y: number, margin = 0): Prop | undefined {
+  return sim.props?.find((o) => !o.gone && x >= o.x - margin && x < o.x + o.w + margin && y >= o.y - margin && y < o.y + o.d + margin);
+}
+// A blow, bolt or burst on a loose piece: one that breaks loses hit points, and is gone at none (a fuel drum bursts)
+function hurtProp(sim: Sim, o: Prop, amount: number, env: Env, events: Event[], by = "") {
+  if (o.gone || o.hp === undefined || amount <= 0) return;
+  o.hp -= amount;
+  if (o.hp > 0) return;
+  o.gone = true;
+  const at = { x: o.x + o.w / 2, y: o.y + o.d / 2, h: env.floorAt(o.x + o.w / 2, o.y + o.d / 2) + 0.4 };
+  events.push({ type: "broke", id: o.id, x: at.x, y: at.y });
+  if (o.burst) blow(sim, at, o.burst, by, env, events);
+}
 export function castPower(sim: Sim, index: number, env: Env, events: Event[], aim?: { x: number; y: number; h: number } | null, place?: (x: number, y: number) => boolean, given?: RtPower): string {
   const p = playerOf(sim);
   const power = given ?? p.powers?.[index];
@@ -1103,6 +1272,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     return true;
   };
   const range = power.range + (power.tradition === "force" ? ch.range ?? 0 : 0);
+  const bonus0 = () => (mine && cost ? cost * ch.perPoint!.per : 0);
   const radius = power.radius > 0 ? power.radius + (power.tradition === "force" ? ch.radius ?? 0 : 0) : 0;
   const from = { x: p.x, y: p.y, h: p.h + 1.0 };
   let at = { x: p.x, y: p.y, h: p.h + 1.0 };
@@ -1189,6 +1359,44 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     }
     return spend();
   }
+  // ---- A loose piece under the crosshair, for a power that moves objects (its text: the largest and heaviest, how far by size)
+  if ((power.kind === "push" || power.kind === "pull") && power.objects && aim) {
+    // (the piece under the crosshair, else the one nearest the line of the aim within the power's cone, if no foe is nearer that line)
+    const [ax, ay] = dirOf(p.facing);
+    const offOf = (x: number, y: number) => Math.acos(clamp(((x - p.x) * ax + (y - p.y) * ay) / (Math.hypot(x - p.x, y - p.y) || 1), -1, 1));
+    const reach = (x: number, y: number) => Math.hypot(x - p.x, y - p.y) <= range + 1;
+    const near = (sim.props ?? []).filter((o) => !o.gone && reach(o.x + o.w / 2, o.y + o.d / 2) && offOf(o.x + o.w / 2, o.y + o.d / 2) <= SHOOT.power.cone).sort((a, b) => offOf(a.x + a.w / 2, a.y + a.d / 2) - offOf(b.x + b.w / 2, b.y + b.d / 2))[0];
+    const foeOff = Math.min(Infinity, ...sim.units.filter((u) => u.side === "foe" && alive(u) && !u.decoy && reach(u.x, u.y)).map((u) => offOf(u.x, u.y)));
+    const piece = propAt(sim, aim.x, aim.y, 0.45) ?? (near && offOf(near.x + near.w / 2, near.y + near.d / 2) < foeOff ? near : undefined);
+    if (piece && reach(piece.x + piece.w / 2, piece.y + piece.d / 2)) {
+      const o = power.objects;
+      if (o.maxPounds !== undefined && piece.pounds > o.maxPounds) return `${power.name}: the ${piece.name.toLowerCase()} is too heavy (about ${piece.pounds.toLocaleString()} lb)`;
+      const squares = SIZE_ORDER.indexOf(piece.size) <= SIZE_ORDER.indexOf(o.size) ? o.squares[piece.size] ?? 0 : 0;
+      if (!squares) return `${power.name}: the ${piece.name.toLowerCase()} is too big (${piece.size.toLowerCase()})`;
+      if (!env.shove) return `${power.name}: it will not move here`;
+      const [cx, cy] = [piece.x + piece.w / 2, piece.y + piece.d / 2];
+      const way = power.kind === "pull" || (o.choice && p.aimHeld) ? -1 : 1;
+      const len = Math.hypot(cx - p.x, cy - p.y) || 1;
+      const body = (x: number, y: number) => sim.units.some((u) => alive(u) && !u.decoy && u.side !== "player" && Math.floor(u.x) === x && Math.floor(u.y) === y);
+      const moved = env.shove(piece.id, { x: ((cx - p.x) / len) * way, y: ((cy - p.y) / len) * way }, Math.max(1, Math.round(squares)), body);
+      if (!moved || (!moved.squares && !moved.struck)) return `${power.name}: the ${piece.name.toLowerCase()} will not go that way`;
+      piece.x = moved.x;
+      piece.y = moved.y;
+      at = { x: piece.x + piece.w / 2, y: piece.y + piece.d / 2, h: env.floorAt(piece.x, piece.y) + 0.5 };
+      events.push({ type: "prop", id: piece.id, x: piece.x, y: piece.y });
+      // (what it comes up against: a body there, and the piece itself, both take the text's damage)
+      if (moved.struck && power.strike > 0) {
+        const struck = moved.struck;
+        for (const u of sim.units) if (alive(u) && !u.decoy && u.side !== "player" && Math.floor(u.x) === struck.x && Math.floor(u.y) === struck.y) {
+          hurt(sim, u, power.strike + bonus0(), power.type, p, events, { x: u.x, y: u.y, h: u.h + 0.8 });
+          u.stagger = Math.max(u.stagger, 0.6);
+        }
+        hurtProp(sim, piece, power.strike, env, events, p.id);
+      }
+      noise(sim, at.x, at.y, 8, events);
+      return spend();
+    }
+  }
   // ---- On foes: the nearest the line of the aim, within reach and the cone, in sight (a distant subroutine doubles the reach)
   const [fx, fy] = dirOf(p.facing);
   const fits = (u: Unit) => u.side === "foe" && alive(u) && u.mode !== "gone" && !u.decoy && (!power.droids || !!u.droid) && (!power.people || (!u.droid && !u.natural)) && (power.maxHp === undefined || u.hp <= power.maxHp);
@@ -1232,7 +1440,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     else if (power.kind === "fear") {
       // (the brave do not run: they are shaken for a moment)
       if (u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, power.seconds));
-      else { u.mode = "flee"; u.flee = hold(power.seconds); }
+      else { u.mode = "flee"; u.flee = hold(power.seconds); u.scared = true; }
     } else if (power.kind === "push" || power.kind === "pull") {
       if (u.anchored) continue;
       const way = power.kind === "push" ? 1 : -1;
@@ -1548,6 +1756,38 @@ export function applyGear(sim: Sim, gear: FightGear, env: Env, events: Event[], 
     sim.lit = !sim.lit;
     said(sim.lit ? "the light is on (it shows you the way, and you to them)" : "the light is off");
     return KEPT;
+  } else if (a.act === "rally") {
+    if (p.hp >= p.maxHp && !a.temp) return `${gear.name}: already unhurt`;
+    const was = p.hp;
+    p.hp = Math.min(p.maxHp, p.hp + a.hp);
+    p.temp = Math.max(p.temp, a.temp);
+    said([p.hp > was && `+${Math.round(p.hp - was)}`, a.temp && `${Math.round(a.temp)} temporary hit points`].filter(Boolean).join(", "));
+  } else if (a.act === "stance") {
+    if (p.buffs?.some((b) => b.name === gear.name)) return `${gear.name}: already on`;
+    addBuff(p, { name: gear.name, t: a.seconds, ...(a.melee ? { melee: a.melee } : {}), ...(a.resist.length ? { resist: a.resist } : {}) });
+    said(describeBuff({ name: gear.name, t: a.seconds, resist: a.resist }) + (a.melee ? `, +${a.melee} a blow` : ""));
+    return "";
+  } else if (a.act === "surge") {
+    addBuff(p, { name: gear.name, t: a.seconds, quick: 0.5, speed: 0.25 });
+    p.fire = 0;
+    p.powerCd = 0;
+    said("a burst of speed: shots come quicker");
+    return "";
+  } else if (a.act === "wave") {
+    let n = 0;
+    for (const u of sim.units) {
+      if (u.side !== "foe" || !alive(u) || u.decoy || dist(p, u) > a.range + SHOOT.radius || !sees(env, p, u)) continue;
+      if (a.damage > 0) hurt(sim, u, a.damage, a.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+      if (a.afflict) afflict(sim, u, a.afflict, events);
+      n++;
+    }
+    if (!n) return `${gear.name}: no foe near enough`;
+    events.push({ type: "power", id: p.id, kind: "damage", name: gear.name, x: p.x, y: p.y, h: p.h + 1, tx: p.x, ty: p.y, th: p.h + 1 });
+    reveal(sim, p, events);
+  } else if (a.act === "strike") {
+    p.imbue = { damage: a.damage, type: a.type ?? (p.gun && !p.blade ? p.gun.type : p.blade?.type ?? "kinetic"), ...(a.afflict ? { afflict: a.afflict } : {}), name: gear.name };
+    said(`the next hit${a.damage ? ` +${Math.round(a.damage)}` : ""}`);
+    return "";
   }
   if (a.act === "throw" || a.act === "rocket" || a.act === "snare" || a.act === "hidden" || a.act === "overload") reveal(sim, p, events);
   busy();
@@ -1567,43 +1807,47 @@ function snareAt(sim: Sim, g: Grenade, events: Event[]) {
 
 // ---- A frame -------------------------------------------------------------------------------------------------------------------------
 // `player` is where the party is and where it looks (the scene moves it). Returns what happened.
-export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: number; h: number; facing: number; moving?: boolean; airborne?: boolean }): Event[] {
+export function step(sim: Sim, dt: number, env: Env, player: Pose): Event[] {
   const events: Event[] = [];
   sim.time += dt;
   const p = playerOf(sim);
-  if (!p.dead) {
-    p.x = player.x; p.y = player.y; p.h = player.h; p.facing = player.facing;
+  // (each member of the party stands where their own screen has them: `player` for the first, `sim.poses` for the others in a shared fight)
+  for (const m of playersOf(sim)) {
+    const pose = sim.poses?.[m.id] ?? (m === p ? player : undefined);
+    if (!m.dead && pose) { m.x = pose.x; m.y = pose.y; m.h = pose.h; m.facing = pose.facing; }
+    if (m.spreadNow !== undefined) m.spreadNow = Math.max(SHOOT.spread.base, m.spreadNow - SHOOT.spread.settle * dt * 2);
+    // the gun comes up to the shoulder (and goes down when the party reloads, is hurt or put down: it cannot be aimed then)
+    const up = !!m.aimHeld && !!m.gun && !m.dead && m.reloading <= 0 && m.stagger <= 0 && !m.blocking;
+    m.ads = clamp((m.ads ?? 0) + ((up ? 1 : -2) * dt) / SHOOT.ads.time, 0, 1);
   }
   sim.spread = Math.max(SHOOT.spread.base, sim.spread - SHOOT.spread.settle * dt * 2);
-  // the gun comes up to the shoulder (and goes down when the party reloads, is hurt or put down: it cannot be aimed then)
-  const up = !!p.aimHeld && !!p.gun && !p.dead && p.reloading <= 0 && p.stagger <= 0 && !p.blocking;
-  p.ads = clamp((p.ads ?? 0) + ((up ? 1 : -2) * dt) / SHOOT.ads.time, 0, 1);
   // timers
   for (const u of sim.units) {
     for (const k of ["fire", "strafe", "blind", "stagger", "swing", "reloading", "focusLock", "wait", "burst"] as const) u[k] = Math.max(0, u[k] - dt);
     u.chain = Math.max(0, u.chain - dt);
     if (u.chain === 0 && u.swing === 0) u.combo = 0;
+    if (u.knack?.extra) u.knack.extra.t = Math.max(0, u.knack.extra.t - dt);
+    if (u.knack?.react) u.knack.react.t = Math.max(0, u.knack.react.t - dt);
   }
-  // The party's reload completes; its focus comes back when the saber is down
-  if (!p.dead) {
-    if (!p.blocking && p.focusLock === 0) p.focus = Math.min(SHOOT.focus.max, p.focus + SHOOT.focus.regen * dt);
+  for (const m of playersOf(sim)) {
+    // The party's reload completes; its focus comes back when the saber is down
+    if (!m.dead && !m.blocking && m.focusLock === 0) m.focus = Math.min(SHOOT.focus.max, m.focus + SHOOT.focus.regen * dt);
+    finishReload(m);
+    // The party's swing lands
+    if (m.swing > 0 && !m.landed && m.swing <= SHOOT.saber.swing - SHOOT.saber.lands) {
+      m.landed = true;
+      landSwing(sim, m, events, env);
+    }
+    if (m.swing === 0) m.landed = false;
+    m.powerCd = Math.max(0, (m.powerCd ?? 0) - dt);
   }
-  finishReload(p);
-  // The party's swing lands
-  if (p.swing > 0 && !p.landed && p.swing <= SHOOT.saber.swing - SHOOT.saber.lands) {
-    p.landed = true;
-    landSwing(sim, p, events);
-  }
-  if (p.swing === 0) p.landed = false;
-
-  p.powerCd = Math.max(0, (p.powerCd ?? 0) - dt);
   // Something pushed or pulled flies until its time is up, or a wall stops it (and hurts it, if the power said so)
   for (const u of sim.units) {
     if (!u.knock || !alive(u)) continue;
     const k = u.knock;
     const h = Math.min(dt, k.t);
     if (!walk(u, k.vx * h, k.vy * h, env)) {
-      if (k.strike > 0) hurt(sim, u, k.strike, k.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+      if (k.strike > 0) hurt(sim, u, k.strike, k.type, k.by ? sim.units.find((o) => o.id === k.by) : p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
       u.knock = undefined;
     } else {
       k.t -= h;
@@ -1626,7 +1870,14 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
   stepMines(sim, dt, env, events);
   stepBackup(sim, env, events);
   // The ones who ran are gone when their time is up
-  for (const u of sim.units) if (u.mode === "flee" && (u.flee -= dt) <= 0 && !u.dead) { u.mode = "gone"; u.fled = true; }
+  // (one run off in fear comes back when it is over: SHOOT.flee)
+  for (const u of sim.units) {
+    if (u.mode !== "flee" || (u.flee -= dt) > 0 || u.dead) continue;
+    if (u.scared) {
+      Object.assign(u, { mode: "engage", scared: false, fleeTo: undefined, path: undefined, wait: between(sim, SHOOT.react) });
+      events.push({ type: "status", id: u.id, text: "comes back" });
+    } else { u.mode = "gone"; u.fled = true; }
+  }
   return events;
 }
 // Damage that comes a little every frame (fire, gas) is added up and dealt in whole points (a blow is at least 1, which a frame's share is not)
@@ -1647,6 +1898,7 @@ function stepStates(sim: Sim, dt: number, events: Event[]) {
     u.poisoned = Math.max(0, u.poisoned - dt);
     if (u.using !== undefined) u.using = Math.max(0, u.using - dt);
     for (const b of u.kit?.blasts ?? []) b.cd = Math.max(0, b.cd - dt);
+    if (u.castT) u.castT = Math.max(0, u.castT - dt);
     // Standing in fire or gas: it hurts every second, a fire keeps burning a moment after, a gas poisons
     for (const f of sim.fields) {
       if (Math.hypot(u.x - f.x, u.y - f.y) > f.radius || u.h > f.h + 1.2) continue;
@@ -1741,7 +1993,7 @@ function finishReload(p: Unit) {
     g.spent += take;
   }
 }
-function landSwing(sim: Sim, p: Unit, events: Event[]) {
+function landSwing(sim: Sim, p: Unit, events: Event[], env: Env) {
   const b = p.blade!;
   const [fx, fy] = dirOf(p.facing);
   const damage = b.damage * (1 + SHOOT.saber.comboBonus * p.combo);
@@ -1757,7 +2009,7 @@ function landSwing(sim: Sim, p: Unit, events: Event[]) {
     if (u.blade?.saber && u.swing === 0 && !u.mark?.edge && rand(sim) < 0.3) { events.push({ type: "blocked", id: u.id }); continue; }
     // (an edge's doubled die: with advantage, a foe unaware, staggered or blind, the two dice match one time in twenty)
     const doubled = b.rider?.doubles && (u.mode === "idle" || u.stagger > 0 || u.blind > 0) && rand(sim) < 0.05 ? b.rider.doubles * (b.damage / 2) : 0;
-    partyStrike(sim, p, u, damage + doubled, b.type, b.rider, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+    partyStrike(sim, p, u, damage + doubled, b.type, b.rider, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 }, false, true);
     if (crit && b.rider?.critFollow) u.mark = { t: 3, damage: u.mark?.damage ?? 0, type: u.mark?.type, edge: true };
     u.stagger = Math.max(u.stagger, 0.25);
     // The dose of poison on the blade goes in with the first blow that lands
@@ -1766,6 +2018,15 @@ function landSwing(sim: Sim, p: Unit, events: Event[]) {
       afflict(sim, u, { blinds: false, poison: secondsOf(1) }, events);
       p.venom = undefined;
     }
+  }
+  // (a loose piece in the arc takes the blow too)
+  for (const o of sim.props ?? []) {
+    if (o.gone || o.hp === undefined) continue;
+    const [cx, cy] = [Math.max(o.x, Math.min(p.x, o.x + o.w)), Math.max(o.y, Math.min(p.y, o.y + o.d))];
+    const d = Math.hypot(cx - p.x, cy - p.y);
+    if (d > SHOOT.saber.reach + (b.reach ?? 0)) continue;
+    if (d > 0.3 && Math.acos(clamp(((cx - p.x) * fx + (cy - p.y) * fy) / d, -1, 1)) > SHOOT.saber.arc) continue;
+    hurtProp(sim, o, damage, env, events, p.id);
   }
   noise(sim, p.x, p.y, 8, events);
 }
@@ -1783,6 +2044,21 @@ function nearest(sim: Sim, u: Unit, list: Unit[]) {
   }
   return best;
 }
+// Where one that runs makes for: of the ground SHOOT.flee.far squares off (away from the hunter first), the farthest from it that it can walk to
+function fleeGoal(u: Unit, hunter: { x: number; y: number }, env: Env): { x: number; y: number } | undefined {
+  const away = Math.atan2(u.x - hunter.x, u.y - hunter.y);
+  const spots: { x: number; y: number; d: number }[] = [];
+  for (let k = 0; k < 16; k++) {
+    const a = away + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 8);
+    for (const r of [SHOOT.flee.far, SHOOT.flee.far / 2]) {
+      const [x, y] = [Math.floor(u.x + Math.sin(a) * r) + 0.5, Math.floor(u.y + Math.cos(a) * r) + 0.5];
+      if (fitsAt(env, x, y)) spots.push({ x, y, d: Math.hypot(x - hunter.x, y - hunter.y) });
+    }
+  }
+  spots.sort((p, q) => q.d - p.d);
+  for (const p of spots.slice(0, 8)) if (p.d > dist(u, hunter) && route(env, u, p, 600)) return p;
+  return undefined;
+}
 // Goes for a target: straight at it where the way is clear, else along the way round the wall (looked for again every so often)
 function chase(u: Unit, target: { x: number; y: number }, speed: number, dt: number, env: Env, plain: boolean): boolean {
   u.pathT -= dt;
@@ -1790,11 +2066,17 @@ function chase(u: Unit, target: { x: number; y: number }, speed: number, dt: num
     u.path = undefined;
     return steer(u, target, speed, dt, env);
   }
+  let fresh = false;
   if (!u.path || !u.path.length || u.pathT <= 0) {
-    u.path = route(env, u, target) ?? undefined;
+    u.path = route(env, u, target, SHOOT.path.limit, true) ?? undefined;
     u.pathT = SHOOT.path.every;
+    fresh = true;
   }
-  while (u.path && u.path.length && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < 0.3) u.path.shift();
+  while (u.path && u.path.length && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < 0.3) { u.path.shift(); fresh = true; }
+  // (the corners cut where the way is clear: it walks to the farthest of the next few squares it can walk to straight, not square by square)
+  if (fresh && u.path && u.path.length > 1) {
+    for (let i = Math.min(SHOOT.path.ahead, u.path.length - 1); i > 0; i--) if (lineWalkable(env, u, u.path[i])) { u.path.splice(0, i); break; }
+  }
   const next = u.path?.[0];
   return steer(u, next ?? target, speed, dt, env);
 }
@@ -1849,8 +2131,16 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     return;
   }
   if (u.mode === "flee") {
+    // (it runs by a way it can walk, to ground well away from the nearest of the other side, not into the wall behind it)
     const hunter = nearest(sim, u, foes) ?? target;
-    steer(u, hunter, pace * 1.15, dt, env, true);
+    u.fleeT = (u.fleeT ?? 0) - dt;
+    if (!u.fleeTo || u.fleeT <= 0 || dist(u, u.fleeTo) < 0.6) {
+      u.fleeTo = fleeGoal(u, hunter, env);
+      u.fleeT = SHOOT.flee.every;
+      u.path = undefined;
+    }
+    if (u.fleeTo) chase(u, u.fleeTo, pace * 1.15, dt, env, true);
+    else steer(u, hunter, pace * 1.15, dt, env, true);
     return;
   }
   // (it has lost the party: it goes to where it was last seen and looks about)
@@ -1876,7 +2166,8 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     if (a.kind === "call") {
       events.push({ type: "call", id: u.id, jammed: !!sim.jammed });
       if (!sim.jammed) sim.backupAt = sim.time + SHOOT.backup.delay;
-    } else if (a.blast && a.kind === "throw") lob(sim, u, a.blast.kind, at, events, a.blast.natural);
+    } else if (a.kind === "cast" && a.power) npcCast(sim, u, a.power, sim.units.find((o) => o.id === a.target && (alive(o) || a.power!.kind === "revive")) ?? at, env, events);
+    else if (a.blast && a.kind === "throw") lob(sim, u, a.blast.kind, at, events, a.blast.natural);
     else if (a.blast) spray(sim, u, a.blast, at, events);
     return;
   }
@@ -1893,6 +2184,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     events.push({ type: "use", id: u.id, name: "Medpac", text: `+${u.hp - was}` });
   } else if (u.using === 0) u.using = undefined;
   if (useKit(sim, u, target, d, seen, events)) return;
+  if (pickCast(sim, u, target, d, seen, env, events)) return;
   if (!u.brave && !u.leader && u.hp <= u.maxHp * SHOOT.fleeAt && u.side === "foe") return void startFleeing(u, events);
   if (u.caller && u.side === "foe" && !sim.called) callForHelp(sim, u, events);
   const blind = u.blind > 0;
@@ -1973,8 +2265,8 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
   for (const b of k.blasts) {
     if (b.left <= 0 || b.cd > 0) continue;
     if (b.thrown ? d < b.kind.radius + 1.5 || d > b.range : d > b.range) continue;
-    // (it does not throw where its own would be caught)
-    if (b.thrown && sim.units.some((o) => o !== u && o.side === u.side && alive(o) && Math.hypot(o.x - target.x, o.y - target.y) < b.kind.radius)) continue;
+    // (it does not throw where its own would be caught: a companion's own are the party and the other companions)
+    if (b.thrown && sim.units.some((o) => o !== u && allied(o, u) && alive(o) && Math.hypot(o.x - target.x, o.y - target.y) < b.kind.radius)) continue;
     b.left--;
     b.cd = b.every;
     // (the wind-up first: the arm drawn back, the chest filled for a breath; SHOOT.act)
@@ -1984,6 +2276,141 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
     return true;
   }
   return false;
+}
+// The same side: the party and its companions, or the foes
+const allied = (a: Unit, b: Unit) => (a.side === "foe") === (b.side === "foe");
+// ---- Casters other than the party (2026-11-16, batch G; the user: companions "use a single best attack and do not cast", "enemy Force users do
+// not cast"). A foe with a stat block's Forcecasting or Techcasting, or a companion with powers, has its powers read from their texts as the
+// party's are (`powers`, `points`, and `perDay` for a "3/day"), and plays them through the same kinds. HOUSE RULE (the books' turns and saves do
+// not exist here): every few seconds (SHOOT.npc.every) it takes the power that does the most now: a hurt friend healed, a fallen one brought back,
+// a buff it does not have, else a power on the one it fights (damage, a hold, a blinding, a slow, fear, a push or pull, a thrown blade, harmful
+// ground, a charm on a foe). The power comes after a wind-up the party can see and break (SHOOT.npc.windup, as a throw's); a condition it lays on
+// the party lasts at most SHOOT.npc.partyHold seconds, and a shove sends the party at most SHOOT.npc.partyShove squares.
+function pickCast(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, _env: Env, events: Event[]): boolean {
+  if (!u.powers?.length || (u.castT ?? 0) > 0 || u.blind > 0 || u.stagger > 0 || (u.held ?? 0) > 0) return false;
+  const can = (w: RtPower) => (w.cost === 0 || (u.points ?? 0) >= w.cost) && (u.perDay?.[w.id] ?? 1) > 0;
+  const friends = sim.units.filter((o) => alive(o) && allied(o, u) && !o.decoy);
+  const options: { w: RtPower; on: Unit; score: number }[] = [];
+  for (const w of u.powers) {
+    if (!can(w)) continue;
+    const reach = Math.max(1.5, w.range) + 0.8;
+    if (w.kind === "heal") {
+      const low = friends.filter((o) => o.hp < o.maxHp * 0.5 && dist(u, o) <= reach).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+      if (low) options.push({ w, on: low, score: 30 });
+      continue;
+    }
+    if (w.kind === "revive") {
+      const down = sim.units.find((o) => o !== u && o.dead && !o.fled && !o.decoy && !o.droid && o.side === u.side && dist(u, o) <= reach);
+      if (down) options.push({ w, on: down, score: 35 });
+      continue;
+    }
+    if (w.kind === "buff" && w.buff) {
+      if (!w.buff.cloak && !w.buff.react && !u.buffs?.some((b) => b.name === w.name)) options.push({ w, on: u, score: 8 + (w.buff.ac ?? 0) * 2 + (w.buff.temp ? 4 : 0) + (w.buff.resist?.length ? 3 : 0) });
+      continue;
+    }
+    if (!seen || d > reach || target.decoy) continue;
+    const held = target.stagger > 0.5 || (target.held ?? 0) > 0;
+    const score: Partial<Record<PowerKind, number>> = {
+      damage: 10 + w.damage, throw: 10 + w.damage,
+      stun: held ? 0 : 18, restrain: held || target.huge ? 0 : 16, blind: target.blind > 0 ? 0 : 14, slow: (target.slowed ?? 0) > 0 ? 0 : 12, fear: 11,
+      push: w.strike > 0 ? 12 + w.strike : 9, pull: w.strike > 0 ? 12 + w.strike : 9,
+      zone: w.field && w.field.dps > 0 ? 10 + w.field.dps * 3 : 0,
+      // (a charm only on the party's foes: the party's own mind is not taken over in real time)
+      mind: target.side === "foe" && !target.droid && !target.natural ? 13 : 0,
+    };
+    const s = score[w.kind] ?? 0;
+    if (s > 0) options.push({ w, on: target, score: s });
+  }
+  if (!options.length) {
+    u.castT = 1;
+    return false;
+  }
+  options.sort((a, b) => b.score - a.score);
+  // (now and then the second best, so that a caster is not one power over and over)
+  const pick = options[options.length > 1 && rand(sim) < 0.35 ? 1 : 0];
+  if (pick.w.cost) u.points = (u.points ?? 0) - pick.w.cost;
+  if (u.perDay?.[pick.w.id] !== undefined) u.perDay[pick.w.id]--;
+  u.castT = between(sim, SHOOT.npc.every);
+  u.aiming = 0;
+  u.volleyLeft = 0;
+  u.act = { kind: "cast", t: SHOOT.npc.windup, target: pick.on.id, power: pick.w };
+  events.push({ type: "act", id: u.id, act: "cast", seconds: SHOOT.npc.windup, name: pick.w.name });
+  return true;
+}
+// The power a caster other than the party wound up takes hold (see pickCast)
+function npcCast(sim: Sim, u: Unit, w: RtPower, t: Unit, env: Env, events: Event[]) {
+  const from = { x: u.x, y: u.y, h: u.h + 1.1 };
+  const at = { x: t.x, y: t.y, h: t.h + SHOOT.height * 0.6 };
+  events.push({ type: "power", id: u.id, kind: w.kind, name: w.name, ...from, tx: at.x, ty: at.y, th: at.h });
+  if (w.kind === "heal") {
+    const was = t.hp;
+    t.hp = Math.min(t.maxHp, t.hp + w.damage);
+    return void events.push({ type: "use", id: u.id, name: w.name, text: `${t.name} +${Math.round(t.hp - was)}` });
+  }
+  if (w.kind === "revive") {
+    if (!t.dead) return;
+    Object.assign(t, { dead: false, hp: Math.max(1, w.damage), mode: "engage" });
+    return void events.push({ type: "use", id: u.id, name: w.name, text: `${t.name} is back up` });
+  }
+  if (w.kind === "buff" && w.buff) {
+    addBuff(u, { ...w.buff, t: Math.min(SHOOT.power.longest * 2, w.buff.t) });
+    return void events.push({ type: "use", id: u.id, name: w.name, text: describeBuff(w.buff) });
+  }
+  if (!sees(env, { x: u.x, y: u.y, h: u.h }, { x: t.x, y: t.y, h: t.h })) return;
+  noise(sim, u.x, u.y, 8, events);
+  if (w.kind === "throw") return void launch(sim, u, { damage: w.damage, type: u.blade?.type ?? w.type, long: w.range * 1.5, blade: true, plain: true }, from, at, 0.04, events, SHOOT.thrown);
+  if (w.kind === "zone" && w.field) {
+    sim.fields.push({ id: sim.seq++, owner: u.id, x: t.x, y: t.y, h: env.floorAt(t.x, t.y), radius: Math.max(1, w.radius || 3), t: Math.min(SHOOT.power.longest * 2, w.seconds || 12), dps: w.field.dps, type: w.field.type, ...(w.field.poison ? { poison: 1 } : {}), ...(w.field.obscure ? { obscure: true } : {}), ...(w.field.slow ? { slow: true } : {}) });
+    return;
+  }
+  const taken = [t, ...(w.radius ? sim.units.filter((o) => o !== t && alive(o) && !allied(o, u) && !o.decoy && dist(o, t) <= w.radius) : [])];
+  for (const o of taken) {
+    const party = o.side === "player";
+    // (the party makes no save in real time: what holds it is short, SHOOT.npc.partyHold)
+    const hold = (s: number) => Math.min(party ? SHOOT.npc.partyHold : SHOOT.power.longest, Math.max(1, s || 6));
+    const immune = (c: RegExp) => !!o.condImmune?.some((x) => c.test(x));
+    const hitAt = { x: o.x, y: o.y, h: o.h + SHOOT.height * 0.6 };
+    if (o.mode === "idle") alertFoe(sim, o, events);
+    if (w.kind === "damage") {
+      hurt(sim, o, w.damage, w.type, u, events, hitAt);
+      o.stagger = Math.max(o.stagger, party ? 0.15 : 0.3);
+    } else if (w.kind === "stun" && !immune(/stun|paraly/i)) {
+      o.stagger = Math.max(o.stagger, hold(w.seconds));
+      events.push({ type: "status", id: o.id, text: "stunned" });
+    } else if (w.kind === "blind" && !immune(/blind/i)) o.blind = Math.max(o.blind, hold(w.seconds));
+    else if (w.kind === "restrain" && !o.huge && !immune(/restrain/i)) {
+      o.held = Math.max(o.held ?? 0, hold(w.seconds));
+      events.push({ type: "status", id: o.id, text: "held" });
+    } else if (w.kind === "slow") {
+      o.slowed = Math.max(o.slowed ?? 0, party ? hold(w.seconds) * 2 : Math.min(SHOOT.power.longest, w.seconds || 6));
+      o.slowBy = Math.max(o.slowBy ?? 0, SHOOT.slowLevel);
+      if (w.ac) o.acDown = Math.max(o.acDown ?? 0, w.ac);
+      events.push({ type: "status", id: o.id, text: "slowed" });
+    } else if (w.kind === "fear" && !immune(/fright/i) && !o.buffs?.some((b) => b.fearless)) {
+      // (a foe of the party's that is not brave runs; the brave, the party and its companions are shaken a moment)
+      if (o.side === "foe" && !o.brave && !o.leader) { o.mode = "flee"; o.flee = hold(w.seconds); o.scared = true; }
+      else o.stagger = Math.max(o.stagger, Math.min(1.5, hold(w.seconds)));
+    } else if ((w.kind === "push" || w.kind === "pull") && !o.anchored) {
+      const way = w.kind === "push" ? 1 : -1;
+      const d = dist(u, o) || 1;
+      const [ux, uy] = [(o.x - u.x) / d, (o.y - u.y) / d];
+      if (party) {
+        // (the party's body is the scene's: it is sent to the last free square along the shove, as a hook's reel)
+        const s = Math.min(w.distance || 2, SHOOT.npc.partyShove) * way;
+        events.push({ type: "reel", id: o.id, x: o.x + ux * (s + 0.7 * Math.sign(s)), y: o.y + uy * (s + 0.7 * Math.sign(s)) });
+        o.stagger = Math.max(o.stagger, 0.4);
+        if (w.strike > 0) hurt(sim, o, w.strike, w.type, u, events, hitAt);
+      } else {
+        const s = Math.max(0.15, (w.distance || 2) / SHOOT.power.knock);
+        o.knock = { vx: ux * SHOOT.power.knock * way, vy: uy * SHOOT.power.knock * way, t: s, strike: w.strike, type: w.type, by: u.id };
+        o.stagger = Math.max(o.stagger, s + 0.2);
+      }
+    } else if (w.kind === "mind" && o.side === "foe") {
+      o.charmed = Math.max(o.charmed ?? 0, Math.min(12, w.seconds || 12));
+      o.aiming = 0;
+      events.push({ type: "status", id: o.id, text: "charmed" });
+    }
+  }
 }
 // A thing thrown in an arc to land at the target's feet (as near as the thrower's skill takes it), bursting a moment after; a monster's spit
 // or flung glob (`natural`) flies flatter and bursts where it strikes
@@ -2036,6 +2463,16 @@ function callForHelp(sim: Sim, u: Unit, events: Event[]) {
   u.act = { kind: "call", t: SHOOT.act.call };
   events.push({ type: "act", id: u.id, act: "call", seconds: SHOOT.act.call });
 }
+// A class feature's reaction that cuts what lands (by an amount, or by half: an uncanny dodge, a parry), once every so many seconds (house rule:
+// the books' once a round)
+function reacted(target: Unit, damage: number, ranged: boolean, events: Event[]): number {
+  const r = target.knack?.react;
+  if (!r || r.t > 0 || r.ac || (r.against === "ranged" && !ranged) || (r.against === "melee" && ranged) || (!r.halve && !r.cut)) return damage;
+  r.t = r.every;
+  const left = Math.max(0, (r.halve ? damage / 2 : damage) - (r.cut ?? 0));
+  events.push({ type: "use", id: target.id, name: r.name, text: `${Math.round(damage - left)} less` });
+  return left;
+}
 function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
   // (the stat block's attack roll, as a chance: SHOOT.melee; held fast, at disadvantage)
   const roll = rand(sim);
@@ -2043,6 +2480,13 @@ function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
   if (roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target))) return void events.push({ type: "miss", id: u.id, target: target.id });
   if (target.decoy) return void hurt(sim, target, 1, "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 });
   if (target.side !== "foe" && warded(sim, target, u.blade?.type ?? "kinetic", events)) return;
+  // (a class feature's reaction that adds to Armor Class against the attack that hit: it turns the blow aside if that is enough)
+  const r = target.knack?.react;
+  if (r && r.ac && r.t <= 0 && r.against !== "ranged" && roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target) + r.ac)) {
+    r.t = r.every;
+    events.push({ type: "use", id: target.id, name: r.name, text: "turned the blow aside" });
+    return void events.push({ type: "miss", id: u.id, target: target.id });
+  }
   // (a natural 20 is a critical, unless armour turns it to a normal hit)
   const crit = roll < 0.05 && !target.critImmune;
   const damage = (u.blade?.damage ?? u.gun?.damage ?? 4) * (crit ? SHOOT.critBy : 1);
@@ -2056,7 +2500,7 @@ function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
       return;
     }
   }
-  hurt(sim, target, damage, u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 }, crit);
+  hurt(sim, target, reacted(target, damage, false, events), u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 }, crit);
   if (u.rider) afflict(sim, target, u.rider, events);
   // (a shield of lightning or the Force about the one struck: the striker takes its damage)
   for (const b of target.buffs ?? []) if (b.retort && (b.temp === undefined || target.temp > 0)) hurt(sim, u, b.retort.damage, b.retort.type, target, events, { x: u.x, y: u.y, h: u.h + 0.8 });
@@ -2085,9 +2529,12 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       b.x += b.vx * sdt; b.y += b.vy * sdt; b.h += b.vh * sdt; b.life -= sdt;
       // (the square it was fired from does not stop it: a sentry on a roof shoots from a square the street calls a wall)
       const home = Math.floor(b.x) === b.cell[0] && Math.floor(b.y) === b.cell[1];
-      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05) {
+      // (a loose piece stops a bolt below its top, as the map's furniture does: SHOOT.propTop)
+      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05 || (!!sim.props && b.h < env.floorAt(b.x, b.y) + SHOOT.propTop && !!propAt(sim, b.x, b.y))) {
         b.life = 0;
         events.push({ type: "impact", x: b.x, y: b.y, h: Math.max(b.h, env.floorAt(b.x, b.y)) });
+        const piece = propAt(sim, b.x, b.y, 0.05);
+        if (piece) hurtProp(sim, piece, b.damage, env, events, b.owner);
         // (a harpoon that bites a wall: the party is reeled to it)
         if (b.harpoon) {
           events.push({ type: "line", x: p.x, y: p.y, h: p.h + 1, tx: ox, ty: oy, th: oh });
@@ -2098,13 +2545,15 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
         break;
       }
       // The party's saber, held up in front, turns a bolt from the front back along the aim
-      if (b.side === "foe" && p.blocking && !p.dead && dist(b, p) < 0.85 && Math.abs(b.h - (p.h + 0.8)) < 0.9) {
+      const guard = b.side === "foe" ? playersOf(sim).find((m) => m.blocking && !m.dead && dist(b, m) < 0.85 && Math.abs(b.h - (m.h + 0.8)) < 0.9) : undefined;
+      if (guard) {
+        const p = guard;
         const [fx, fy] = dirOf(p.facing);
         const off = Math.acos(clamp(((ox - p.x) * fx + (oy - p.y) * fy) / (Math.hypot(ox - p.x, oy - p.y) || 1), -1, 1));
         if (off < 1.4 && p.focus >= SHOOT.focus.perBolt) {
           p.focus -= SHOOT.focus.perBolt;
           if (p.focus < SHOOT.focus.perBolt) { p.blocking = false; p.focusLock = SHOOT.focus.broken; }
-          const to = sim.aim ?? { x: p.x + fx * 10, y: p.y + fy * 10, h: p.h + 1 };
+          const to = (p.aimAt ?? (p === playerOf(sim) ? sim.aim : undefined)) ?? { x: p.x + fx * 10, y: p.y + fy * 10, h: p.h + 1 };
           const dx = to.x - b.x, dy = to.y - b.y, dh = to.h - b.h, d = Math.hypot(dx, dy, dh) || 1;
           const speed = SHOOT.boltSpeed * 1.1;
           Object.assign(b, { side: "player" as Side, owner: p.id, reflected: true, vx: (dx / d) * speed, vy: (dy / d) * speed, vh: (dh / d) * speed, life: 1.6 });
@@ -2143,7 +2592,8 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
         // (a foe's natural 20 on the party: a critical, unless armour turns it to a normal hit)
         const crit = b.side === "foe" && u.side !== "foe" && !u.critImmune && rand(sim) < SHOOT.crit;
         const damage = b.damage * (head && b.side !== "foe" ? SHOOT.headshot : 1) * (crit ? SHOOT.critBy : 1);
-        if (b.side === "player" && owner && !b.plain && u.side === "foe") partyStrike(sim, owner, u, damage, b.type, b.reflected ? undefined : b.rider, events, at, head);
+        if (b.side === "player" && owner && !b.plain && u.side === "foe") partyStrike(sim, owner, u, damage, b.type, b.reflected ? undefined : b.rider, events, at, head, !!b.blade);
+        else if (b.side === "foe" && u.side === "player") hurt(sim, u, reacted(u, damage, true, events), b.type, owner, events, at, crit);
         else hurt(sim, u, damage, b.type, owner, events, at, (head && b.side !== "foe") || crit);
         if (owner?.rider && !b.reflected) afflict(sim, u, owner.rider, events);
         if (b.burst) blow(sim, { x: b.x, y: b.y, h: b.h }, b.burst, b.owner, env, events);
@@ -2204,14 +2654,19 @@ function blow(sim: Sim, at: { x: number; y: number; h: number }, kind: GrenadeKi
     afflict(sim, u, kind, events);
     if (kind.damage > 0) hurt(sim, u, kind.damage * fall * (u.evade ? 0.5 : 1), kind.type, owner, events, { x: u.x, y: u.y, h: u.h + 0.7 });
   }
+  // (the loose pieces in the burst break: whole damage near, half at the edge)
+  for (const o of sim.props ?? []) {
+    if (o.gone || o.hp === undefined || (kind.cone && facing !== undefined)) continue;
+    const d = Math.hypot(o.x + o.w / 2 - at.x, o.y + o.d / 2 - at.y);
+    if (d <= kind.radius + Math.max(o.w, o.d) / 2) hurtProp(sim, o, kind.damage * (d <= kind.radius * SHOOT.grenade.near ? 1 : SHOOT.grenade.edge), env, events, ownerId);
+  }
   if (kind.lingers) sim.fields.push({ id: sim.seq++, owner: ownerId, x: at.x, y: at.y, h: env.floorAt(at.x, at.y), radius: kind.lingerRadius ?? kind.radius, t: kind.lingers, dps: kind.dps ?? 1, type: kind.lingerRadius ? "fire" : kind.type, ...(kind.poison ? { poison: kind.poison } : {}) });
 }
 
 // ---- How it ends -----------------------------------------------------------------------------------------------------------------
 export type Result = "ongoing" | "victory" | "down";
 export function resultOf(sim: Sim): Result {
-  const p = playerOf(sim);
-  if (p.dead || p.hp <= 0) return "down";
+  if (playersOf(sim).every((p) => p.dead || p.hp <= 0 || p.mode === "gone")) return "down";
   return foesLeft(sim).length === 0 ? "victory" : "ongoing";
 }
 // Rounds the fight counts as (the game's clock runs a minute to ten rounds of six seconds)
@@ -2248,4 +2703,125 @@ export function placeUnits(sim: Sim, env: Env, around: { x: number; y: number; f
     u.h = env.floorAt(u.x, u.y);
     taken.push({ x: u.x, y: u.y });
   }
+}
+
+// ---- The co-op shared fight (2026-11-16, batch G; design approved by the user: design-G-coop.md) ----------------------------------------------
+// The co-op server (server/coop.ts) runs one sim for every member in the place, at 20 steps a second: each member's screen sends where it stands
+// and what it pressed (`Command`), the server plays them for that member (`applyCommand`, through `withActor`) and steps the sim, and every member
+// is sent the field as it is (`snapOf`) to draw. The walls are the map's own, baked once by the member who began it (`bakeGrid`, `gridEnv`).
+type Spot = { x: number; y: number; h: number };
+export type Command =
+  | { k: "fire"; from: Spot; to: Spot; moving: boolean; airborne: boolean }
+  | { k: "swing" }
+  | { k: "block"; on: boolean }
+  | { k: "reload" }
+  | { k: "power"; i: number; aim?: Spot | null }
+  | { k: "gear"; name: string; aim?: Spot | null }
+  | { k: "throw"; name: string; from: Spot; dir: [number, number, number] }
+  | { k: "crouch"; on: boolean }
+  | { k: "aim"; on: boolean; to?: Spot | null };
+// One command for one member: what it did, or why not (a gear used is taken from their belt here: `used` counts it by name)
+export function applyCommand(sim: Sim, id: string, cmd: Command, env: Env, events: Event[], opts: { gear?: FightGear[]; used?: Record<string, number>; place?: (x: number, y: number) => boolean } = {}): string {
+  if (!sim.units.some((u) => u.side === "player" && u.id === id)) return "";
+  return withActor(sim, id, () => {
+    const p = playerOf(sim);
+    const belt = opts.gear ?? [];
+    const spend = (g: FightGear) => {
+      g.count--;
+      if (opts.used) {
+        const key = g.pool ? `feature:${g.pool}` : g.keep ? "" : g.name;
+        if (key) opts.used[key] = (opts.used[key] ?? 0) + 1;
+      }
+      if (g.pool) for (const o of belt) if (o !== g && o.pool === g.pool) o.count = Math.max(0, o.count - 1);
+    };
+    switch (cmd.k) {
+      case "fire": return firePlayer(sim, cmd.from, cmd.to, events, cmd.moving, cmd.airborne) ? "" : "no";
+      case "swing": return swingPlayer(sim, events) ? "" : "no";
+      case "block": setBlock(sim, cmd.on); return "";
+      case "reload": return reloadPlayer(sim, events) ? "" : "no";
+      case "crouch": p.crouch = cmd.on; return "";
+      case "aim": p.aimHeld = cmd.on; if (cmd.to) sim.aim = cmd.to; return "";
+      case "power": return castPower(sim, cmd.i, env, events, cmd.aim, opts.place);
+      case "gear": {
+        const g = belt.find((x) => x.name === cmd.name && x.count > 0);
+        if (!g) return `No ${cmd.name} left`;
+        const why = applyGear(sim, g, env, events, cmd.aim, opts.place);
+        if (!why) spend(g);
+        return why === KEPT ? "" : why;
+      }
+      case "throw": {
+        const g = belt.find((x) => x.name === cmd.name && x.count > 0 && x.act.act === "throw");
+        if (!g || g.act.act !== "throw") return "You carry no grenades";
+        throwGrenade(sim, g.act.blast, cmd.from, cmd.dir);
+        spend(g);
+        return "";
+      }
+    }
+  });
+}
+
+// The map's walls as the server keeps them: for each square of a box round the fight, whether a body can stand there, its floor (twentieths of a
+// square) and how high what stands on it stops a shot (-1 nothing; a counter's 0.9 over the floor; a wall's 4; a building's top)
+export interface Grid { x0: number; y0: number; w: number; h: number; walk: string; floor: number[]; top: number[] }
+export function bakeGrid(env: Env, x0: number, y0: number, w: number, h: number): Grid {
+  const walk: string[] = [];
+  const floor: number[] = [];
+  const top: number[] = [];
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const [x, y] = [x0 + i + 0.5, y0 + j + 0.5];
+    const f = env.floorAt(x, y);
+    walk.push(env.walkable(x, y) ? "1" : "0");
+    floor.push(Math.round(f * 20));
+    // (how high it stops a shot: the first of a ladder of heights it does not stop, then halved to a twentieth of a square; nothing, or a tower)
+    let t = -1;
+    if (env.blocks(x, y, f + 0.02)) {
+      const ladder = [0.5, 1, 2, 4, 8, 60];
+      const free = ladder.findIndex((up) => !env.blocks(x, y, f + up));
+      if (free < 0) t = f + 999;
+      else {
+        let [lo, hi] = [free ? ladder[free - 1] : 0.02, ladder[free]];
+        while (hi - lo > 0.025) { const mid = (lo + hi) / 2; if (env.blocks(x, y, f + mid)) lo = mid; else hi = mid; }
+        t = f + hi;
+      }
+    }
+    top.push(t < 0 ? -1 : Math.round(t * 20));
+  }
+  return { x0, y0, w, h, walk: walk.join(""), floor, top };
+}
+export function gridEnv(g: Grid): Env {
+  const at = (x: number, y: number) => {
+    const [i, j] = [Math.floor(x) - g.x0, Math.floor(y) - g.y0];
+    return i >= 0 && j >= 0 && i < g.w && j < g.h ? j * g.w + i : -1;
+  };
+  return {
+    walkable: (x, y) => { const k = at(x, y); return k >= 0 && g.walk[k] === "1"; },
+    floorAt: (x, y) => { const k = at(x, y); return k >= 0 ? g.floor[k] / 20 : 0; },
+    blocks: (x, y, h) => { const k = at(x, y); return k < 0 ? h < 4 : g.top[k] >= 0 && h < g.top[k] / 20; },
+  };
+}
+
+// What a member is sent of the field (each step's few): every unit (their own whole; the others without what only the server needs), what flies,
+// burns and lies set, the loose pieces, the events since the last, and how it stands
+export interface Snap { t: number; units: Unit[]; bolts: Bolt[]; grenades: Grenade[]; mines: Mine[]; fields: Field[]; props?: Prop[]; events: Event[]; result: Result; jammed?: boolean; lit?: boolean; eye?: Sim["eye"] }
+const round2 = (n: number) => Math.round(n * 100) / 100;
+export function snapOf(sim: Sim, events: Event[], forId: string): Snap {
+  const units = sim.units.map((u) => {
+    if (u.id === forId) return u;
+    const { powers: _p, kit: _k, path: _path, struck: _s, channel: _c, once: _o, knack: _kn, ...rest } = u;
+    return { ...rest, x: round2(u.x), y: round2(u.y), h: round2(u.h), facing: round2(u.facing) } as Unit;
+  });
+  return { t: round2(sim.time), units, bolts: sim.bolts, grenades: sim.grenades, mines: sim.mines, fields: sim.fields, ...(sim.props ? { props: sim.props } : {}), events, result: resultOf(sim), ...(sim.jammed ? { jammed: true } : {}), ...(sim.lit ? { lit: true } : {}), ...(sim.eye ? { eye: sim.eye } : {}) };
+}
+// A member's screen takes the field as the server has it (its own sim object is kept, so what it holds on to stays good)
+export function applySnap(sim: Sim, snap: Snap) {
+  sim.time = snap.t;
+  sim.units = snap.units;
+  sim.bolts = snap.bolts;
+  sim.grenades = snap.grenades;
+  sim.mines = snap.mines;
+  sim.fields = snap.fields;
+  if (snap.props) sim.props = snap.props;
+  sim.jammed = snap.jammed;
+  sim.lit = snap.lit;
+  sim.eye = snap.eye;
 }

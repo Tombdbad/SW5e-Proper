@@ -1018,6 +1018,18 @@ export interface StatProfile {
   vulnerabilities?: string[];
   immunities?: string[];
   conditionImmunities?: string[];
+  // The powers it casts (a Forcecasting or Techcasting trait), read from the trait's own text: see castingOf
+  casting?: StatCasting;
+}
+// (2026-11-16) A stat block's casting: force or tech, its caster level, points, save DC and attack bonus, and the powers it knows by name (as
+// powers.json has them), at will, by level, or so many times a day
+export interface StatCasting {
+  tradition: "force" | "tech";
+  level: number;
+  points?: number;
+  dc?: number;
+  attack?: number;
+  powers: { name: string; level: number; perDay?: number }[];
 }
 
 const COUNT_WORDS: Record<string, number> = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
@@ -1134,6 +1146,40 @@ function embeddedAttacks(b: NonNullable<Sw5eMonster["behaviors"]>[number]): NonN
   return heads.map((m, i) => ({ ...b, name: m[1], attackType: "None", damageRoll: undefined, description: text.slice(m.index! + m[0].length, heads[i + 1]?.index ?? text.length) }));
 }
 
+// A casting trait's powers (2026-11-16, for the shooter's casters; none is named here): the text lists them under "At will:", "1st-level:",
+// "3/day each:" and the like ("At-Will: denounce, force disarm ... 1st level: dark side tendrils ..."; "element of surprise (3/day)"), then
+// says the caster's level, ability, save DC, attack bonus and points. A listed name counts only where powers.json has a power of that name.
+const POWER_BY_NAME = new Map((powerData as { name: string; level: number; powerType: string }[]).map((p) => [p.name.toLowerCase(), p]));
+export function castingOf(name: string, text: string): StatCasting | undefined {
+  if (!/cast/i.test(name)) return undefined;
+  const flat = text.replace(/\s+/g, " ");
+  const marker = /\b(at[- ]will|(\d+)(?:st|nd|rd|th)[- ]level|(\d+)\s*\/\s*day(?: each)?)\s*:/gi;
+  const heads = [...flat.matchAll(marker)];
+  // (one stat block lists its powers with no heads: "can innately cast the following tech powers (tech save DC 14): a, b (3/day), c")
+  const sections = heads.length
+    ? heads.map((m, i) => ({ head: m, body: flat.slice(m.index! + m[0].length, heads[i + 1]?.index ?? flat.length) }))
+    : [{ head: null as RegExpMatchArray | null, body: flat.split(/powers?(?: \([^)]*\))?:/i)[1] ?? "" }];
+  const powers: StatCasting["powers"] = [];
+  for (const { head, body } of sections) {
+    // (the list runs until the sentence that describes the caster)
+    const list = body.split(/\.\s|\s(?=The |It |Its |It's |Abeloth |Her |His )/)[0];
+    for (const raw of list.split(/,|\band\b/)) {
+      const each = raw.trim().match(/^([a-z' /-]+?)\s*(?:\((\d+)\s*\/\s*day\))?\.?$/i);
+      const power = each && POWER_BY_NAME.get(each[1].trim().toLowerCase());
+      if (!power || powers.some((p) => p.name === power.name)) continue;
+      const perDay = each[2] ? Number(each[2]) : head?.[3] ? Number(head[3]) : undefined;
+      powers.push({ name: power.name, level: Number(power.level) || 0, ...(perDay ? { perDay } : {}) });
+    }
+  }
+  if (!powers.length) return undefined;
+  const tradition: "force" | "tech" = /tech/i.test(name) || /tech (?:save|points|powers)|techcast/i.test(flat) ? "tech" : "force";
+  const level = Number(flat.match(/(\d+)(?:st|nd|rd|th)[- ]level (?:force|tech)[- ]?caster/i)?.[1] ?? 0) || Math.max(1, ...powers.map((p) => p.level * 2 - 1));
+  const points = flat.match(/(\d+) (?:force|tech) points/i);
+  const dc = flat.match(/DC ?(\d+)/i);
+  const attack = flat.match(/\+ ?(\d+) to hit/i);
+  return { tradition, level, ...(points ? { points: Number(points[1]) } : {}), ...(dc ? { dc: Number(dc[1]) } : {}), ...(attack ? { attack: Number(attack[1]) } : {}), powers };
+}
+
 // The stat block's fighting profile
 export function statProfile(monster: Sw5eMonster): StatProfile {
   const behaviors = monster.behaviors ?? [];
@@ -1198,9 +1244,13 @@ export function statProfile(monster: Sw5eMonster): StatProfile {
     }
   }
   const list = (value: unknown) => (Array.isArray(value) ? value.map((v) => String(v).toLowerCase()) : []);
+  // (the first casting trait that lists powers; a "War Casting" or a "can cast an at-will power" names none)
+  let casting: StatCasting | undefined;
+  for (const b of behaviors) if (!casting && b.monsterBehaviorType === "Trait") casting = castingOf(b.name, b.description ?? "");
   return {
     attacks,
     ...(multiattack?.length ? { multiattack } : {}),
+    ...(casting ? { casting } : {}),
     specials,
     traits,
     reactions,
@@ -11968,6 +12018,21 @@ export function bulkOf(asset: Pick<RoomAsset, "name" | "w" | "h" | "kind">): Bul
   const squares = asset.w * asset.h;
   const size: Bulk["size"] = squares >= 9 ? "Gargantuan" : squares > 4 || Math.max(asset.w, asset.h) >= 3 ? "Huge" : squares >= 2 ? "Large" : SMALL_PIECES.test(asset.name) ? "Small" : "Medium";
   return { size, pounds: POUNDS[size] * (STONE.test(asset.name) ? 4 : 1) };
+}
+
+// What breaks (2026-11-16, batch G; the user: "relevant destructible furniture assets"). HOUSE RULES, since the books give furniture no hit points:
+// a loose piece of wood, plastoid or thin metal (a crate, a table, a locker, a lamp ...) has the hit points the Dungeon Master's Guide gives an
+// object of its size, at their average (fragile: glass, jars, lamps, screens; resilient: the rest), and is gone when they run out; a fuel drum
+// bursts into flame (3d6 fire within 10 feet, the ground burning a minute). Stone, built-in pieces and what is Huge or bigger do not break.
+const BREAKS = /crate|pallet|parts bin|footlocker|locker|cabinet|table|bench|desk|couch|cushions|shelving|rack|cart|stand|lamp|jar|dispenser|produce bin|privacy screen|tire stack|barricade|fuel drum|brazier|banner|bed\b|stool|chair|cloth bolts|trough/i;
+const FRAGILE = /jar|lamp|privacy screen|banner|cushions|cloth bolts|dispenser/i;
+const OBJECT_HP: Record<Bulk["size"], [number, number]> = { Tiny: [2, 5], Small: [3, 10], Medium: [4, 18], Large: [5, 27], Huge: [0, 0], Gargantuan: [0, 0] };
+export function breakOf(asset: Pick<RoomAsset, "name" | "w" | "h" | "kind">): { hp: number; burst?: { radius: number; dice: string; type: string; fire: boolean } } | undefined {
+  const bulk = bulkOf(asset);
+  if (bulk.fixed || STONE.test(asset.name) || !BREAKS.test(asset.name)) return undefined;
+  const hp = OBJECT_HP[bulk.size][FRAGILE.test(asset.name) ? 0 : 1];
+  if (!hp) return undefined;
+  return { hp, ...(/fuel drum/i.test(asset.name) ? { burst: { radius: 10, dice: "3d6", type: "fire", fire: true } } : {}) };
 }
 
 // The ground something is shoved over: a room's plan, or a fight's (with its raised floors)

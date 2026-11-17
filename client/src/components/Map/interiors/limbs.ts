@@ -802,7 +802,7 @@ export interface Motion {
   play?: { move: Move; at: number; prev?: { move: Move; at: number } };
   // What the hands are about besides the weapon (2026-11-02: a foe's throw, spray, call for help, medpac), begun at `actAt` and lasting
   // `actFor` seconds (its wind-up: shared/logic/shooter.ts SHOOT.act); the follow-through comes after it
-  act?: "throw" | "spray" | "call" | "heal";
+  act?: "throw" | "spray" | "call" | "heal" | "cast";
   actAt?: number;
   actFor?: number;
   // On a ladder (2026-11-06, the user: "climbable ladders - generate animations"): how far through its hand-over-hand cycle the climber is, in radians
@@ -1285,6 +1285,12 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
       over("foreL", [-2.1, 0, 0]);
       over("head", [0.15, 0.2, 0.22]);
       over("chest", [0.05, 0.15, 0]);
+    } else if (m.act === "cast") {
+      // (a power: the off hand drawn in to the chest, then thrown out flat at the target, the body behind it)
+      over("armL", after ? [-1.55 - m.pitch, -0.1, -0.1] : [-0.9, 0, 0.5]);
+      over("foreL", after ? [-0.05, 0, 0] : [-1.6, 0, 0]);
+      over("chest", [after ? 0.12 : -0.1, after ? -0.3 : 0.25, 0]);
+      over("head", [0, after ? -0.15 : 0.1, 0]);
     } else {
       over("armR", [-0.75, 0, 0.1]);
       over("foreR", [-1.05, 0, 0]);

@@ -9,8 +9,26 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
   KEPT, SHOOT, applyGear, monstrous, castPower, cloakedNow, firePlayer, fitsAt, newSim, paceOf, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, sees, sensesOf, setBlock, step, swingPlayer, throwGrenade,
-  type Env, type Event, type FightGear, type Sim, type Unit,
+  type Env, type Event, type FightGear, type Prop, type Sim, type Unit,
+  applySnap, bakeGrid, type Command, type Snap,
 } from "@shared/logic/shooter";
+import { fightBus, leaveSharedFight, openSharedFight, sharedFightInput } from "@/lib/coop";
+
+// (a co-op fight's field, as this screen draws it: this member's id is "me", as in a fight of one)
+function asMine(snap: Snap, mine: string): Snap {
+  const fix = (v: unknown) => (v === mine ? "me" : v);
+  const own = <T extends { owner: string }>(list: T[]) => list.map((o) => (o.owner === mine ? { ...o, owner: "me" } : o));
+  return {
+    ...snap,
+    units: snap.units.map((u) => (u.id === mine ? { ...u, id: "me" } : u)),
+    bolts: own(snap.bolts), grenades: own(snap.grenades), mines: own(snap.mines), fields: own(snap.fields),
+    events: snap.events.map((e) => {
+      const o: Record<string, unknown> = { ...e };
+      for (const k of ["id", "by", "target", "from", "owner"]) if (k in o) o[k] = fix(o[k]);
+      return o as Event;
+    }),
+  };
+}
 import { Figure, MotionContext, usePartyLook } from "../models";
 import { beginSwing, creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
 import { SIDE_COLORS, tokenOf } from "../sprites";
@@ -37,6 +55,9 @@ export interface ShooterCtx {
   swimAt?: () => number | null;
   // Puts the party on a square (a portable teleporter); false when it cannot stand there
   place?: (x: number, y: number) => boolean;
+  // (2026-11-16) The loose pieces of the room (what a power moves and a blow breaks), and one broken (gone from the room)
+  props?: () => Prop[];
+  broke?: (id: string) => void;
 }
 
 const POOL = { bolts: 72, grenades: 6, blasts: 16, mines: 8, fields: 8, lines: 3, decoys: 3, images: 3 };
@@ -61,6 +82,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   if (!sim.current || (sim.current as any)._session !== session.id) {
     sim.current = newSim(session.units, { seed: session.seed, surprise: session.surprise });
     (sim.current as any)._session = session.id;
+    // (a co-op fight: the party unit here is this member's; the others' are the other members')
+    if (session.shared) sim.current.actor = "me";
     // (the powers on the keys, and the points to cast them with)
     const me = playerOf(sim.current);
     me.powers = session.powers ?? [];
@@ -92,6 +115,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     weapon: (session.units.find((u) => u.side === "player")?.gun ? "gun" : "blade") as "gun" | "blade",
     placed: false,
     used: {} as Record<string, number>,
+    // (a co-op fight: the commands not yet sent, when the last were, the last field taken)
+    pending: [] as Command[],
+    sentAt: 0,
+    snapSeq: 0,
     sync: 0,
     ending: 0,
     done: false,
@@ -160,7 +187,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (st.done) return;
     st.done = true;
     const p = playerOf(s);
-    const result = abandoned ? "ongoing" : resultOf(s);
+    const shared = session.shared;
+    const end = shared && fightBus.end?.area === shared.area ? fightBus.end : null;
+    // (a co-op fight: out of it for this member, unless it is over; what the server spent from the belt is counted as used)
+    if (shared && !end) leaveSharedFight(shared.area);
+    if (end) for (const [k, n] of Object.entries(end.used)) st.used[k] = (st.used[k] ?? 0) + n;
+    const result = abandoned ? "ongoing" : shared ? (end?.result === "victory" && !p.dead ? "victory" : end?.result === "left" ? "ongoing" : "down") : resultOf(s);
     const now = useCombat.getState();
     const mine = now.combatants.find((c) => c.isPlayer);
     const patch: Record<string, Partial<import("@/lib/stores/useCombat").Combatant>> = {};
@@ -181,8 +213,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     }
     // Mines and charges left set on the ground are picked up again (house rule, as on the tabletop): not used up
     for (const m of s.mines) if (m.side === "player" && st.used[m.name]) st.used[m.name]--;
-    useShoot.getState().end(st.used);
-    now.finishRealtime(abandoned ? "left" : result === "victory" ? "victory" : "stable", roundsOf(s), patch);
+    // (the member who began a co-op fight, or took it over, settles the world; the others only their own characters)
+    const owner = end?.owner ?? (fightBus.last?.area === shared?.area ? fightBus.last?.owner : undefined);
+    useShoot.getState().end(st.used, !!shared && !!owner && owner !== shared.me);
+    now.finishRealtime(abandoned || (shared && result === "ongoing") ? "left" : result === "victory" ? "victory" : "stable", roundsOf(s), patch);
   };
 
   useFrame((_, delta) => {
@@ -204,7 +238,49 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (!st.placed) {
       st.placed = true;
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
+      s.props = c.props?.() ?? [];
+      // (a co-op fight is the server's: this screen sends the map's walls round the fight and the field as it made it; one already going there
+      // takes in this member's party unit and companions instead)
+      if (session.shared) {
+        const xs = [me.x, ...s.units.filter((u) => Number.isFinite(u.x)).map((u) => u.x)];
+        const ys = [me.y, ...s.units.filter((u) => Number.isFinite(u.y)).map((u) => u.y)];
+        const [x0, y0] = [Math.floor(Math.max(Math.min(...xs) - 16, me.x - 100)), Math.floor(Math.max(Math.min(...ys) - 16, me.y - 100))];
+        const [w, h] = [Math.min(200, Math.ceil(Math.max(...xs) + 16) - x0), Math.min(200, Math.ceil(Math.max(...ys) + 16) - y0)];
+        openSharedFight({ area: session.shared.area, grid: bakeGrid(c.env, x0, y0, w, h), units: s.units, props: s.props, seed: session.seed, surprise: session.surprise, gear: st.gear });
+      }
     }
+    // What this screen does with the keys: in a fight of one, at once; in a co-op fight, sent to the server as commands (and shown at once
+    // where it is plain what comes of it: the shot, the swing)
+    const shared = session.shared;
+    const A = shared
+      ? {
+          gear: (g: FightGear, aim?: Spot | null) => { st.pending.push({ k: "gear", name: g.name, aim: aim ?? null }); return KEPT; },
+          block: (on: boolean) => { if (!!p.blocking !== on) st.pending.push({ k: "block", on }); p.blocking = on && !!p.blade; },
+          reload: () => { st.pending.push({ k: "reload" }); return true; },
+          power: (i: number, aim?: Spot | null) => { st.pending.push({ k: "power", i, aim: aim ?? null }); return ""; },
+          throw: (g: FightGear, from: Spot, dir: [number, number, number]) => { st.pending.push({ k: "throw", name: g.name, from, dir }); },
+          fire: (from: Spot, to: Spot, moving: boolean, airborne: boolean) => {
+            if (!p.gun || p.fire > 0 || p.reloading > 0 || p.gun.left <= 0 || p.stagger > 0) return false;
+            st.pending.push({ k: "fire", from, to, moving, airborne });
+            p.fire = p.gun.interval;
+            return true;
+          },
+          swing: () => {
+            if (!p.blade || p.swing > 0 || p.stagger > 0) return false;
+            st.pending.push({ k: "swing" });
+            p.swing = SHOOT.saber.swing;
+            return true;
+          },
+        }
+      : {
+          gear: (g: FightGear, aim?: Spot | null) => applyGear(s, g, c.env, events, aim, c.place),
+          block: (on: boolean) => setBlock(s, on),
+          reload: () => reloadPlayer(s, events),
+          power: (i: number, aim?: Spot | null) => castPower(s, i, c.env, events, aim, c.place),
+          throw: (g: FightGear, from: Spot, dir: [number, number, number]) => { if (g.act.act === "throw") throwGrenade(s, g.act.blast, from, dir); },
+          fire: (from: Spot, to: Spot, moving: boolean, airborne: boolean) => firePlayer(s, from, to, events, moving, airborne),
+          swing: () => swingPlayer(s, events),
+        };
     // What was pressed since the last frame
     const edge = (k: "aim" | "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page") => {
       const n = store.taps[k];
@@ -226,7 +302,11 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     // (a net or bolas is picked up again after the fight: `keep`; what is spent for the rest is counted the same, and the game routes it)
     const spend = (g: FightGear) => {
       g.count--;
-      if (!g.keep) st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
+      // (a class feature's use is counted in its pool, which its other options share: the maneuvers' superiority dice)
+      if (g.pool) {
+        for (const o of st.gear) if (o !== g && o.pool === g.pool) o.count = Math.max(0, o.count - 1);
+        st.used[`feature:${g.pool}`] = (st.used[`feature:${g.pool}`] ?? 0) + 1;
+      } else if (!g.keep) st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
     };
     if (p.gun?.launcher) p.gun.shell = throwable?.act.act === "throw" ? throwable.act.blast : undefined;
     if (!p.dead && !st.ending) {
@@ -237,20 +317,21 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       if (edge("item")) {
         if (!shown) say("Nothing to use");
         else {
-          const why = applyGear(s, shown, c.env, events, shot?.to, c.place);
+          const why = A.gear(shown, shot?.to);
           if (!why) spend(shown);
           else if (why !== KEPT) say(why);
         }
       }
       if (edge("swap") && p.gun && p.blade) {
         st.weapon = st.weapon === "gun" ? "blade" : "gun";
-        setBlock(s, false);
+        A.block(false);
         st.note = st.weapon === "gun" ? `${p.gun.name} drawn` : `${p.blade.name} drawn`;
       }
-      if (edge("reload") && st.weapon === "gun" && !reloadPlayer(s, events)) st.note = p.gun && p.gun.left >= p.gun.mag ? "" : p.gun && p.gun.reserve <= 0 && p.gun.left < p.gun.mag ? "No ammunition left to reload with" : "";
+      if (edge("reload") && st.weapon === "gun" && !A.reload()) st.note = p.gun && p.gun.left >= p.gun.mag ? "" : p.gun && p.gun.reserve <= 0 && p.gun.left < p.gun.mag ? "No ammunition left to reload with" : "";
       if (edge("crouch")) {
         st.crouch = !st.crouch;
         p.crouch = st.crouch;
+        if (shared) st.pending.push({ k: "crouch", on: st.crouch });
       }
       // (aiming: the gun to the shoulder or down again; only a gun can be aimed, and the swap, a reload that begins or a fight's end lowers it)
       if (edge("aim")) {
@@ -264,7 +345,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       for (const [i, key] of (["power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8"] as const).entries()) {
         if (!edge(key)) continue;
         const at = st.page * PAGE + i;
-        const why = castPower(s, at, c.env, events, shot?.to, c.place);
+        const why = A.power(at, shot?.to);
         if (why) st.note = why;
         else if (p.powers?.[at]) st.note = "";
       }
@@ -273,15 +354,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         if (g && shot && g.act.act === "throw") {
           const d: [number, number, number] = [shot.to.x - shot.from.x, shot.to.y - shot.from.y, (shot.to.h - shot.from.h) / Math.max(1, Math.hypot(shot.to.x - shot.from.x, shot.to.y - shot.from.y))];
           const len = Math.hypot(d[0], d[1]) || 1;
-          throwGrenade(s, g.act.blast, shot.from, [d[0] / len, d[1] / len, d[2]]);
-          spend(g);
+          A.throw(g, shot.from, [d[0] / len, d[1] / len, d[2]]);
+          if (!shared) spend(g);
         } else if (!g) st.note = "You carry no grenades";
       }
       if (store.held.fire && shot) {
         if (st.weapon === "gun") {
           if (p.gun?.launcher && !p.gun.shell && p.fire <= 0) st.note = "No grenades for the launcher";
-          if (firePlayer(s, shot.from, shot.to, events, me.moving, me.airborne)) {
-            if (p.gun?.launcher && throwable) spend(throwable);
+          if (A.fire(shot.from, shot.to, me.moving, me.airborne)) {
+            if (p.gun?.launcher && throwable && !shared) spend(throwable);
             st.firedAt = now;
             const kick = p.gun?.kick ?? 0.4;
             Object.assign(partyMotion.current, { firedAt: now / 1000, kick });
@@ -289,29 +370,48 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
             recoil.up += (0.008 + kick * 0.035) * (st.crouch ? 0.6 : 1) * (1 - (1 - SHOOT.ads.kick) * (p.ads ?? 0));
           }
           else if (p.gun && p.gun.left <= 0 && p.reloading === 0 && p.fire <= 0) {
-            if (p.gun.reserve > 0) reloadPlayer(s, events);
+            if (p.gun.reserve > 0) A.reload();
             else st.note = "Out of ammunition";
           }
-        } else if (swingPlayer(s, events)) {
+        } else if (A.swing()) {
           st.swungAt = now;
           st.swingCombo = p.combo;
           beginSwing(partyMotion.current, now / 1000);
         }
       }
-      setBlock(s, store.held.block && st.weapon === "blade");
-    } else { setBlock(s, false); st.aim = false; }
-    p.aimHeld = (st.aim || store.held.sights) && st.weapon === "gun";
+      A.block(store.held.block && st.weapon === "blade");
+    } else { A.block(false); st.aim = false; }
+    const aimHeld = (st.aim || store.held.sights) && st.weapon === "gun";
+    if (shared && (aimHeld !== !!p.aimHeld || (p.blocking && shot))) st.pending.push({ k: "aim", on: aimHeld, to: shot?.to ?? null });
+    p.aimHeld = aimHeld;
     ADS.k = p.ads ?? 0;
     partyMotion.current.blocking = p.blocking && !p.dead;
     // (the gun is held up to where the crosshair is: its rise over the ground ahead)
     if (shot) partyMotion.current.pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(shot.to.h - shot.from.h, Math.hypot(shot.to.x - shot.from.x, shot.to.y - shot.from.y))));
 
-    // The world, in steps no longer than a twentieth of a second
-    let left = dt;
-    while (left > 1e-6) {
-      const h = Math.min(left, 0.05);
-      events.push(...step(s, h, c.env, me));
-      left -= h;
+    // The world, in steps no longer than a twentieth of a second; in a co-op fight, as the server last sent it (this screen sends where the party
+    // stands and what was pressed, twenty times a second at most)
+    if (shared) {
+      if (now - st.sentAt >= 50) {
+        sharedFightInput(shared.area, me, st.pending.splice(0));
+        st.sentAt = now;
+      }
+      const last = fightBus.last;
+      if (fightBus.seq !== st.snapSeq && last && last.area === shared.area) {
+        st.snapSeq = fightBus.seq;
+        const snap = asMine(last.snap as Snap, shared.me);
+        applySnap(s, snap);
+        events.push(...snap.events);
+        for (const [name, n] of last.gear) { const g = st.gear.find((x) => x.name === name); if (g) g.count = n; }
+        if (last.notes.length) say(last.notes[last.notes.length - 1]);
+      }
+    } else {
+      let left = dt;
+      while (left > 1e-6) {
+        const h = Math.min(left, 0.05);
+        events.push(...step(s, h, c.env, me));
+        left -= h;
+      }
     }
     // (the party's pace in the fight, for the map that walks it: interiors/aim.ts stance)
     stance.pace = p.dead ? 1 : paceOf(p);
@@ -328,7 +428,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         continue;
       }
       if (e.type === "line") { st.lines.push({ ...e, t: 0 }); continue; }
-      if (e.type === "reel") {
+      if (e.type === "reel" && (!e.id || e.id === "me")) {
         // (reeled along the cable to the last free square before where it bit)
         const d = Math.hypot(e.x - me.x, e.y - me.y);
         for (let k = d - 0.7; k >= 1; k -= 0.5) {
@@ -338,6 +438,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         continue;
       }
       if (e.type === "decoy") { say("A hologram flickers into being"); sfx.power("blind"); continue; }
+      // (2026-11-16) a loose piece moved by a power (the room draws it where it went: LocalMap's shove), or broken: splinters, and gone
+      if (e.type === "prop") { st.blasts.push({ x: e.x + 0.5, y: e.y + 0.5, h: me.h + 0.4, t: 0, r: 0.5, life: 0.3, c: "#c7b8ff" }); continue; }
+      if (e.type === "broke") {
+        c.broke?.(e.id);
+        for (let i = 0; i < 3; i++) st.blasts.push({ x: e.x, y: e.y, h: me.h + 0.3 + i * 0.2, t: -i * 0.05, r: 0.35 + i * 0.15, life: 0.35, c: "#a8875a" });
+        sfx.impact();
+        say(`${s.props?.find((o) => o.id === e.id)?.name ?? "It"} breaks apart`);
+        continue;
+      }
       if (e.type === "image") { say("A duplicate takes the blow and vanishes"); st.blasts.push({ x: me.x, y: me.y, h: me.h + 1, t: 0, r: 0.5, life: 0.3, c: "#a5b4fc" }); continue; }
       if (e.type === "revealed") { say("You are seen!"); continue; }
       if (e.type === "shot" && e.from !== "me" && ear > 0 && Math.hypot(e.x - me.x, e.y - me.y) <= ear && !sees(c.env, { x: me.x, y: me.y, h: me.h }, e)) st.pings.push({ a: Math.atan2(e.x - me.x, e.y - me.y) - me.facing, at: now });
@@ -402,6 +511,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         if (e.act === "throw") say(beast ? `${who.name} rears back to spit` : `${who.name} pulls a grenade`);
         else if (e.act === "spray") say(beast ? `${who.name} draws breath` : `${who.name} levels a sprayer`);
         else if (e.act === "call") say(`${who.name} reaches for a comlink`);
+        else if (e.act === "cast") say(`${who.name} ${who.side === "foe" ? "reaches out" : "calls on"}: ${e.name ?? "a power"}`);
         else say(`${who.name} kneels over a medpac`);
       } else if (e.type === "broken") {
         const who = s.units.find((u) => u.id === e.id);
@@ -669,8 +779,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)), ...(p.points !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}) } } : {}),
       });
     }
-    // The fight is over a moment after its last blow
-    if (resultOf(s) !== "ongoing") {
+    // The fight is over a moment after its last blow (a co-op fight: when the server says so, or for this member when they fall: the others
+    // fight on)
+    const end = shared && fightBus.end?.area === shared.area ? fightBus.end : null;
+    if (shared ? !!end || playerOf(s).dead : resultOf(s) !== "ongoing") {
       st.ending += dt;
       if (st.ending > 1.4) finish(s);
     }

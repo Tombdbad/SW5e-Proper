@@ -22,7 +22,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, useP
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, handsKindOf, handsMargin, handsPlan, handsTotal, type HandsKind, type HandsPlan, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, extraAttackShare, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, NOTICE, stepNotice, handsKindOf, handsMargin, handsPlan, handsTotal, type HandsKind, type HandsPlan, type Sneaker, type Watcher, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -40,7 +40,7 @@ import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { watchFight } from "@/lib/barks";
-import { realtimePowers } from "@/lib/sw5e/realtimePowers";
+import { realtimeFeatures, realtimePowers } from "@/lib/sw5e/realtimePowers";
 import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
@@ -80,7 +80,7 @@ import {
   advanceSearch, retireSquad, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, statProfile, type StatCasting, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -402,7 +402,9 @@ export default function GameBoard() {
         resist: [...(c.resist ?? c.profile?.resistances ?? []), ...(nem?.adapted ?? [])], vulnerable: c.vulnerable ?? c.profile?.vulnerabilities, immune: c.immune ?? c.profile?.immunities,
         condImmune: c.conditionImmune ?? c.profile?.conditionImmunities, regen: c.profile?.traits?.find((t: any) => t.kind === "regeneration")?.amount,
         droid: !organic, small: !/large|huge|gargantuan/i.test(c.size ?? ""), ...(rider ? { rider } : {}), ...(beast ? { natural: true } : {}),
-        kit: c.ally ? undefined : foeKit(c, nem), caller: !c.ally && callsForHelp(c),
+        // (a companion uses its stat block's specials too: batch G, 2026-11-16; what a nemesis learned is the foe's only)
+        kit: foeKit(c, c.ally ? undefined : nem), caller: !c.ally && callsForHelp(c),
+        ...casterOf(c),
       });
     };
     const unarmed = kit.unarmed ? { meleeWeapon: kit.unarmed.name, meleeDice: kit.unarmed.dice, meleeDamage: kit.unarmed.damage, meleeType: kit.unarmed.type, meleeExtra: kit.unarmed.extra } : {};
@@ -426,6 +428,15 @@ export default function GameBoard() {
       ...(kit.high && !kit.high.low ? { high: { t: 60, temp: avgDice(kit.high.temp), every: 0 } } : {}),
     });
     fightWithItems(party, kit);
+    // (2026-11-16, batch G) The class features and maneuvers in real time, read from their texts (realtimeFeatures): those used go on the belt,
+    // the rest are the party's own (extra attacks as more on each shot and blow, evasion, extra dice once a turn, a reaction)
+    const feats = realtimeFeatures(combatFeatures(character), play.featureUses ?? {});
+    belt.push(...feats.gear);
+    if (feats.evade) party.evade = true;
+    if (feats.knack.extra || feats.knack.react) party.knack = feats.knack;
+    const share = extraAttackShare(feats.attacks);
+    if (share > 1 && party.gun) party.gun.damage *= share;
+    if (share > 1 && party.blade) party.blade = { ...party.blade, damage: party.blade.damage * share };
     for (const g of belt) if (g.rest) restGear.current[g.name] = g.rest;
     const others = useCombat.getState().combatants.filter((c) => !c.isPlayer && c.hp > 0);
     // Help a foe with a comlink can call (house rule: SHOOT.backup): up to two more of the weakest of them, waiting off the map
@@ -434,7 +445,11 @@ export default function GameBoard() {
     const backup: Unit[] = callers.length && weakest && !pitBout.current ? Array.from({ length: Math.min(2, 1 + Math.floor(others.length / 3)) }, (_, i) => ({ ...asUnit({ ...weakest, hp: weakest.maxHp, leader: false }), id: `backup-${i}`, name: `${weakest.name} (backup)`, reserve: true, caller: false })) : [];
     shooterAt.current = hereId;
     useCombat.getState().beginRealtime();
+    // (in a co-op game the fight is the server's, shared by everyone in the place: server/coop.ts "The shared fight")
+    const co = useCoop.getState();
+    const shared = co.status === "on" && co.me && co.campaignId === Number(campaignId) && hereId ? { area: hereId, me: co.me } : undefined;
     useShoot.getState().begin({
+      ...(shared ? { shared } : {}),
       units: [party, ...others.map(asUnit), ...backup],
       meta: Object.fromEntries([...others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }]), ...backup.map((u) => [u.id, { role: weakest!.role, species: weakest!.species, creature: weakest!.creature, size: weakest!.size }])]),
       seed: Math.floor(Math.random() * 1e9), surprise, gear: belt,
@@ -2494,6 +2509,8 @@ export default function GameBoard() {
     rangedAttacker: o.attack?.ranged ?? true,
     saves: o.saves,
     profile: o.profile,
+    // (its stat block, for what the profile of an older world lacks: a caster's powers, see casterOf)
+    statBlockId: o.statBlock,
     speed: o.speed || 30,
     reach: o.attack?.ranged ? 5 : o.attack?.range ?? 5,
     range: o.attack?.ranged ? ([o.attack.range ?? 80, o.attack.long ?? (o.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -3058,10 +3075,18 @@ export default function GameBoard() {
   // behind; those still standing keep the hit points they have, so that leaving, being knocked
   // out or dying does not give the enemy their strength back. Won: the room is clear. Stable: the
   // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
+  // (2026-11-16) Another member began a fight where this one stands (a co-op game in the shooter): this screen joins it, as the Fight button would
+  const fightOn = useCoop((s) => s.fightOn);
+  useEffect(() => {
+    if (!fightOn || playMode !== "shooter" || inCombat || fightOn.area !== hereId || Date.now() - fightOn.at > 15000) return;
+    fight();
+  }, [fightOn?.at]);
   const outcome = useCombat((state) => state.outcome);
   useEffect(() => {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
+    // (a member who joined another's co-op fight settles only their own character: the world is the one who began it's to write)
+    const guest = !!useShoot.getState().last?.guest;
     const pit = pitBout.current;
     pitBout.current = false;
     // (a fight that is over may be begun again where the party stands: "They attack" must not stay spent for the room)
@@ -3091,6 +3116,13 @@ export default function GameBoard() {
           // the pack: fightWithItems's restGear, the belt's `rest`)
           const featureUses: Record<string, number> = { ...(current.playState?.featureUses ?? {}) };
           for (const [name, n] of Object.entries(shotUsed)) {
+            // (a class feature used on the belt: its pool's uses, as the turn-based fight counts them)
+            if (name.startsWith("feature:")) {
+              const pool = name.slice("feature:".length);
+              featureUses[pool] = (featureUses[pool] ?? 0) + n;
+              delete shotUsed[name];
+              continue;
+            }
             const rest = restGear.current[name] ?? (/subroutine$/i.test(name) ? "long" : undefined);
             if (!rest) continue;
             const key = `${rest === "short" ? "item~" : "item:"}${/subroutine$/i.test(name) ? "Subroutines" : name}`;
@@ -3186,7 +3218,8 @@ export default function GameBoard() {
         slain += down;
         xp += earned;
         fallenKind ||= people;
-        if (!changed) continue;
+        // (a co-op guest takes the experience: house rule, each member the whole of it; the world is written by the one who began the fight)
+        if (guest || !changed) continue;
         const carcasses = remains.map((r, i) => makeRemains(`n-${Date.now().toString(36)}-${id}-${i}`, r.name, r.cr, r.count));
         const loot = [...(gear.length ? [...part.loot, { id: `l-${Date.now().toString(36)}-${id}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : part.loot), ...carcasses];
         // Their places on the plan: one for each still standing
@@ -3203,7 +3236,7 @@ export default function GameBoard() {
         galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(placed ? { layout: placed } : {}) }).world;
       }
       // Furniture a power moved in the fight stays where it was put
-      for (const id of areaIds) {
+      if (!guest) for (const id of areaIds) {
         const part = galaxyMap.areas[id];
         if (!part?.layout) continue;
         const moves: Record<string, { x: number; y: number }> = {};
@@ -3226,9 +3259,10 @@ export default function GameBoard() {
           mourned.push(...r.heard.filter((h) => h.delta <= -10).slice(0, 2).map((h) => h.name ?? "a relative"));
         }
       }
-      if (mourned.length) toast.info(`${[...new Set(mourned)].slice(0, 3).join(", ")} will hear of it: kin remember.`);
+      if (guest) regarded = standing;
+      if (mourned.length && !guest) toast.info(`${[...new Set(mourned)].slice(0, 3).join(", ")} will hear of it: kin remember.`);
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
-      if (slain && fallenKind && outcome !== "dead") {
+      if (slain && fallenKind && outcome !== "dead" && !guest) {
         const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
         const holder = factionAt(world, areaId);
         let renown = addRenown(regarded, losers, -1);
@@ -3239,7 +3273,7 @@ export default function GameBoard() {
     // The enemies who got away, were left for dead or brought the party down hold a grudge from now on (shared/logic/nemesis.ts)
     {
       const current = latestWorld() ?? world;
-      if (current && fightNow.combatants.length) {
+      if (current && fightNow.combatants.length && !guest) {
         const bodies = [...(gang?.gang ?? []), ...areaIds.flatMap((id) => world?.areas[id]?.occupants ?? [])];
         const bodyOf = (id: string) => bodies.find((o) => o.id === id) ?? bodies.find((o) => id.replace(/-\d+$/, "") === o.id);
         const foes: FightFoe[] = [];
@@ -5630,6 +5664,7 @@ export default function GameBoard() {
     rangedAttacker: c.attack?.ranged ?? false,
     saves: c.saves,
     profile: c.profile,
+    statBlockId: c.statBlock,
     speed: c.speed || 30,
     reach: c.attack?.ranged ? 5 : c.attack?.range ?? 5,
     range: c.attack?.ranged ? ([c.attack.range ?? 80, c.attack.long ?? (c.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -6005,6 +6040,24 @@ export default function GameBoard() {
     if (nem && nem.rank >= 2) medpacs++;
     if (!blasts.length && !medpacs && !antidote && !extinguisher) return undefined;
     return { blasts, medpacs, heal: Math.round((hitDieOfSize(c.size) + 1) / 2 + 2), antidote, extinguisher };
+  };
+  // A caster in a real-time fight (2026-11-16, batch G: a foe's or a companion's stat block with a Forcecasting or Techcasting trait,
+  // shared/logic castingOf): its powers read from their texts as the party's are (realtimePowers, at its caster level and with its own ability
+  // scores), its points, and its uses a day. HOUSE RULE: one that casts innately (uses a day and no points) pays no points for them.
+  const casterOf = (c: any): Partial<Unit> => {
+    const monsters = monsterData as unknown as Sw5eMonster[];
+    const monster = (c.statBlockId && monsters.find((m) => m.id === c.statBlockId)) || monsters.find((m) => m.name === c.name);
+    const casting: StatCasting | undefined = c.profile?.casting ?? (monster ? statProfile(monster).casting : undefined);
+    if (!casting) return {};
+    const rows = casting.powers.map((p) => (powerData as any[]).find((x) => x.name === p.name)).filter(Boolean);
+    // (no stat block to hand: the ability that gives its save DC)
+    const mod = casting.dc ? casting.dc - 8 - (2 + Math.floor((Math.max(1, casting.level) - 1) / 4)) : 2;
+    const scores = monster ? { intelligence: monster.intelligence, wisdom: monster.wisdom, charisma: monster.charisma } : { intelligence: 10 + 2 * mod, wisdom: 10 + 2 * mod, charisma: 10 + 2 * mod };
+    const innate = casting.points === undefined;
+    const powers = realtimePowers(rows, Math.max(1, casting.level), scores, 40).map((w) => (innate ? { ...w, cost: 0 } : w));
+    if (!powers.length) return {};
+    const perDay = Object.fromEntries(casting.powers.filter((p) => p.perDay).map((p) => [powers.find((w) => w.name === p.name)?.id ?? p.name, p.perDay!]));
+    return { powers, points: casting.points ?? 0, perDay, castT: 1.5 + (hashString(`${c.id}|cast`) % 1000) / 500 };
   };
   // A foe with a comlink who calls for help when the fight goes on (house rule: shooter.ts SHOOT.backup): a leader, or one of the watch, a
   // soldier or officer, a guard; not a beast
