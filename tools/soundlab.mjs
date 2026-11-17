@@ -423,6 +423,9 @@ export function install(x, target, root = VOICE) {
   return path.join(dir, `${name}-${n}.wav`);
 }
 
+// a drive stage on a saw leaves a constant offset (0.01-0.02 on the growls, 2026-11-17 review): take out the mean, keep the -3 dBFS peak
+const noDc = (x) => { let m = 0; for (const v of x) m += v; m /= x.length || 1; return peakTo(x.map((v) => v - m), lin(-3)); };
+
 // ---- command line ----
 
 const show = (f, r) => console.log(`${f}: ${r.seconds.toFixed(2)} s, ${r.sr} Hz, peak ${r.peakDb.toFixed(1)} dBFS, rms ${r.rmsDb.toFixed(1)} dBFS, lead ${r.leadMs.toFixed(0)} ms${r.notes.length ? "\n  - " + r.notes.join("\n  - ") : "\n  fine"}`);
@@ -456,7 +459,7 @@ function main(argv) {
     const [bank, cue, takes = "3"] = rest;
     const recipe = preset ? PRESETS[preset] : presetFor(bank, cue);
     if (!recipe) throw new Error(`no preset for ${bank}/${cue}; use --preset <name> (node tools/soundlab.mjs presets)`);
-    for (let t = 1; t <= +takes; t++) console.log("installed", path.relative(ROOT, install(render(varied(recipe, t), seed + t), `${bank}/${cue}`)));
+    for (let t = 1; t <= +takes; t++) console.log("installed", path.relative(ROOT, install(noDc(render(varied(recipe, t), seed + t)), `${bank}/${cue}`)));
   } else if (cmd === "ir") {
     const name = rest[0];
     console.log("installed", path.relative(ROOT, install(render(PRESETS[`ir/${name}`], seed), `ir/${name}`)));
