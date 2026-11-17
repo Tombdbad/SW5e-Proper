@@ -363,3 +363,62 @@ test("distance detail (a scene that asks for it): a far mesh is not drawn, a sca
   assert.equal(m(far).isEnabled(), true);
   assert.equal(m(all).thinInstanceCount, 3);
 });
+
+// (batch F, 2026-11-16) What Babylon 9's clustered lighting takes, asked of Babylon itself on an engine that says it is WebGL 2 with float
+// blending (a desktop's or a phone's browser; NullEngine says it is neither): point and spot lights with the default falloff, and nothing
+// with a picture in it. A sign's own light therefore cannot be a projector or a textured area light in the cluster: it is a clustered
+// point light of the sign's colour (siteAssets.tsx SignLights). An area light would also fetch its tables from babylonjs.com at run time.
+const clusterEngine = () => {
+  const engine = new NullEngine();
+  const caps = engine.getCaps() as unknown as Record<string, unknown>;
+  caps.texelFetch = caps.colorBufferFloat = caps.blendFloat = true;
+  caps.shaderFloatPrecision = 23;
+  Object.defineProperty(engine, "version", { get: () => 2 });
+  return engine;
+};
+test("the cluster takes point and spot lights, not a projector, an area light or another falloff", async () => {
+  const { Scene } = await import("@babylonjs/core/scene");
+  const { Vector3 } = await import("@babylonjs/core/Maths/math.vector");
+  const { PointLight } = await import("@babylonjs/core/Lights/pointLight");
+  const { SpotLight } = await import("@babylonjs/core/Lights/spotLight");
+  const { RectAreaLight } = await import("@babylonjs/core/Lights/rectAreaLight");
+  const { Light } = await import("@babylonjs/core/Lights/light");
+  const { RawTexture } = await import("@babylonjs/core/Materials/Textures/rawTexture");
+  const { ClusteredLightContainer } = await import("@babylonjs/core/Lights/Clustered/clusteredLightContainer");
+  const scene = new Scene(clusterEngine());
+  const ok = (l: InstanceType<typeof Light>) => ClusteredLightContainer.IsLightSupported(l);
+  const point = new PointLight("point", Vector3.Zero(), scene);
+  point.falloffType = Light.FALLOFF_DEFAULT;
+  const spot = new SpotLight("spot", Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, scene);
+  spot.falloffType = Light.FALLOFF_DEFAULT;
+  const projector = new SpotLight("projector", Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, scene);
+  projector.falloffType = Light.FALLOFF_DEFAULT;
+  projector.projectionTexture = RawTexture.CreateRGBATexture(new Uint8Array(4), 1, 1, scene);
+  const physical = new PointLight("physical", Vector3.Zero(), scene);
+  physical.falloffType = Light.FALLOFF_PHYSICAL;
+  assert.equal(ok(point), true);
+  assert.equal(ok(spot), true);
+  assert.equal(ok(projector), false, "a projected picture is not clustered");
+  assert.equal(ok(physical), false, "only the default falloff is");
+  const area = new RectAreaLight("area", Vector3.Zero(), 1, 1, scene, true);
+  area.falloffType = Light.FALLOFF_DEFAULT;
+  assert.equal(ok(area), false, "an area light is not clustered");
+  // and a WebGL 1 device clusters nothing (lightBudget's pools then light nothing)
+  assert.equal(ClusteredLightContainer.IsLightSupported(new PointLight("old", Vector3.Zero(), new Scene(new NullEngine()))), false);
+});
+
+test("a glowing material is its own, drawn as it is where there is no bloom", () => {
+  const { scene, draw, mirror } = make();
+  const geo = new THREE.BoxGeometry();
+  const plain = new THREE.MeshBasicMaterial({ color: "#ff0000", toneMapped: false });
+  const glowing = plain.clone();
+  glowing.userData.glow = 2.4;
+  const a = new THREE.Mesh(geo, plain), b = new THREE.Mesh(geo, glowing), c = new THREE.Mesh(geo, plain.clone());
+  scene.add(a, b, c);
+  draw();
+  draw();
+  const mat = (o: THREE.Mesh) => meshNamed(mirror(), o)!.material as PBRMaterial;
+  assert.equal(mat(a), mat(c), "two plain ones that look alike share");
+  assert.notEqual(mat(a), mat(b), "the glowing one is its own");
+  assert.ok(Math.abs(mat(b).albedoColor.r - 1) < 1e-6, "no bloom here (the tests' renderer has no look): not brightened");
+});

@@ -105,6 +105,11 @@ export function setRenderTier(tier: RenderTier) {
 // A device that draws in software (SwiftShader, llvmpipe: the play-through test's browser among them) is drawn as lite whatever its tier
 const SOFTWARE = { on: false };
 const lite = () => LOOK.tier === "lite" || SOFTWARE.on;
+// Whether the lamps are clustered (one light for all of them, made once: see makeRig), and how many of the lights that come and go (a
+// sign's spill, a bolt, a saber, a carried glowrod: siteAssets.tsx LightPool) a scene may keep. Where nothing is clustered they are not lit
+// at all: each would be a light of its own, and switching one on or off compiles the shaders of everything it reaches again.
+export const CLUSTER = { on: false };
+export const lightBudget = () => (lite() ? 4 : 8);
 // A desktop drawing on the processor's own graphics (Intel HD, UHD, Iris; not Arc) gets a phone's full look on "auto": measured
 // 2026-11-01 on an HD 530, at 704×720, a street by day took 53 ms on the GPU with four 2048 cascades, 26 without them, and parallax
 // occlusion and contact shadows another 5 and 3 (REVIVAL_NOTES "Where the frame goes")
@@ -730,15 +735,17 @@ class Mirror {
     this.probe.position.copyFrom(this.camera.position);
     scene.environmentIntensity = Math.min(1, sun);
     if (!this.pipeline) {
-      const p = new DefaultRenderingPipeline("look", false, scene, [this.camera]);
+      // (drawn in half floats, so that what glows can be brighter than white and bloom alone: `glowOf`; a lit wall is never over 1)
+      const p = new DefaultRenderingPipeline("look", true, scene, [this.camera]);
       // (the materials tone-map themselves: the bloom works on what they drew)
       p.imageProcessingEnabled = false;
       const smoothing = EFFECTS.smoothing === "auto" ? (DESKTOP ? "msaa" : "fxaa") : EFFECTS.smoothing;
       p.samples = smoothing === "msaa" ? 4 : 1;
       p.fxaaEnabled = smoothing === "fxaa";
       p.bloomEnabled = EFFECTS.bloom !== "off";
-      p.bloomThreshold = 0.98;
-      p.bloomWeight = 0.25;
+      // (where the device cannot draw in floats, the picture is clamped at white, and the bloom takes what is near it as before)
+      p.bloomThreshold = (p as unknown as { _hdr: boolean })._hdr ? 1 : 0.98;
+      p.bloomWeight = 0.35;
       p.bloomKernel = DESKTOP ? 64 : 32;
       p.bloomScale = 0.5;
       this.pipeline = p;
@@ -1143,7 +1150,8 @@ class Mirror {
   private material(m: THREE.Material): PBRMaterial {
     let entry = this.mats.get(m);
     if (!entry) {
-      const shared = !PATCHES.get(m) && !(m.userData.limbParents && m.userData.pose);
+      // (one that glows is its own too: how bright it is drawn depends on whether the bloom is on, see glowOf)
+      const shared = !PATCHES.get(m) && !(m.userData.limbParents && m.userData.pose) && !m.userData.glow;
       entry = { version: -1, frame: 0, users: 0, gone: false, maps: [], shared, changes: 0, seen: new Float32Array(9).fill(NaN) };
       this.mats.set(m, entry);
       const e = entry;
@@ -1212,13 +1220,22 @@ class Mirror {
   }
   // What changes from frame to frame: colour, opacity, emission
   private paint(mat: PBRMaterial, any: Painted) {
+    const glow = this.glowOf(any as unknown as THREE.Material);
     if (any.color) c3(any.color, mat.albedoColor);
     else mat.albedoColor.set(1, 1, 1);
+    // (an unlit glow, a blade or a bulb, is its colour: that is what is made brighter)
+    if (glow !== 1 && mat.unlit) mat.albedoColor.scaleInPlace(glow);
     if (any.emissive) {
-      const k = any.emissiveIntensity ?? 1;
+      const k = (any.emissiveIntensity ?? 1) * glow;
       mat.emissiveColor.set(any.emissive.r * k, any.emissive.g * k, any.emissive.b * k);
     } else mat.emissiveColor.set(0, 0, 0);
     mat.alpha = any.opacity;
+  }
+  // What glows (a three material with `userData.glow`: a saber's blade, a bulb, a sign's tubes) is drawn that many times brighter where the
+  // bloom is on, over white, so that the bloom (threshold 1) takes it and not what is only lit by the lamps and the sun; elsewhere as it is
+  private glowOf(m: THREE.Material) {
+    const g = m.userData?.glow as number | undefined;
+    return g && g > 1 && this.pipeline?.bloomEnabled && (this.pipeline as unknown as { _hdr: boolean })._hdr ? g : 1;
   }
   // The rest, when the three material changes or its maps come
   private dress(mat: PBRMaterial, m: THREE.Material, patch: ShaderPatch | null | undefined) {
@@ -2015,6 +2032,7 @@ class Mirror {
       cluster.dispose();
       cluster = null;
     }
+    CLUSTER.on = !!cluster;
     const rig: Rig = { sky, suns, lamps, cluster, shadows, casting: false, pool: { point: [], spot: [] } };
     if (shadows) rig.sunShadow = this.makeSunShadow(suns[0], s);
     for (const g of [rig.sunShadow, ...lamps.map((l) => l.shadow)]) if (g) for (const mesh of this.casters) g.addShadowCaster(mesh, false);
