@@ -445,10 +445,11 @@ export function speakQueued(text: string, speaker: VoiceSpeaker, o: { comms?: bo
 // Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped. `ambient`: two people of
 // the world talking to each other (2026-11-02), at `gain` (quieter the further off they are): never over a reply to the party (it is not
 // spoken while one is, and one stops it), and a new one stops the last
-// `energy` overrides the liveliness the reply's mood gives (a shout in a fight is always excited).
-export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number; at?: Place; energy?: Energy } = {}): Promise<void> {
+// `energy` overrides the liveliness the reply's mood gives (a shout in a fight is always excited). `politely`: an ambient line that does not cut
+// off the one already being said, and is dropped instead (the crowd in the stands).
+export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number; at?: Place; energy?: Energy; politely?: boolean } = {}): Promise<void> {
   if (o.ambient) {
-    if (playing) return;
+    if (playing || (o.politely && ambient)) return;
     ambient?.stop();
     ambient = null;
   } else halt();

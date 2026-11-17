@@ -64,7 +64,7 @@ import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type L
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type Dogfight, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
-import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor, talkNotes, townTalk } from "@shared/logic/relations";
+import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, rightNow, sheetFor, talkNotes, townTalk } from "@shared/logic/relations";
 import { ancestor, breathesWater, createRandom, personIn } from "@shared/logic";
 import { findOccupant } from "@shared/logic/contracts";
 const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
@@ -5554,6 +5554,11 @@ export default function GameBoard() {
       here.description ? String(here.description).slice(0, 160) : "",
     ].filter(Boolean).join(" ");
   };
+  // How a person is right now, for the local model (shared/logic/relations.ts rightNow): hurt, or late in a cantina and drinking
+  const talkNow = (hp?: number, maxHp?: number): string | undefined => {
+    const building = world && here ? trailOf(world, here.id).find((a) => a.kind === "building") : undefined;
+    return rightNow({ hp, maxHp, hour: hourOf(useClock.getState().minutes), place: building?.type ?? here?.type }) || undefined;
+  };
   // What a person can speak of besides themselves, from the world and for the local model (server/dialogue.ts `knows`): what they sell today, the work they
   // offer, and for a companion the party's open quests. Dialogue is colour; none of it changes a price or a job.
   const talkKnows = (o: Occupant, placeId: string) => {
@@ -9113,7 +9118,7 @@ export default function GameBoard() {
           ) : (
             <>
               <TalkPanel
-                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined, notes: world ? talkNotes(world, standing, o, talkPlayer.name, false) : undefined }}
+                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined, notes: world ? talkNotes(world, standing, o, talkPlayer.name, false) : undefined, now: talkNow(o.wounds?.[0] ?? o.hitPoints, o.hitPoints) }}
                 news={world ? townTalk(world, talkPlayer.name, here ? trailOf(world, here.id).find((a) => a.kind === "settlement")?.id : undefined) : undefined}
                 knows={talkKnows(o, holderId)}
                 player={talkPlayer}
@@ -9201,7 +9206,7 @@ export default function GameBoard() {
           {c.attack && <p className="text-xs text-gray-400">{c.attack.name} {c.attack.bonus >= 0 ? "+" : ""}{c.attack.bonus}, {c.attack.damage}</p>}
           {c.how && <p className="text-xs text-gray-400">Joined: {c.how}.</p>}
           <TalkPanel
-            speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", form: c.kind, creature: c.creature, notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : "", c.hp < c.maxHp ? "Hurt." : ""].filter(Boolean).join(" ") }}
+            speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", form: c.kind, creature: c.creature, notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : ""].filter(Boolean).join(" "), now: talkNow(c.hp, c.maxHp) }}
             knows={{ party: quests.filter((q) => q.status === "active").slice(0, 2).map((q) => q.title).join("; ") || undefined }}
             player={talkPlayer}
             scene={talkScene()}

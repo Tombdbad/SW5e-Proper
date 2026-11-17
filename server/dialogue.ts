@@ -31,7 +31,7 @@ Your reply is spoken aloud by a voice actor, so it is ONLY the words the charact
 - Sounds the character makes go in square brackets, from this list only, and only where they would be heard: [chuckle] [laugh] [sigh] [breath] [groan] [cough] [wheeze] [hmm] [gasp] [growl] [beep] [whistle] [static]. Use one or two at most, often none.
 - A nervous, frightened or hurt character may stutter ("I-I didn't...") or trail off ("Well... uh..."); a calm one does not.
 - The voice actor reads your punctuation: an exclamation mark where the character shouts, is excited, angry or alarmed, a question mark for a question, full stops when calm.
-- Match the character: their species, trade, mood and how they feel about the party (friendly, neutral or hostile). A shopkeeper talks of trade, a guard of the law, a droid like a droid, a companion like a friend who shares the party's risks.
+- Match the character: their species, trade, mood and how they feel about the party (friendly, neutral or hostile), and what the card says of them RIGHT NOW. A shopkeeper talks of trade, a guard of the law, a droid like a droid, a companion like a friend who shares the party's risks.
 - Use only what is on the card. Do not invent named people, places, prices, quests or items that are not there. If you would not know something, say so, or turn the talk back to what you do know.
 - The card may list WHAT YOU SELL, WORK YOU CAN OFFER, WHAT YOU HAVE HEARD and what was said EARLIER. Bring these up only when they fit what the player says or when you would naturally mention them; never read a list out. Do not repeat what you already said.
 - If the card says YOU ARE CALLING, you speak first: say who you are and why you called. If it says A CALL, you are talking over a link and cannot see each other. If it says IN A FIGHT, shout ten words or fewer.
@@ -91,7 +91,8 @@ export function speechOnly(text: string, names: string[] = []): string {
 }
 
 interface Card {
-  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string; gender?: string; attitude?: string; kin?: string; bond?: string };
+  // `now`: how they are right now, from the game's state (shared/logic/relations.ts rightNow: hurt, a fight going well or badly, a bet, late and drinking)
+  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string; gender?: string; attitude?: string; kin?: string; bond?: string; now?: string };
   player: { name: string; species?: string; class?: string; alignment?: string };
   scene: string;
   line: string;
@@ -105,7 +106,7 @@ interface Card {
   // A call over a link: who rang (`them`: the speaker rang the player and speaks first), by what, and why they rang
   call?: { from?: "them" | "you"; via?: "commlink" | "transceiver"; reason?: string; ship?: string };
   // A shout in a fight, not a talk: what has just happened (see /api/bark)
-  fight?: { event: string; foe?: string };
+  fight?: { event: string; foe?: string; crowd?: boolean };
 }
 
 const HISTORY = 3;
@@ -125,6 +126,7 @@ export function cardText(c: Card): string {
     c.news ? `TALK IN TOWN (gossip; bring it up only if it fits): ${clip(c.news, 220)}` : "",
     `WHO YOU ARE: ${clip(s.name, 60)}${s.gender === "male" ? " (he/him)" : s.gender === "female" ? " (she/her)" : ""}${who ? `, ${/^[aeiou]/i.test(who) ? "an" : "a"} ${who}` : ""}, ${feeling}.${s.notes ? ` ${clip(s.notes, 280)}` : ""}`,
     s.attitude && s.kind !== "party" ? `HOW YOU FEEL ABOUT THEM: ${clip(s.attitude, 12)} (on a scale of hostile, cold, wary, cool, neutral, warm, friendly, generous, devoted); let it colour how you speak.` : "",
+    s.now ? `RIGHT NOW: ${clip(s.now, 220)} Let it show in what you say and how you say it.` : "",
     s.kin ? `YOUR KIN: ${clip(s.kin, 120)}.` : "",
     // A companion talks as a friend in the same trouble, in their own manner (their nature is in the notes), not as a stranger answering questions
     s.kind === "party" ? `HOW YOU TALK: as a companion who shares the party's risks, in your own manner, with your own opinions of the place, the plan and the company. You may tease, warn, worry or ask something back. A droid talks like a droid, a beast in sounds and few words.` : "",
@@ -160,6 +162,8 @@ function memoryLines(c: Card): string[] {
 // The moment the card ends on: the player speaking, a call coming in, or a fight
 function momentLines(c: Card): string[] {
   const name = clip(c.player.name, 60);
+  // (a spectator in the pit's stands: the bout is not theirs, they shout from the crowd)
+  if (c.fight?.crowd) return [`IN THE STANDS: you are watching a bout in the pit. ${clip(c.fight.event, 120)}. Shout one short line from the crowd, eight words or fewer, as yourself.`, "NO ONE IS TALKING TO YOU: shout."];
   if (c.fight) return [`IN A FIGHT: ${clip(c.fight.event, 120)}${c.fight.foe ? ` (against ${clip(c.fight.foe, 60)})` : ""}. Shout one short line, ten words or fewer, as yourself.`, "NO ONE IS TALKING TO YOU: shout."];
   const call = c.call;
   const link = call?.via === "transceiver" ? `a call between worlds by ship's transceiver${call.ship ? ` (the ${clip(call.ship, 40)})` : ""}: the line is thin, with some static` : "a call over commlinks";
@@ -385,7 +389,7 @@ export function registerDialogueRoutes(app: Express) {
     if (!b.speaker?.name || !b.event) return void res.status(400).json({ message: "speaker and event are required" });
     if (jobs > 0 || playerWaiting || chatting || Date.now() - lastBark < BARK_GAP_MS || !primed) return void res.json({ text: "" });
     lastBark = Date.now();
-    const card = cardText({ speaker: b.speaker, player: { name: clip(b.player?.name || "the party", 60) }, scene: b.scene ?? "", line: "", news: undefined, fight: { event: b.event, foe: b.foe } });
+    const card = cardText({ speaker: b.speaker, player: { name: clip(b.player?.name || "the party", 60) }, scene: b.scene ?? "", line: "", news: undefined, fight: { event: b.event, foe: b.foe, crowd: b.crowd === true } });
     try {
       const text = await alone(async () => {
         if (playerWaiting) return "";

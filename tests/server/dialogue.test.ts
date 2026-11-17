@@ -83,6 +83,13 @@ test("cardText: the card the model is sent for one exchange", async () => {
   assert.match(card, /YOU SAID LAST: "Bay nine\."/);
   assert.match(card, /PLAYER SAYS: "Which berth is the Lark in\?"$/);
   assert.match(cardText({ ...talk, speaker: { name: "Vee", kind: "party" } }), /a member of the player's party/);
+  // (how they are right now, from the game: shared/logic/relations.ts rightNow)
+  assert.match(cardText({ ...talk, speaker: { ...talk.speaker, now: "You are badly hurt and in pain." } }), /RIGHT NOW: You are badly hurt and in pain. Let it show/);
+  assert.doesNotMatch(card, /RIGHT NOW/);
+  // (a spectator in the pit's stands shouts from the crowd)
+  const crowd = cardText({ ...talk, line: "", fight: { event: "Zel just landed a blow on Rancor", crowd: true } });
+  assert.match(crowd, /IN THE STANDS: you are watching a bout in the pit. Zel just landed a blow on Rancor. Shout one short line from the crowd/);
+  assert.doesNotMatch(crowd, /IN A FIGHT/);
 });
 
 test("speechOnly and tidy: only what is said aloud, sounds kept from the list, no narration", async () => {

@@ -4,9 +4,10 @@ import { babylonGl } from "@/components/Map/babylon";
 import { Button } from "@/components/ui/button";
 import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCombat } from "@/lib/stores/useCombat";
-import { pitItem, pitPrize, pitTargetCR } from "@shared/logic";
+import { dayOf, pitItem, pitPrize, pitTargetCR } from "@shared/logic";
 import type { Sw5eMonster } from "@shared/data";
-import { FightScene } from "./LocalMap";
+import { FightScene, useClock } from "./LocalMap";
+import { watchCrowd } from "@/lib/barks";
 
 // The pit arena, a dedicated page (house rules, shared/logic "Pit arena"), opened by the pit boss at an arena's sign-up desk (2026-11-02): each bout is a fight of the
 // combat engine on the 3D arena's sand with the crowd cheering on the stands round it (LocalMap PitCrowd), against a creature from the rules' stat blocks. A win pays the prize and an
@@ -63,6 +64,9 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
     }, count > 0 ? 1000 : 700);
     return () => clearTimeout(t);
   }, [phase, count]);
+
+  // The crowd in the stands shouts at the bout while it is fought (lib/barks.ts watchCrowd; house rule, colour)
+  useEffect(() => (phase === "fight" ? watchCrowd({ scene: "The pit arena: a sand floor ringed by packed, roaring stands, money changing hands on every bout.", evening: dayOf(useClock.getState().minutes) }) : undefined), [phase]);
 
   // The bout has begun once the combat engine says so; it is over when the engine gives an outcome
   useEffect(() => {

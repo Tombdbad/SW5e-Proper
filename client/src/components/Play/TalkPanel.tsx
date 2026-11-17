@@ -18,6 +18,8 @@ export interface TalkSpeaker {
   // "party" for the party's own companions
   kind?: string;
   notes?: string;
+  // How they are right now (shared/logic/relations.ts rightNow), for the model
+  now?: string;
   // For the voice: a droid, beast or humanoid companion's kind, what creature it is, and a gender where the game knows one
   form?: string;
   creature?: string;

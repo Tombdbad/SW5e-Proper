@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ATTITUDES, GIVEN_NAMES, KIN_TIE, emptyStanding, type Occupant, type World } from "../../shared/logic";
-import { CAPS, bump, genderOf, kinOf, kinWord, pronounsOf, regardLevel, reputation, sheetFor, tieOf } from "../../shared/logic/relations";
+import { CAPS, bump, genderOf, kinOf, kinWord, pronounsOf, regardLevel, reputation, rightNow, sheetFor, sideStrength, tieOf } from "../../shared/logic/relations";
 
 const person = (id: string, name: string, extra: Partial<Occupant> = {}): Occupant => ({ id, name, role: "resident", disposition: "neutral", count: 1, species: "Human", loadout: [], ...extra });
 // Anna's family of one species: Dax is Kira's child, Mara is Dax's spouse, Jace is Kira's cousin
@@ -184,4 +184,22 @@ test("people's own relationships (2026-11-02, house rule): a nature of the nemes
   assert.match(talkNotes(w, standing, kira, "Gear"), /^By nature \w+: /);
   assert.equal(townTalk(w, "Gear"), "Gear, an outsider with a party of their own, is known here as a menace. Vex Vos fled from the party in Theed.");
   assert.equal(townTalk(world, "Gear"), "", "no nemeses, nothing said");
+});
+
+test("rightNow: how someone is at this moment, from the game's state, for the model's card", () => {
+  assert.equal(rightNow({}), "");
+  assert.equal(rightNow({ hp: 3, maxHp: 12 }), "You are badly hurt and in pain.");
+  assert.equal(rightNow({ hp: 8, maxHp: 12 }), "You are hurt.");
+  assert.equal(rightNow({ hp: 12, maxHp: 12, hour: 14 }), "");
+  // (late in a cantina they have been drinking; late anywhere else, tired; not in a fight)
+  assert.match(rightNow({ hour: 22.5, place: "cantina" }), /drinking/);
+  assert.match(rightNow({ hour: 1, place: "garrison" }), /tired/);
+  assert.equal(rightNow({ hour: 22, place: "garrison" }), "");
+  assert.match(rightNow({ fight: { ours: 0.9, theirs: 0.1 } }), /winning easily/);
+  assert.match(rightNow({ fight: { ours: 0.2, theirs: 0.8 } }), /losing badly/);
+  assert.match(rightNow({ fight: { ours: 0.5, theirs: 0.55 } }), /close/);
+  assert.doesNotMatch(rightNow({ fight: { ours: 0.9, theirs: 0.1 }, hour: 23, place: "cantina" }), /drinking/);
+  assert.match(rightNow({ bet: "the rancor" }), /money on the rancor/);
+  assert.equal(sideStrength([{ hp: 5, maxHp: 10 }, { hp: -3, maxHp: 10 }]), 0.25);
+  assert.equal(sideStrength([]), 0);
 });

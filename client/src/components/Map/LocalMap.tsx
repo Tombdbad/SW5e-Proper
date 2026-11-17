@@ -39,7 +39,7 @@ import { CLUSTER } from "./babylon";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
-import { BOUT_LENGTH, matchState, pitGossip, pitLines, type Match, type PitItem } from "@shared/logic/pitbets";
+import { BOUT_LENGTH, matchState, pitGossip, pitLines, PIT_CROWD_SPECIES as CROWD_SPECIES, type Match, type PitItem } from "@shared/logic/pitbets";
 import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -6196,7 +6196,6 @@ const STAND_ROWS = 3;
 const STAND_STEP = 0.45;
 // The beasts kept in an arena's pens (drawn in the cages: the pens are furniture, the beasts are not people of the room)
 const PEN_BEASTS = ["Nexu", "Reek", "Acklay", "Gundark", "Rancor", "Kath hound"];
-const CROWD_SPECIES = ["Human", "Twi'lek", "Rodian", "Zabrak", "Trandoshan", "Gran", "Weequay", "Duros", "Human", "Mon Calamari"];
 function PitCrowd({ width, height }: { width: number; height: number }) {
   const ring = useMemo(() => {
     const out: { x: number; y: number; row: number }[] = [];
