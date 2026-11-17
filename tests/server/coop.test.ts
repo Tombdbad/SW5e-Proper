@@ -261,3 +261,52 @@ test("four play, a fifth is turned away, and a dropped player takes their place 
   [...players, back, fifth].forEach((c) => c.close());
   await quiet(600);
 });
+
+// (2026-11-16, batch G) The shared fight: begun by one, joined by the other, played by the server for both, the same field to each, and ended for
+// both; one who walks out is told it ended for them
+test("a shared fight: begun, joined, the same field to both, input played, the end to both", { skip }, async () => {
+  const { bakeGrid, blankUnit } = await import("../../shared/logic/shooter");
+  // (a campaign of its own: a game of the one above may still be open if a test before failed)
+  const row = (await pool.query("select id, galaxy_map from campaigns where galaxy_map is not null and id <> $1 order by id desc limit 1", [campaign.id])).rows[0];
+  const own = row ? { id: row.id, world: row.galaxy_map } : campaign;
+  const world = own.world;
+  const host = client();
+  await host.send({ t: "hello", campaignId: own.id, characterId: chars[0], host: true });
+  const w1 = await host.next("welcome");
+  const guest = client();
+  await guest.send({ t: "hello", campaignId: own.id, characterId: chars[1], code: w1.code });
+  const w2 = await guest.next("welcome");
+  const area: string = w2.members.find((m: any) => m.id === w2.you).areaId;
+  const open = { blocks: () => false, walkable: (x: number, y: number) => x >= 0 && y >= 0 && x < 30 && y < 30, floorAt: () => 0 };
+  const gun = { name: "Rifle", damage: 30, type: "energy", interval: 0.1, auto: false, range: 30, long: 80, mag: 30, left: 30, reserve: 0, reload: 1, spent: 0 };
+  const me = blankUnit({ id: "me", name: "Ann", side: "player", x: 5.5, y: 5.5, hp: 300, maxHp: 300, gun: { ...gun }, mode: "engage" });
+  const foe = blankUnit({ id: "f1", name: "Thug", side: "foe", x: 5.5, y: 12.5, hp: 50, maxHp: 50, mode: "idle" });
+  await host.send({ t: "fight-open", area, grid: bakeGrid(open, 0, 0, 30, 30), units: [me, foe], props: [], seed: 1, surprise: true, gear: [] });
+  await guest.next("fight-on", (m) => m.area === area);
+  await guest.send({ t: "fight-join", area, units: [{ ...me, name: "Bo", x: 7.5, gun: { ...gun } }], gear: [] });
+  const a = await host.next("fight", (m) => m.snap.units.length === 3);
+  const b = await guest.next("fight", (m) => m.snap.units.length === 3);
+  assert.deepEqual(a.snap.units.map((u: any) => u.id).sort(), b.snap.units.map((u: any) => u.id).sort(), "the same field on both");
+  assert.equal(a.owner, w1.you);
+  // the guest fires at the foe: the server plays it as theirs
+  for (let i = 0; i < 4; i++) {
+    await guest.send({ t: "fight-input", area, pose: { x: 7.5, y: 5.5, h: 0, facing: 0 }, cmds: [{ k: "fire", from: { x: 7.5, y: 5.5, h: 1 }, to: { x: 5.5, y: 12.5, h: 0.6 }, moving: false, airborne: false }] });
+    await quiet(250);
+  }
+  const end = await host.next("fight-end", (m) => m.area === area);
+  assert.equal(end.result, "victory");
+  assert.equal((await guest.next("fight-end", (m) => m.area === area)).result, "victory");
+  // one who walks out of a fight going on is told it ended for them
+  await host.send({ t: "fight-open", area, grid: bakeGrid(open, 0, 0, 30, 30), units: [me, { ...foe, hp: 999, maxHp: 999 }], props: [], seed: 2, surprise: true, gear: [] });
+  await guest.next("fight-on", (m) => m.area === area);
+  await guest.send({ t: "fight-join", area, units: [{ ...me, x: 7.5 }], gear: [] });
+  await quiet(200);
+  const other = Object.keys(world.areas).find((id) => id !== area && world.areas[id].kind === "room")!;
+  await guest.send({ t: "move", areaId: other });
+  assert.equal((await guest.next("fight-end", (m) => m.area === area)).result, "left");
+  await host.send({ t: "fight-leave", area });
+  await host.send({ t: "leave" });
+  await guest.send({ t: "leave" });
+  host.close();
+  guest.close();
+});
