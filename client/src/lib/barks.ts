@@ -18,7 +18,7 @@ export function watchFight(o: { scene: string; player: string }): () => void {
     try {
       const r = await fetch("/api/bark", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ speaker: { name: who.name, species: who.species, disposition: who.ally ? "friendly" : "hostile", kind: who.ally ? "party" : undefined }, player: { name: o.player }, event, foe, scene: o.scene }) });
       const text = r.ok ? String(((await r.json()) as { text?: string }).text ?? "") : "";
-      if (text) await speak(text, { id: String(who.id), name: who.name, species: who.species, disposition: who.ally ? "friendly" : "hostile" }, { ambient: true, gain: 0.9 });
+      if (text) await speak(text, { id: String(who.id), name: who.name, species: who.species, disposition: who.ally ? "friendly" : "hostile" }, { ambient: true, gain: 0.9, energy: "excited" });
     } catch {
       // (the model is off: a fight is silent)
     } finally {

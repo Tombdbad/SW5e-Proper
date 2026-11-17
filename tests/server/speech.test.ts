@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { placeCached } from "../../server/speech";
+import { energyFrom, piperArgs, PIPER_ENERGY, placeCached } from "../../server/speech";
 
 const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), "sw5e-speech-"));
 
@@ -46,4 +46,21 @@ test("placeCached still reports a rename that keeps failing when nothing is cach
     throw Object.assign(new Error("EPERM"), { code: "EPERM" });
   };
   await assert.rejects(placeCached(tmp, file, { rename, wait: async () => {} }), /EPERM/);
+});
+
+test("Piper's liveliness: each energy reaches the command line, calm is the voice file's own flat setting, and anything else asked is calm", () => {
+  const args = piperArgs("voice.onnx", "1.1", "excited");
+  const flag = (a: string[], f: string) => a[a.indexOf(f) + 1];
+  assert.equal(flag(args, "--model"), "voice.onnx");
+  assert.equal(flag(args, "--length_scale"), "1.1");
+  assert.equal(flag(args, "--noise_scale"), "0.8");
+  assert.equal(flag(args, "--noise_w"), "1");
+  assert.equal(flag(piperArgs("v", "1.0", "calm"), "--noise_scale"), "0.333");
+  assert.equal(flag(piperArgs("v", "1.0", "normal"), "--noise_w"), "0.8");
+  // (livelier at each step, and never as far as the setting that made the rhythm uneven: 1.0 and 1.4)
+  assert.ok(PIPER_ENERGY.calm.noise < PIPER_ENERGY.normal.noise && PIPER_ENERGY.normal.noise < PIPER_ENERGY.excited.noise);
+  assert.ok(PIPER_ENERGY.excited.noise < 1 && PIPER_ENERGY.excited.noiseW < 1.4);
+  assert.equal(energyFrom("excited"), "excited");
+  assert.equal(energyFrom(undefined), "calm");
+  assert.equal(energyFrom("furious"), "calm");
 });

@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { cleanTranscript, speechOnly, tidy } from "../../server/dialogue";
 import { findPiper } from "../../server/speech";
-import { gibberish, partsOf, toneOf, voiceOf, wavBase64 } from "../../client/src/lib/voice";
+import { energyOf, gibberish, partsOf, toneOf, voiceOf, wavBase64 } from "../../client/src/lib/voice";
 
 const windows = { voices: ["George", "Hazel", "Susan"] };
 
@@ -60,6 +60,11 @@ test("a reply is heard as runs of speech and cues in order; its mood bends the v
   assert.equal(toneOf("[sigh] It's been a long day.").mood, "weary");
   assert.equal(toneOf("Get out!", "hostile").mood, "hostile");
   assert.equal(toneOf("Bay nine.").mood, "calm");
+  // (the mood sets how lively the engine says it: weary flat, ordinary at the engine's usual, shouting livelier)
+  assert.equal(energyOf(toneOf("[sigh] It's been a long day.")), "calm");
+  assert.equal(energyOf(toneOf("Bay nine.")), "normal");
+  assert.equal(energyOf(toneOf("Get up! Fight! Finish him!")), "excited");
+  assert.equal(energyOf(toneOf("Get out!", "hostile")), "excited");
   assert.equal(gibberish("Hello there, friend.", 3), gibberish("Hello there, friend.", 3));
   assert.notEqual(gibberish("Hello there, friend.", 3), "Hello there, friend.");
 });
