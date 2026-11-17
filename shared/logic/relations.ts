@@ -316,3 +316,42 @@ export function talkNotes(world: World, standing: Standing | null | undefined, o
   const nature = natureOf(world, o);
   return [`By nature ${nature}: ${world.nemeses?.records[o.id] ? TEMPERS[nature].blurb : NATURE_WORDS[nature]}.`, partyViewOf(world, standing, o, party, withRegard)].filter(Boolean).join(" ");
 }
+
+// How someone is RIGHT NOW, for the card the local model speaks from (server/dialogue.ts; 2026-11-17, the user: "prompt Gemma4 with the
+// relevant scene/situation/emotional state of the character"). Read from the game's state only, so the words carry the mood and the voice
+// follows them (client/src/lib/voice.ts toneOf, energyOf). A house reading, colour for the talk: it changes nothing in the game.
+//   hp, maxHp   their hit points (an occupant's wounds, a combatant's hp)
+//   hour        the hour of the day (0-24), and `place` the building's type: late in a cantina or a gambling hall they have been drinking
+//   fight       how much strength each side has left (0-1): ours is the speaker's own side
+//   bet         who they have money on, in the pit's stands
+export interface NowFacts { hp?: number; maxHp?: number; hour?: number; place?: string; fight?: { ours: number; theirs: number }; bet?: string }
+export function rightNow(f: NowFacts): string {
+  const out: string[] = [];
+  if (f.fight) {
+    const { ours, theirs } = f.fight;
+    out.push(
+      theirs <= 0.25 && ours >= 0.5 ? "Your side is winning easily, and you feel it: cocky, eager to finish it."
+      : ours <= 0.3 && theirs >= 0.5 ? "Your side is losing badly: you are frightened, or desperate."
+      : Math.abs(ours - theirs) < 0.2 ? "The fight is close: you are tense, every blow counts."
+      : ours > theirs ? "Your side has the upper hand."
+      : "Your side is in trouble.",
+    );
+  }
+  if (f.bet) out.push(`You have money on ${f.bet}, and you shout for it.`);
+  if (f.hp !== undefined && f.maxHp) {
+    const left = f.hp / f.maxHp;
+    if (f.hp > 0 && left <= 0.34) out.push("You are badly hurt and in pain.");
+    else if (f.hp > 0 && left < 0.75) out.push("You are hurt.");
+  }
+  if (f.hour !== undefined && !f.fight && !f.bet) {
+    const late = f.hour >= 21 || f.hour < 4;
+    if (late && /cantina|gambling hall/i.test(f.place ?? "")) out.push("It is late and you have been drinking: loose-tongued, too loud, too friendly.");
+    else if (f.hour >= 23 || f.hour < 5) out.push("It is the middle of the night and you are tired.");
+  }
+  return out.join(" ");
+}
+// How much strength a side of a fight has left (0-1): its hit points over its full hit points, of those still standing and those down
+export function sideStrength(fighters: { hp: number; maxHp: number }[]): number {
+  const full = fighters.reduce((s, c) => s + Math.max(0, c.maxHp), 0);
+  return full > 0 ? fighters.reduce((s, c) => s + Math.max(0, Math.min(c.hp, c.maxHp)), 0) / full : 0;
+}

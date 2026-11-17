@@ -314,3 +314,40 @@ export function pitLines(item: PitItem, seed: number): { who: 0 | 1; text: strin
     { who: 0, text: pick(["I'd have lost my shirt on it.", "Something to see.", "They'll be talking about that for days."], "r2") },
   ];
 }
+
+// ---------------------------------------------------------------------------------------------
+// The crowd in the stands (2026-11-17; the user: the arena's spectators should sound "lively"). Colour only, not a rule (it changes nothing): while the party fights a
+// bout in the pit, a few spectators shout at what happens, each backing one side (half the stands money on the party's fighter, half on the
+// creature), in their own voice, excited (client/src/lib/barks.ts watchCrowd). These stock shouts are said at once; the local model is asked now
+// and then for a line of its own (server/dialogue.ts, IN THE STANDS) when it is free. The species are the stands' figures (LocalMap PitCrowd).
+// ---------------------------------------------------------------------------------------------
+export const PIT_CROWD_SPECIES = ["Human", "Twi'lek", "Rodian", "Zabrak", "Trandoshan", "Gran", "Weequay", "Duros", "Human", "Mon Calamari"];
+// start: the bout begins; hit: the party's fighter lands a blow; hurt: the creature lands one; close: either is nearly done; won / lost: the party's fighter
+export type CrowdEvent = "start" | "hit" | "hurt" | "close" | "won" | "lost";
+// Which side a spectator has money on (the same spectator backs the same side all evening)
+export const crowdBacks = (seat: number, evening: number): "fighter" | "beast" => (((seat * 2654435761) ^ (evening * 40503)) >>> 0) % 2 === 0 ? "fighter" : "beast";
+const CROWD_LINES: Record<CrowdEvent, Record<"fighter" | "beast", string[]>> = {
+  start: { fighter: ["Here we go!", "Blood on the sand!", "My credits are on you, {f}!", "Show it who's boss, {f}!"], beast: ["Here we go!", "Blood on the sand!", "Come on, {b}!", "Eat them alive, {b}!"] },
+  hit: { fighter: ["Yes! Again!", "That's it, hit it again!", "Get it, {f}!", "Ha! Did you see that?"], beast: ["Shake it off, {b}!", "That was nothing!", "Get up, {b}, get up!", "Come on, fight back!"] },
+  hurt: { fighter: ["Get up! Get up and fight!", "No, no, no!", "Watch out!", "Move, {f}, move!"], beast: ["Yes! Tear into them!", "Again, {b}, again!", "That's my beast!", "Ha! Down they go!"] },
+  close: { fighter: ["Finish it! Finish it!", "Hold on, {f}, hold on!", "One more! One more!"], beast: ["Finish them! Finish them!", "Don't you dare quit, {b}!", "One more! One more!"] },
+  won: { fighter: ["Yes! Pay up, pay up!", "I told you! I told you!", "{f}! {f}! {f}!"], beast: ["Rigged! The whole thing's rigged!", "There goes my week's pay...", "Useless! Useless beast!"] },
+  lost: { fighter: ["No! Get up!", "There goes my week's pay...", "Somebody drag them out of there."], beast: ["Yes! Pay up, pay up!", "{b}! {b}! {b}!", "I told you! I told you!"] },
+};
+// A spectator's shout at an event: one of the stock lines for the side they back, with the fighters' names put in
+export function crowdShout(event: CrowdEvent, backs: "fighter" | "beast", names: { fighter: string; beast: string }, seed: number): string {
+  const lines = CROWD_LINES[event][backs];
+  const first = (s: string) => s.split(/[\s,]+/)[0] || s;
+  return lines[(seed >>> 0) % lines.length].replace(/\{f\}/g, first(names.fighter)).replace(/\{b\}/g, first(names.beast));
+}
+// What happened, in the words the model is given for a spectator's own line
+export function crowdEventText(event: CrowdEvent, names: { fighter: string; beast: string }): string {
+  return {
+    start: `${names.fighter} and ${names.beast} have just come out onto the sand`,
+    hit: `${names.fighter} just landed a blow on ${names.beast}`,
+    hurt: `${names.beast} just landed a blow on ${names.fighter}`,
+    close: "one of them is nearly finished",
+    won: `${names.fighter} has beaten ${names.beast}`,
+    lost: `${names.beast} has beaten ${names.fighter}`,
+  }[event];
+}

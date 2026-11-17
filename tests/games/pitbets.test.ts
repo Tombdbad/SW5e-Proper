@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRandom } from "../../shared/logic/index";
-import { boutsFor, chanceOf, fight, fighterOf, paysFor, settle, HOUSE_CUT, type Fighter } from "../../shared/logic/pitbets";
+import { boutsFor, chanceOf, crowdBacks, crowdEventText, crowdShout, fight, fighterOf, paysFor, settle, HOUSE_CUT, type CrowdEvent, type Fighter } from "../../shared/logic/pitbets";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 const catalog = await getWorldCatalog();
@@ -153,4 +153,21 @@ test("the arena's staff stand at their posts: bookmakers at kiosks, each stallho
   const assign = (k: number, taken: number[]): boolean => k === options.length || options[k].some((i) => !taken.includes(i) && assign(k + 1, [...taken, i]));
   if (counters.length >= people.length) assert.ok(assign(0, []), "a stall each");
   staffed(/fighters' pens/i, "pit boss", /sign-up desk/i);
+});
+
+test("the crowd in the stands: each seat backs a side for the evening, and shouts at each event for it, with the fighters' names", () => {
+  const sides = [0, 1, 2, 3, 4, 5].map((seat) => crowdBacks(seat, 12));
+  assert.ok(sides.includes("fighter") && sides.includes("beast"));
+  assert.deepEqual([0, 1, 2, 3, 4, 5].map((seat) => crowdBacks(seat, 12)), sides);
+  const names = { fighter: "Zel Arrandi", beast: "Rancor" };
+  for (const e of ["start", "hit", "hurt", "close", "won", "lost"] as CrowdEvent[]) {
+    for (let seed = 0; seed < 6; seed++) for (const backs of ["fighter", "beast"] as const) {
+      const line = crowdShout(e, backs, names, seed);
+      assert.ok(line.length > 3 && line.length < 50, line);
+      assert.doesNotMatch(line, /{|}/);
+      assert.doesNotMatch(line, /Arrandi/);
+    }
+    assert.ok(crowdEventText(e, names).length > 5);
+  }
+  assert.match(crowdShout("start", "fighter", names, 2), /Zel/);
 });
