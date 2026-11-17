@@ -28,6 +28,9 @@ export function toServerCharacter(c: any, partial = false): Record<string, any> 
   put("temporaryHp", c.temporaryHp, 0);
   put("maxForcePoints", pp, 0);
   put("currentForcePoints", c.currentForcePoints ?? pp, 0);
+  put("maxOtherPoints", c.maxOtherPoints);
+  put("currentOtherPoints", c.currentOtherPoints ?? c.maxOtherPoints);
+  put("multiclass", Array.isArray(c.multiclass) && c.multiclass.length ? c.multiclass : undefined);
   put("armorClass", c.armorClass || undefined, 10 + Math.floor((dex - 10) / 2));
   put("speed", c.speed, 30);
   put("equipment", names(c.equipment), []);

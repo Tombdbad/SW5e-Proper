@@ -32,7 +32,11 @@ export const characters = pgTable("characters", {
   species: text("species").notNull(),
   class: text("class").notNull(),
   subclass: text("subclass"), // Already correctly defined as text
+  // The character level: the sum of the levels in every class
   level: integer("level").notNull().default(1),
+  // The classes taken after the first, in the order taken (Multiclassing): [{ class, level, subclass?, skills?, tools? }];
+  // the first class has what the character level leaves (client/src/lib/sw5e/characterCalculation.ts classLevels)
+  multiclass: json("multiclass"),
   background: text("background").notNull(),
   alignment: text("alignment").notNull(),
   
@@ -51,6 +55,9 @@ export const characters = pgTable("characters", {
   // Force Powers
   maxForcePoints: integer("max_force_points").notNull().default(0),
   currentForcePoints: integer("current_force_points").notNull().default(0),
+  // A second kind of casting (a force-and-tech multiclass keeps its pools apart): the points of the kind not in maxForcePoints
+  maxOtherPoints: integer("max_other_points").notNull().default(0),
+  currentOtherPoints: integer("current_other_points").notNull().default(0),
   forcePowers: json("force_powers"), // [{ name, level, description, castingTime, range, duration, usesRemaining, maxUses }]
   techPowers: json("tech_powers"), // Similar structure to forcePowers
   
@@ -136,6 +143,11 @@ export const insertCharacterSchema = z.object({
   conditions: z.array(z.string()).optional(),
   maxForcePoints: z.number().min(0),
   currentForcePoints: z.number().min(0),
+  maxOtherPoints: z.number().min(0).optional(),
+  currentOtherPoints: z.number().min(0).optional(),
+  // The classes taken after the first: { class, level, subclass?, skills?, tools? }
+  multiclass: z.array(z.object({ class: z.string(), level: z.number().int().min(1).max(19), subclass: z.string().optional(), skills: z.array(z.string()).optional(), tools: z.array(z.string()).optional() })).optional(),
+  armorProficiencies: z.array(z.string()).optional(),
   armorClass: z.number().min(1),
   speed: z.number().min(1),
   equipment: z.array(z.string()),
