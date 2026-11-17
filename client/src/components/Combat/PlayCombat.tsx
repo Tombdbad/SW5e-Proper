@@ -4,7 +4,7 @@ import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
   useCombat, onTable, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
   playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber, drawPlan, grappledBy,
-  type GrappleMove,
+  type GrappleMove, pointsKey,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
 
@@ -102,7 +102,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const usedNow = (f: (typeof chosen)[number]) =>
     (f.activation === "action" || f.activation === "free") && !f.bonusAttack && !f.stance && !(f.maneuver && f.maneuver.timing !== "use") && !f.marks && !f.extraDamage && !f.acDie && !f.reduce && !f.acBonus;
   const empowerFeature = (player?.features ?? []).find((f) => f.extraDamage?.perPoint);
-  const empowerMax = empowerFeature ? Math.min(empowerFeature.extraDamage!.maxDice ?? 9, player?.powerPoints ?? 0) : 0;
+  const empowerMax = empowerFeature ? Math.min(empowerFeature.extraDamage!.maxDice ?? 9, player?.[pointsKey(player, empowerFeature.cost?.kind)] ?? 0) : 0;
   const attacker = pending ? combatants.find((c) => c.id === pending.attackerId) : undefined;
   // An auto weapon fires only in its burst or rapid mode (Expanded Content; a single penetrating shot is played as a plain shot)
   const autoOnly = !!player?.rangedProps?.some((p) => /^auto\b/i.test(p)) && (propertyNumber(player.rangedProps, "burst") > 0 || propertyNumber(player.rangedProps, "rapid") > 0 || player.rangedProps.some((p) => /^(burst|rapid)$/i.test(p)));
@@ -335,7 +335,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                 .filter(usedNow)
                 .map((f) => {
                   const left = usesLeft(f.key);
-                  const blocked = (left !== null && left <= 0) || (f.activation === "action" && !hasAction) || (f.cost && (f.cost.pool === "focus" ? (player?.focus ?? 0) : (player?.powerPoints ?? 0)) < f.cost.points);
+                  const blocked = (left !== null && left <= 0) || (f.activation === "action" && !hasAction) || (f.cost && (f.cost.pool === "focus" ? (player?.focus ?? 0) : (player?.[pointsKey(player, f.cost.kind)] ?? 0)) < f.cost.points);
                   return (
                     <Button key={f.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" disabled={!!blocked} onClick={() => onTable(() => useCombat.getState().useFeature(f.key, target?.id))} data-testid={`combat-feature-${f.name}`}>
                       {f.name}
@@ -447,7 +447,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
         })()}
         {!down && (player?.powers?.length ?? 0) > 0 && (
           <div className="mb-3" data-testid="combat-powers">
-            <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left)</p>
+            <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left{player?.otherKind ? `; ${player.otherKind} points ${player.otherPoints ?? 0}` : ""})</p>
             <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
               {player!.powers!.map((power, index) => {
                 // A power that moves things can be aimed at a piece of the ground even with the enemy out of range
@@ -461,7 +461,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                     size="sm"
                     variant="outline"
                     className="h-auto whitespace-normal justify-start text-left"
-                    disabled={!playerTurn || (player?.powerPoints ?? 0) < power.cost || far || noTime || power.castTime === "reaction" || power.castTime === "long"}
+                    disabled={!playerTurn || (player?.[pointsKey(player, power.tradition)] ?? 0) < power.cost || far || noTime || power.castTime === "reaction" || power.castTime === "long"}
                     onClick={() => (moves ? setAiming(aiming === index ? null : index) : cast(index))}
                   >
                     {power.name}

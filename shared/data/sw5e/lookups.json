@@ -1,4 +1,196 @@
 {
+ "multiclassing": {
+  "prerequisites": {
+   "berserker": [
+    {
+     "any": [
+      "strength"
+     ],
+     "min": 13
+    }
+   ],
+   "consular": [
+    {
+     "any": [
+      "wisdom",
+      "charisma"
+     ],
+     "min": 13
+    }
+   ],
+   "engineer": [
+    {
+     "any": [
+      "intelligence"
+     ],
+     "min": 13
+    }
+   ],
+   "fighter": [
+    {
+     "any": [
+      "strength",
+      "dexterity"
+     ],
+     "min": 13
+    }
+   ],
+   "guardian": [
+    {
+     "any": [
+      "constitution"
+     ],
+     "min": 13
+    },
+    {
+     "any": [
+      "wisdom",
+      "charisma"
+     ],
+     "min": 13
+    }
+   ],
+   "monk": [
+    {
+     "any": [
+      "dexterity"
+     ],
+     "min": 13
+    },
+    {
+     "any": [
+      "wisdom",
+      "charisma"
+     ],
+     "min": 13
+    }
+   ],
+   "operative": [
+    {
+     "any": [
+      "dexterity"
+     ],
+     "min": 13
+    }
+   ],
+   "scholar": [
+    {
+     "any": [
+      "intelligence"
+     ],
+     "min": 13
+    }
+   ],
+   "scout": [
+    {
+     "any": [
+      "strength",
+      "dexterity"
+     ],
+     "min": 13
+    },
+    {
+     "any": [
+      "intelligence"
+     ],
+     "min": 13
+    }
+   ],
+   "sentinel": [
+    {
+     "any": [
+      "dexterity"
+     ],
+     "min": 13
+    },
+    {
+     "any": [
+      "wisdom",
+      "charisma"
+     ],
+     "min": 13
+    }
+   ]
+  },
+  "proficiencies": {
+   "berserker": [
+    "Light armor",
+    "all vibroweapons"
+   ],
+   "consular": [
+    "Simple lightweapons"
+   ],
+   "fighter": [
+    "Light armor",
+    "medium armor",
+    "all blasters",
+    "all vibroweapons"
+   ],
+   "engineer": [
+    "Light armor",
+    "one skill from the class's skill list",
+    "one tool from the class's list"
+   ],
+   "guardian": [
+    "Light armor",
+    "medium armor",
+    "all lightweapons",
+    "all vibroweapons"
+   ],
+   "operative": [
+    "Light armor",
+    "any one skill",
+    "one tool from the class's list"
+   ],
+   "monk": [
+    "Techblades"
+   ],
+   "scout": [
+    "Light armor",
+    "medium armor",
+    "all blasters",
+    "all vibroweapons",
+    "one skill from the class's list"
+   ],
+   "scholar": [
+    "Light armor",
+    "one skill from the class's list"
+   ],
+   "sentinel": [
+    "Light armor",
+    "simple lightweapons",
+    "one skill from the class's list"
+   ]
+  },
+  "maxPowerLevel": [
+   1,
+   1,
+   2,
+   2,
+   3,
+   3,
+   4,
+   4,
+   5,
+   5,
+   6,
+   6,
+   7,
+   7,
+   8,
+   8,
+   9,
+   9,
+   9,
+   9
+  ],
+  "onceOnly": [
+   "Unarmored Defense"
+  ],
+  "noStacking": [
+   "Extra Attack"
+  ]
+ },
  "wealthByLevel": [
   0,
   1000,

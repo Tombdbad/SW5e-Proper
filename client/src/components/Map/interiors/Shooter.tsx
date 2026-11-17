@@ -11,6 +11,7 @@ import {
   KEPT, SHOOT, applyGear, monstrous, castPower, cloakedNow, firePlayer, fitsAt, newSim, paceOf, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, sees, sensesOf, setBlock, step, swingPlayer, throwGrenade,
   type Env, type Event, type FightGear, type Prop, type Sim, type Unit,
   applySnap, bakeGrid, type Command, type Snap,
+  poolKey,
 } from "@shared/logic/shooter";
 import { fightBus, leaveSharedFight, openSharedFight, sharedFightInput } from "@/lib/coop";
 
@@ -88,6 +89,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const me = playerOf(sim.current);
     me.powers = session.powers ?? [];
     me.points = session.points ?? 0;
+    if (session.tradition2) Object.assign(me, { points2: session.points2 ?? 0, tradition2: session.tradition2 });
     // (test hook: the live fight, for a script to look at or to bring to its end)
     if (typeof window !== "undefined") (window as any).__shooter = sim.current;
   }
@@ -207,6 +209,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       patch[String(mine.id)] = {
         hp: Math.max(0, Math.round(p.hp)), lastHitBy: s.lastHitOnPlayer,
         ...(p.points !== undefined && mine.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}),
+        ...(p.points2 !== undefined && mine.otherPoints !== undefined ? { otherPoints: Math.max(0, p.points2) } : {}),
         // (a launcher's shots are the grenades used, counted on the belt)
         ...(a && p.gun && !p.gun.launcher ? { ammo: { ...a, left: p.gun.left }, spentAmmo: { ...(mine.spentAmmo ?? {}), [a.round ?? a.plain]: (mine.spentAmmo?.[a.round ?? a.plain] ?? 0) + p.gun.spent } } : {}),
       };
@@ -766,7 +769,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         poisoned: p.poisoned > 0, burning: p.burning > 0, blinded: p.blind > 0, temp: Math.round(p.temp),
         focus: Math.round(p.focus), focusMax: SHOOT.focus.max, blocking: p.blocking, foes: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone").length, note: st.note,
         points: p.points ?? 0, crouching: st.crouch,
-        powers: (p.powers ?? []).slice(st.page * PAGE, st.page * PAGE + PAGE).map((w) => ({ name: w.name, cost: w.cost, ready: (p.points ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
+        ...(p.tradition2 ? { points2: p.points2 ?? 0, tradition2: p.tradition2 } : {}),
+        powers: (p.powers ?? []).slice(st.page * PAGE, st.page * PAGE + PAGE).map((w) => ({ name: w.name, cost: w.cost, ready: (p[poolKey(p, w.tradition)] ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
         page: st.page, pages: Math.max(1, Math.ceil((p.powers?.length ?? 0) / PAGE)),
         buffs: (p.buffs ?? []).filter((b) => b.t < 590).map((b) => ({ name: b.name, t: Math.ceil(b.t) })).concat((p.buffs ?? []).filter((b) => b.t >= 590).map((b) => ({ name: b.name, t: 0 }))),
         states: [cloakedNow(p) && "Unseen", p.cloaked && !cloakedNow(p) && "Seen (a shot gave you away)", p.anchored && "Anchored", (p.held ?? 0) > 0 && "Held", (p.slowed ?? 0) > 0 && "Slowed", p.imbue && `Next hit +${Math.round(p.imbue.damage)} ${p.imbue.type}`, s.lit && "Light on", s.eye && "Eye out"].filter(Boolean) as string[],
@@ -776,7 +780,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       });
       useCombat.getState().syncRealtime({
         ...Object.fromEntries(s.units.filter((u) => u.side !== "player" && !u.decoy).map((u) => [u.id, { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)) }])),
-        ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)), ...(p.points !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}) } } : {}),
+        ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)), ...(p.points !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}), ...(p.points2 !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.otherPoints !== undefined ? { otherPoints: Math.max(0, p.points2) } : {}) } } : {}),
       });
     }
     // The fight is over a moment after its last blow (a co-op fight: when the server says so, or for this member when they fall: the others

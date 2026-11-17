@@ -8,7 +8,7 @@ import { getClassById } from "@/lib/sw5e/classes";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getBackgroundById } from "@/lib/sw5e/backgrounds";
 import PersonalityTraitForm from "@/components/CharacterCreation/PersonalityTraitForm";
-import { carriedWeapons, castingKind, type CarriedWeapon } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, castingKind, classSummary, hitDiceLabel, isMulticlass, powerClass, savedPools, type CarriedWeapon } from "@/lib/sw5e/characterCalculation";
 
 // CharacterPreview component
 export const CharacterPreview = ({ character }: { character?: any }) => {
@@ -24,7 +24,7 @@ export const CharacterPreview = ({ character }: { character?: any }) => {
     <div className="character-preview p-4">
       <h3 className="text-xl font-bold mb-2">{character.name || "New Character"}</h3>
       <p>
-        Level {character.level || 1} {character.species || "Unknown"} {character.class || "Unknown"}
+        Level {character.level || 1} {character.species || "Unknown"} {character.class ? classSummary(character) : "Unknown"}
       </p>
     </div>
   );
@@ -290,6 +290,9 @@ export default function CharacterSheet({
   // Powers known, with what each costs and the caster's numbers for it
   const knownPowers: Power[] = [...(character.forcePowers ?? []), ...(character.techPowers ?? [])].filter((power) => power?.name);
   const pointsName = castingKind(character) === "Tech" ? "Tech Points" : "Force Points";
+  // A force-and-tech multiclass keeps a second pool apart (Multiclassing: "you keep your pools separate")
+  const pools = savedPools(character);
+  const second = pools[1];
   const hitDiceLeft = Math.max(0, level - (character.hitDiceUsed ?? 0));
   const listed = (label: string, values?: string[]) =>
     values && values.length > 0 ? (
@@ -306,7 +309,7 @@ export default function CharacterSheet({
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-bold">{character.name}</h2>
           <div className="text-sm text-gray-400">
-            Level {character.level} {character.species} {character.class}
+            Level {character.level} {character.species} {classSummary(character)}
           </div>
         </div>
 
@@ -377,8 +380,8 @@ export default function CharacterSheet({
                         <div>{getSpeciesById(character.species)?.name ?? character.species}</div>
                       </div>
                       <div>
-                        <Label>Class</Label>
-                        <div>{klass?.name ?? character.class}</div>
+                        <Label>{isMulticlass(character) ? "Classes" : "Class"}</Label>
+                        <div data-testid="sheet-classes">{klass ? classSummary(character) : character.class}</div>
                       </div>
                     </div>
 
@@ -508,6 +511,11 @@ export default function CharacterSheet({
                             / {character.maxForcePoints}
                           </span>
                         </div>
+                        {second && (
+                          <div className="text-sm mt-1" data-testid="sheet-second-pool">
+                            {second.kind} Points: {second.current}/{second.max}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -564,7 +572,8 @@ export default function CharacterSheet({
                         <div className="uppercase text-xs mb-1">Hit Dice</div>
                         <div className="text-2xl font-bold">
                           {hitDiceLeft}/{level}
-                          {klass && <span className="text-sm text-gray-400"> d{klass.hitDie}</span>}
+                          {klass && <span className="text-sm text-gray-400"> {hitDiceLabel(character)}</span>}
+                          {hitDiceLabel(character).includes("+") && <div className="text-xs text-gray-400">House rule: the largest are spent first</div>}
                         </div>
                       </div>
                       <div className="bg-gray-800 p-3 rounded-lg text-center">
@@ -896,6 +905,8 @@ export default function CharacterSheet({
               <CardTitle className="text-xl">Powers</CardTitle>
               <Badge variant="outline">
                 {pointsName}: {character.currentForcePoints}/{character.maxForcePoints}
+                {second ? ` · ${second.kind} Points: ${second.current}/${second.max}` : ""}
+                {pools.length ? ` · max power level ${pools.map((p) => (pools.length > 1 ? `${p.kind.toLowerCase()} ${p.maxLevel}` : p.maxLevel)).join(", ")}` : ""}
               </Badge>
             </CardHeader>
             <CardContent>
@@ -917,6 +928,7 @@ export default function CharacterSheet({
                           <div>
                             <span className="text-gray-400">Type:</span>{" "}
                             {"forceAlignment" in power ? `Force (${power.forceAlignment})` : "Tech"}
+                            {isMulticlass(character) && powerClass(character, power, pools) ? `, ${getClassById(powerClass(character, power, pools)!)?.name ?? ""}` : ""}
                           </div>
                           <div>
                             <span className="text-gray-400">Casting Time:</span> {power.castingTime}

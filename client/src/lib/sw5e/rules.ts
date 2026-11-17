@@ -277,23 +277,7 @@ export const calculateArmorClass = (
   return best + shield + armorBonus;
 };
 
-// Check if character meets prerequisites for multiclassing
-export const checkMulticlassPrerequisites = (
-  abilityScores: AbilityScores,
-  targetClass: Class
-): boolean => {
-  if (!targetClass.multiclassPrerequisites) {
-    return true;
-  }
-
-  for (const [ability, minScore] of Object.entries(targetClass.multiclassPrerequisites as Record<string, number>)) {
-    if (abilityScores[ability as keyof AbilityScores] < minScore) {
-      return false;
-    }
-  }
-
-  return true;
-};
+// (Multiclassing prerequisites, proficiencies and casting: characterCalculation.ts, "Multiclassing")
 
 // Enhancement: Character advancement tracking
 export const calculateExperienceForLevel = (level: number): number => {
@@ -317,15 +301,25 @@ export const experienceToNextLevel = (currentLevel: number): number => {
 // properties"; a weapon is classed "SimpleBlaster", "MartialVibroweapon" and so on.
 export const hasWeaponProficiency = (
   classId: string,
-  weapon: { weaponClassification?: string; properties?: string[] }
+  weapon: { name?: string; weaponClassification?: string; properties?: string[] }
+): boolean => weaponListCovers(getClassById(classId)?.weaponProficiencies ?? [], weapon);
+
+// Whether a list of weapon proficiencies as the books print them covers a weapon: the class lists
+// above, or what a class gives one who multiclasses into it ("all vibroweapons", "simple
+// lightweapons"; a weapon named outright, "Techblades")
+export const weaponListCovers = (
+  proficiencies: string[],
+  weapon: { name?: string; weaponClassification?: string; properties?: string[] }
 ): boolean => {
   const [, tier, kind] = (weapon.weaponClassification ?? "").match(/^(Simple|Martial|Exotic)(\w+)$/) ?? [];
   if (!tier) return false;
   const has = (weapon.properties ?? []).map((p) => p.toLowerCase().replace(/\s*(\(.*|\d.*)$/, ""));
-  const list = (getClassById(classId)?.weaponProficiencies ?? []).join(", ").toLowerCase();
+  const list = proficiencies.join(", ").toLowerCase();
   const clauses = list.split(/,? ?(?=(?:all|simple|martial|exotic) \w+s\b)/).filter(Boolean);
+  const name = String(weapon.name ?? "").toLowerCase();
   return clauses.some((clause) => {
     const [, which, kinds, how, named] = clause.match(/^(all|simple|martial|exotic) (\w+)s(?: (with the|that lack the) (.*) propert(?:y|ies))?/) ?? [];
+    if (!which) return !!name && clause.split(/,\s*/).some((n) => n.trim() === name || n.trim() === `${name}s`);
     if (kinds !== kind.toLowerCase()) return false;
     // "All" covers simple and martial weapons; exotic ones are learned one by one
     if (which === "all" ? tier === "Exotic" : which !== tier.toLowerCase()) return false;

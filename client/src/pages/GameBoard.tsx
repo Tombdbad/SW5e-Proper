@@ -45,6 +45,7 @@ import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
+import { classColumnTotal, hitDiceLabel, levelInClass, nextHitDie, savedPools } from "@/lib/sw5e/characterCalculation";
 import { gearOf as figureGearOf, carriedWeapons, castingKind, characterFeatures, checkManeuvers, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById, species as speciesList } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
@@ -213,6 +214,11 @@ interface CheckPlan { what: string; dc: number; abilities: string[]; skills?: st
 interface CheckResult { success: boolean; total: number; roll: number; bonus: number }
 const d20 = () => Math.floor(Math.random() * 20) + 1;
 const modifier = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
+// (Multiclassing) a force-and-tech caster's second pool for a fight, kept apart: its points and its kind
+const secondPool = (character: any): { otherPoints?: number; otherKind?: "force" | "tech" } => {
+  const second = character ? savedPools(character)[1] : undefined;
+  return second ? { otherPoints: second.current, otherKind: second.kind === "Force" ? "force" : "tech" } : {};
+};
 
 // Define control keys for the game
 const controls = [
@@ -456,6 +462,7 @@ export default function GameBoard() {
       // The powers the character knows that a real-time fight can play (keys 1 to 4), read from their texts, and the points to cast them with
       powers: realtimePowers([...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])], Number(character?.level) || 1, character?.abilityScores).map((w) => ({ ...w, ...(w.tradition === "force" && (character as any)?.itemForceDamage && w.kind === "damage" ? { damage: w.damage + (character as any).itemForceDamage } : {}) })),
       points: me.powerPoints ?? character?.currentForcePoints ?? 0,
+      ...(me.otherKind ? { points2: me.otherPoints ?? 0, tradition2: me.otherKind } : {}),
     });
   };
 
@@ -596,6 +603,8 @@ export default function GameBoard() {
   const queryClient = useQueryClient();
   const lastSavedHp = useRef<number | null>(null);
   const lastSavedPoints = useRef<number | null>(null);
+  // (Multiclassing) the second pool of a force-and-tech caster
+  const lastSavedOther = useRef<number | null>(null);
   const lastSavedUses = useRef<string | null>(null);
   // The fight store outlives this page. A fight left over from another visit (perhaps another
   // character's) is dropped, and only a fight begun here is written back or acted on.
@@ -613,8 +622,10 @@ export default function GameBoard() {
     const changes: Record<string, any> = {};
     if (p.hp !== lastSavedHp.current) changes.currentHp = lastSavedHp.current = p.hp;
     if (p.powerPoints !== undefined && p.powerPoints !== lastSavedPoints.current) changes.currentForcePoints = lastSavedPoints.current = p.powerPoints;
-    // Uses of features and focus points spent stay spent until a rest
-    const focusMax = getClassLevelValue(character.class, Number(character.level) || 1, "Focus Points");
+    if (lastSavedOther.current === null) lastSavedOther.current = character.currentOtherPoints ?? 0;
+    if (p.otherPoints !== undefined && p.otherPoints !== lastSavedOther.current) changes.currentOtherPoints = lastSavedOther.current = p.otherPoints;
+    // Uses of features and focus points spent stay spent until a rest (focus points: each class's table at its level)
+    const focusMax = classColumnTotal(character, "Focus Points");
     const usedNow = { ...(p.uses ?? {}), ...(focusMax ? { focus: focusMax - (p.focus ?? focusMax) } : {}) };
     const usedJson = JSON.stringify(usedNow);
     if (lastSavedUses.current !== null && usedJson !== lastSavedUses.current) {
@@ -2335,7 +2346,7 @@ export default function GameBoard() {
     const scoreMod = (a: string) => modifier(character.abilityScores?.[a]);
     const savedAbilities = (character.savingThrowProficiencies ?? []).map((a: string) => String(a).toLowerCase());
     // The class table's focus points, and what has been spent of them since the last rest
-    const focusMax = getClassLevelValue(character.class, level, "Focus Points");
+    const focusMax = classColumnTotal(character, "Focus Points");
     const uses = play.featureUses ?? {};
     const ammo = ammoKit(ranged);
     const armorNow = wornTraits();
@@ -2467,6 +2478,8 @@ export default function GameBoard() {
       // (once armor has been put on or taken off by choice, the sheet's class is what counts)
       armorClass: equippedOf(character) ? character.armorClass : Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
       powerPoints: character?.currentForcePoints ?? 0,
+      // (Multiclassing) a force-and-tech caster's second pool, kept apart
+      ...secondPool(character),
       powers: knownPowers
         .map((power) => {
           const facts = powerFacts(power.name) ?? {};
@@ -2485,6 +2498,7 @@ export default function GameBoard() {
           const reach = rangeFeet(power.range ?? facts.range);
           const plus = { attack: ((reach ?? 0) <= 5 ? gear?.melee : gear?.ranged) ?? 0, dc: effect.save ? gear?.dc?.[String(effect.save).toLowerCase()] ?? 0 : 0, damage: kind === "force" ? (character as any)?.itemForceDamage ?? 0 : 0 };
           return {
+            tradition: kind as "force" | "tech",
             name: power.name as string, level: power.level as number, cost: powerCost(power), range: reach, castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}),
             ...stats, attack: stats.attack + plus.attack + (cat?.techAttack ?? 0), dc: stats.dc + plus.dc + (cat?.techDc ?? 0), ...(cat || plus.damage ? { bonus: (cat?.techDamage ?? 0) + plus.damage } : {}),
           };
@@ -2599,6 +2613,8 @@ export default function GameBoard() {
     if (playMode === "shooter" && fightAroundParty([foe(occupant, `${occupant.id}-0`, occupant.name)])) return;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     initiateCombat(fighterNow(), [{ ...foe(occupant, `${occupant.id}-0`, occupant.name), x: 10, y: 4, z: 0 }] as any, combatKit(), false, { width: 16, height: 12, assets: [], open: true, floor: "sea" }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
@@ -2623,6 +2639,8 @@ export default function GameBoard() {
       roadFightRef.current = { riders, who: amb.a.who };
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       initiateCombat(fighterNow(), enemies as any, combatKit(), false, { width: 16, height: 12, assets: rocks as any, open: true, floor: atSea ? "sea" : world ? trailOf(world, amb.exit.to).find((a) => a.kind === "planet")?.type : undefined }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
@@ -2646,6 +2664,8 @@ export default function GameBoard() {
     gangFight.current = open;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -2675,6 +2695,8 @@ export default function GameBoard() {
     });
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -2732,6 +2754,8 @@ export default function GameBoard() {
       fightAreas.current = sources.map((a) => a.id);
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       startFight(
@@ -2779,6 +2803,8 @@ export default function GameBoard() {
       fightAreas.current = sources.map((a) => a.id);
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       startFight(
@@ -2827,6 +2853,8 @@ export default function GameBoard() {
     fightAreas.current = [here.id];
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -3341,7 +3369,7 @@ export default function GameBoard() {
     const state: PlayState = { ...play };
     const me = fightNow.combatants.find((c) => c.isPlayer);
     if (me?.uses) {
-      const focusMax = getClassLevelValue(character.class, level, "Focus Points");
+      const focusMax = classColumnTotal(character, "Focus Points");
       state.featureUses = { ...me.uses, ...(focusMax ? { focus: focusMax - (me.focus ?? focusMax) } : {}) };
     }
     if (spent.length) {
@@ -3564,7 +3592,8 @@ export default function GameBoard() {
 
   // Rests, by the Player's Handbook. Short: spend a Hit Die (the class die + Constitution) to heal;
   // tech points come back. Long: all hit points and power points, and half the Hit Dice, come back.
-  const hitDie = klass?.hitDie ?? 8;
+  // (Multiclassing: the Hit Dice of each class are kept apart; the next one spent is the largest left, a house rule)
+  const hitDie = (character ? nextHitDie(character) : null) ?? klass?.hitDie ?? 8;
   const hitDiceLeft = Math.max(0, level - (character?.hitDiceUsed ?? 0));
   // What a rest does for the companions: each spends a Hit Die on a short rest (the fallen are
   // brought round with 1 hit point), all hit points back on a long one; a meal adds to a short
@@ -3598,8 +3627,10 @@ export default function GameBoard() {
     if (!character || inCombat) return;
     const changes: Record<string, any> = {};
     const notes: string[] = [];
-    if (castingKind(character) === "Tech" && character.currentForcePoints < character.maxForcePoints) {
-      changes.currentForcePoints = character.maxForcePoints;
+    for (const pool of savedPools(character)) {
+      if (pool.kind !== "Tech" || pool.current >= pool.max) continue;
+      changes[pool.field.current] = pool.max;
+      if (pool.field.current === "currentOtherPoints") lastSavedOther.current = pool.max;
       notes.push("tech points restored");
     }
     const work = await workTool("short");
@@ -3622,13 +3653,19 @@ export default function GameBoard() {
     // Features that give points back at the end of a short rest (Force Recovery), each used once for its pool
     for (const f of combatFeatures(character)) {
       if (!f.onRest || (f.uses && (state.featureUses?.[f.pool] ?? 0) >= f.uses.max)) continue;
-      const max = character.maxForcePoints ?? 0;
-      const have = changes.currentForcePoints ?? character.currentForcePoints ?? 0;
+      // (into the pool of the kind it names: a force-and-tech multiclass keeps two)
+      const pools = savedPools(character);
+      const pool = pools.find((p) => p.kind.toLowerCase() === f.onRest!.kind) ?? pools[0];
+      const field = pool?.field.current ?? "currentForcePoints";
+      const max = pool?.max ?? character.maxForcePoints ?? 0;
+      const have = changes[field] ?? character[field] ?? 0;
       if (have >= max) continue;
       const amount = Math.max(1, (f.onRest.points.dice ? rollDamage(f.onRest.points.dice, false) : 0) + f.onRest.points.flat);
-      changes.currentForcePoints = lastSavedPoints.current = Math.min(max, have + amount);
+      changes[field] = Math.min(max, have + amount);
+      if (field === "currentForcePoints") lastSavedPoints.current = changes[field];
+      else lastSavedOther.current = changes[field];
       state.featureUses = { ...(state.featureUses ?? {}), [f.pool]: (state.featureUses?.[f.pool] ?? 0) + 1 };
-      notes.push(`${f.name}: ${changes.currentForcePoints - have} ${f.onRest.kind} points back`);
+      notes.push(`${f.name}: ${changes[field] - have} ${f.onRest.kind} points back`);
     }
     const healed = restParty(false, work);
     notes.push(...healed.notes);
@@ -3702,6 +3739,7 @@ export default function GameBoard() {
     await saveCharacter({
       currentHp: hpCap(tiredAfter),
       currentForcePoints: character.maxForcePoints + tempPoints,
+      ...(character.maxOtherPoints ? { currentOtherPoints: (lastSavedOther.current = character.maxOtherPoints) } : {}),
       hitDiceUsed: allDice ? 0 : Math.max(0, (character.hitDiceUsed ?? 0) - roughDice - moreDice),
       ...((character.exhaustionLevel ?? 0) > 0 || coldLevel ? { exhaustionLevel: tiredAfter } : {}),
       playState: state,
@@ -3734,12 +3772,20 @@ export default function GameBoard() {
   const healingPowers = knownPowers.filter((power) => powerEffect(power, level).kind === "heal");
   const castHealing = (power: any) => {
     const cost = powerCost(power);
-    if (!character || (character.currentForcePoints ?? 0) < cost) return;
+    // (paid from the pool of the power's kind: a force-and-tech multiclass keeps two)
+    const second = character ? savedPools(character)[1] : undefined;
+    const fromOther = !!second && second.kind === ("forceAlignment" in power ? "Force" : "Tech");
+    if (!character || (fromOther ? second!.current : character.currentForcePoints ?? 0) < cost) return;
     const healing = powerEffect(power, level);
     const healed = Math.max(1, rollDamage(healing.dice!, false) + (healing.flat ? 0 : castingStats(character.abilityScores, level, power).modifier));
     lastSavedHp.current = Math.min(hpCap(), character.currentHp + healed);
-    lastSavedPoints.current = character.currentForcePoints - cost;
-    saveCharacter({ currentHp: lastSavedHp.current, currentForcePoints: lastSavedPoints.current });
+    if (fromOther) {
+      lastSavedOther.current = second!.current - cost;
+      saveCharacter({ currentHp: lastSavedHp.current, currentOtherPoints: lastSavedOther.current });
+    } else {
+      lastSavedPoints.current = character.currentForcePoints - cost;
+      saveCharacter({ currentHp: lastSavedHp.current, currentForcePoints: lastSavedPoints.current });
+    }
     toast.success(`${power.name}: ${healed} hit points regained.`);
   };
 
@@ -5962,7 +6008,7 @@ export default function GameBoard() {
       const n = Math.max(0, total - (uses[restKey(name, rest)] ?? 0));
       if (n > 0) out.push({ name, count: n, act, rest });
     };
-    const fighter = /fighter/i.test(String(character.class ?? "")) ? Number(character.level) || 1 : 0;
+    const fighter = levelInClass(character, "fighter");
     for (const { source, fight: f } of fightItems) {
       const name = source.split(": ").pop()!;
       if (f.overload) addRest(name, f.overload.uses, f.overload.rest, { act: "overload", reach: f.overload.feet / 5 });
@@ -6084,6 +6130,8 @@ export default function GameBoard() {
     const enemies = foes.map((o: Occupant, i: number) => foe(o, `enemy-${i}`, o.name));
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     fightBegun.current = true;
     initiateCombat(fighterNow(), enemies, combatKit());
   };
@@ -9896,7 +9944,7 @@ export default function GameBoard() {
               </div>
             )}
             <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
-              Level {level} · Hit Dice {hitDiceLeft}/{level} (d{hitDie}) · {character.experience ?? 0} XP
+              Level {level} · Hit Dice {hitDiceLeft}/{level} ({hitDiceLabel(character)}{hitDiceLabel(character).includes("+") ? ", the largest spent first: house rule" : ""}) · {character.experience ?? 0} XP
               {level < 20 && (character.experience ?? 0) >= calculateExperienceForLevel(level + 1) && !inCombat && (
                 <Link to={`/characters/${character.id}`} className="block text-yellow-400 underline" data-testid="play-level-up">
                   Level up available: open the character sheet

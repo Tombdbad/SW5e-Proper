@@ -105,6 +105,9 @@ export interface Combatant {
   // The player's powers, ready to cast, and the points left to cast them with
   powers?: CombatPower[];
   powerPoints?: number;
+  // (Multiclassing) a force-and-tech caster's second pool, for the powers and features of `otherKind` ("you keep your pools separate")
+  otherPoints?: number;
+  otherKind?: "force" | "tech";
   // Ability modifiers, for saving throws against powers
   saves?: Record<string, number>;
   // Whether a stat block's attack is made at range (melee otherwise)
@@ -770,6 +773,8 @@ const lasts = (rounds: number) => (rounds >= LASTING ? "for the fight" : rounds 
 export interface CombatPower {
   name: string;
   cost: number;
+  // Force or tech: which pool pays for it (a force-and-tech multiclass keeps two)
+  tradition?: "force" | "tech";
   kind: "attack" | "save" | "heal" | "condition" | "buff" | "other";
   dice?: string;
   // A boon for the caster (kind "buff"; rules.ts powerBuff)
@@ -1159,14 +1164,17 @@ export const armorClassNow = (c: Combatant, attackerId?: number | string) =>
   + (attackerId !== undefined && c.reactiveFrom?.includes(attackerId) ? c.armorProps?.reactive ?? 0 : 0)
   - (c.open ? c.armorProps?.shield ?? 0 : 0);
 
+// The points a power or feature of a kind is paid from: the second pool when it holds that kind, else the first
+export const pointsKey = (c: Pick<Combatant, "otherKind">, kind?: "force" | "tech"): "powerPoints" | "otherPoints" => (kind && c.otherKind === kind ? "otherPoints" : "powerPoints");
+
 // Feature uses left in a pool, and whether a feature can be paid for now
 const usesLeft = (c: Combatant, f: CombatFeature) => (f.uses ? f.uses.max - (c.uses?.[f.pool] ?? 0) : Infinity);
 const canPay = (c: Combatant, f: CombatFeature) =>
-  !f.cost || f.cost.pool === "die" || (f.cost.pool === "focus" ? (c.focus ?? 0) >= f.cost.points : (c.powerPoints ?? 0) >= f.cost.points);
+  !f.cost || f.cost.pool === "die" || (f.cost.pool === "focus" ? (c.focus ?? 0) >= f.cost.points : (c[pointsKey(c, f.cost.kind)] ?? 0) >= f.cost.points);
 const pay = (c: Combatant, f: CombatFeature): Combatant => ({
   ...c,
   uses: f.uses ? { ...(c.uses ?? {}), [f.pool]: (c.uses?.[f.pool] ?? 0) + 1 } : c.uses,
-  ...(f.cost?.pool === "focus" ? { focus: (c.focus ?? 0) - f.cost.points } : f.cost && f.cost.pool === "power" ? { powerPoints: (c.powerPoints ?? 0) - f.cost.points } : {}),
+  ...(f.cost?.pool === "focus" ? { focus: (c.focus ?? 0) - f.cost.points } : f.cost && f.cost.pool === "power" ? { [pointsKey(c, f.cost.kind)]: (c[pointsKey(c, f.cost.kind)] ?? 0) - f.cost.points } : {}),
 });
 
 // A creature that can use a reaction now
@@ -1187,7 +1195,7 @@ function reactionOptions(target: Combatant, hit: Omit<PendingHit, "options">): P
     if (f.acBonus && hit.total < hit.ac + f.acBonus.flat) {
       out.push({ key: `ac:${f.key}`, label: `${f.name}: +${f.acBonus.flat} to Armor Class (turns this hit into a miss)`, kind: "ac", feature: f.key });
     }
-    if (f.acDie && hit.total < hit.ac + dieSize(`1${f.acDie}`) && (target.powerPoints ?? 0) >= (f.cost?.points ?? 1)) {
+    if (f.acDie && hit.total < hit.ac + dieSize(`1${f.acDie}`) && (target[pointsKey(target, f.cost?.kind)] ?? 0) >= (f.cost?.points ?? 1)) {
       out.push({ key: `acDie:${f.key}`, label: `${f.name}: roll a ${f.acDie} and add it to Armor Class`, kind: "acDie", feature: f.key });
     }
   }
@@ -1758,12 +1766,13 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
         if (!(plan.mode > 0 || (flanked && plan.mode >= 0))) continue;
       }
       if (e.perPoint) {
-        const n = Math.min(attacker.empower ?? 0, e.maxDice ?? 99, attacker.powerPoints ?? 0);
+        const key = pointsKey(attacker, f.cost?.kind);
+        const n = Math.min(attacker.empower ?? 0, e.maxDice ?? 99, attacker[key] ?? 0);
         if (n <= 0) continue;
         const sum = rollDamage(`${n}${e.dice.replace(/^\d+/, "")}`, crit);
         damage += sum;
         note(f.name, sum);
-        w.combatants[ai] = { ...w.combatants[ai], powerPoints: (w.combatants[ai].powerPoints ?? 0) - n, empower: 0 };
+        w.combatants[ai] = { ...w.combatants[ai], [key]: (w.combatants[ai][key] ?? 0) - n, empower: 0 };
         continue;
       }
       // A cost paid per hit (a die of Kinetic Combat, a force point)
@@ -3072,7 +3081,7 @@ export const useCombat = create<CombatState>((set, get) => ({
 
   setEmpower: (points) =>
     set((state) => ({
-      combatants: state.combatants.map((c) => (c.isPlayer ? { ...c, empower: Math.max(0, Math.min(points, c.powerPoints ?? 0)) } : c)),
+      combatants: state.combatants.map((c) => (c.isPlayer ? { ...c, empower: Math.max(0, Math.min(points, c[pointsKey(c, c.features?.find((f) => f.extraDamage?.perPoint)?.cost?.kind)] ?? 0)) } : c)),
     })),
 
   setManeuver: (maneuverKey) =>
@@ -3337,7 +3346,8 @@ export const useCombat = create<CombatState>((set, get) => ({
     set((state) => {
       const caster = state.combatants[state.currentTurn];
       const power = caster?.powers?.[index];
-      if (!caster?.isPlayer || !power || (caster.powerPoints ?? 0) < power.cost) return state;
+      const key = caster ? pointsKey(caster, power?.tradition) : "powerPoints";
+      if (!caster?.isPlayer || !power || (caster[key] ?? 0) < power.cost) return state;
       const bonusCast = power.castTime === "bonus";
       if (bonusCast ? (caster.bonus ?? 0) <= 0 : (caster.actions ?? 0) <= 0 && (caster.attacksLeft ?? 0) <= 0) {
         return { ...state, combatLog: [...state.combatLog, `${power.name}: no ${bonusCast ? "bonus " : ""}action left this turn.`] };
@@ -3358,7 +3368,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           ? {
               ...c,
               conditions,
-              powerPoints: (c.powerPoints ?? 0) - power.cost,
+              [key]: (c[key] ?? 0) - power.cost,
               hidden: false,
               ...(bonusCast ? { bonus: (c.bonus ?? 1) - 1 } : { actions: (c.actions ?? 1) - 1, attacksLeft: 0 }),
               usedTurn: [...(c.usedTurn ?? []), "did:cast"],

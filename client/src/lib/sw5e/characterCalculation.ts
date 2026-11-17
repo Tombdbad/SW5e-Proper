@@ -9,8 +9,10 @@ import {
   calculateMaxPowerLevel,
   calculateArmorClass,
   hasWeaponProficiency,
+  weaponListCovers,
 } from "./rules";
-import { getClassById, getClassLevelValue, getPowerProgression } from "./classes";
+import { classes, getClassById, getClassLevelValue, getPowerProgression, type SW5EClass } from "./classes";
+import classData from "@shared/data/sw5e/classes.json";
 import { getSpeciesById } from "./species";
 import { archetypes, type ClassArchetype } from "./archetypes";
 import { findFeatByName, type Feat } from "./feats";
@@ -42,26 +44,205 @@ export interface Feature {
   // Where it comes from: the species, class or archetype name, or "Feat"
   source: string;
   level?: number;
+  // The class a class or archetype feature belongs to (its level is the level in that class)
+  classId?: string;
 }
 
-// The character's archetype (saved in `subclass` by id; a name is accepted too)
+// An archetype of a class, saved by id (a name is accepted too)
+const archetypeOf = (classId: string | undefined, wanted: unknown): ClassArchetype | undefined => {
+  const name = String(wanted ?? "").toLowerCase();
+  if (!name || !classId) return undefined;
+  return archetypes.filter((a) => a.parentClass === String(classId).toLowerCase()).find((a) => a.id === name || a.name.toLowerCase() === name);
+};
+
+// The character's archetype in its first class (saved in `subclass`)
 export function findArchetype(character: any): ClassArchetype | undefined {
-  const wanted = String(character?.subclass ?? "").toLowerCase();
-  if (!wanted) return undefined;
-  const ofClass = archetypes.filter((a) => a.parentClass === String(character.class).toLowerCase());
-  return ofClass.find((a) => a.id === wanted || a.name.toLowerCase() === wanted);
+  return archetypeOf(character?.class, character?.subclass);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Multiclassing (Player's Handbook, Customization Options: Multiclassing). The tables are read
+// from the book's text by the importer (lookups.multiclassing): prerequisites, the proficiencies
+// a class gives one who enters it later, the Multiclass Max Power Level table, and the features
+// gained only once. The first class is saved in `class` and `subclass`; the classes taken after
+// it in `multiclass`, in the order taken; `level` is the character level, the sum of them all.
+// ---------------------------------------------------------------------------------------------
+
+interface MulticlassRules {
+  prerequisites: Record<string, { any: string[]; min: number }[]>;
+  proficiencies: Record<string, string[]>;
+  maxPowerLevel: number[];
+  onceOnly: string[];
+  noStacking: string[];
+}
+export const MULTICLASS: MulticlassRules = (lookups as any).multiclassing;
+
+// A class taken after the first, as saved: its level, its archetype, and the skill and tool its
+// multiclass proficiencies let the player choose
+export interface MulticlassEntry {
+  class: string;
+  level: number;
+  subclass?: string;
+  skills?: string[];
+  tools?: string[];
+}
+
+export interface ClassLevel {
+  klass: SW5EClass;
+  level: number;
+  archetype?: ClassArchetype;
+  first: boolean;
+}
+
+export const multiclassOf = (character: any): MulticlassEntry[] =>
+  (Array.isArray(character?.multiclass) ? character.multiclass : []).filter(
+    (e: any, i: number, all: any[]) => e && getClassById(e.class) && e.class !== character?.class && Number(e.level) > 0 && all.findIndex((x) => x?.class === e.class) === i,
+  );
+
+// Each class the character has, with its level in that class: the first class has what the
+// character level leaves after the others
+export function classLevels(character: any): ClassLevel[] {
+  const total = Math.max(1, Number(character?.level) || 1);
+  const others: ClassLevel[] = multiclassOf(character).map((e) => ({ klass: getClassById(e.class)!, level: Math.floor(Number(e.level)), archetype: archetypeOf(e.class, e.subclass), first: false }));
+  const first = getClassById(character?.class);
+  const firstLevel = Math.max(1, total - others.reduce((n, e) => n + e.level, 0));
+  return [...(first ? [{ klass: first, level: firstLevel, archetype: findArchetype(character), first: true }] : []), ...others];
+}
+
+export const isMulticlass = (character: any): boolean => multiclassOf(character).length > 0;
+
+// The character's level in a class (0 when it has none)
+export const levelInClass = (character: any, classId: string | undefined): number => classLevels(character).find((e) => e.klass.id === classId)?.level ?? 0;
+
+// One of the character's classes as if it were single-classed at its level in that class: for
+// reading that class's own table (its powers known, its columns), never for the proficiency bonus
+export const asClass = (character: any, entry: ClassLevel): any => ({ ...character, class: entry.klass.id, level: entry.level, subclass: entry.archetype?.id, multiclass: [] });
+
+// "Fighter 4 (Champion) / Operative 1", or "Fighter (Champion)" for a single class
+export function classSummary(character: any, withLevels = isMulticlass(character)): string {
+  return classLevels(character)
+    .map((e) => `${e.klass.name}${withLevels ? ` ${e.level}` : ""}${e.archetype ? ` (${e.archetype.name})` : ""}`)
+    .join(" / ") || String(character?.class ?? "");
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// The ability scores a class asks of one who enters it or leaves it, unmet: "Strength or Dexterity 13"
+export function multiclassPrerequisiteUnmet(classId: string, scores: Record<string, number> = {}): string | null {
+  const unmet = (MULTICLASS.prerequisites[classId] ?? []).filter((g) => !g.any.some((a) => (scores[a] ?? 10) >= g.min));
+  return unmet.length ? unmet.map((g) => `${g.any.map(capital).join(" or ")} ${g.min}`).join(", ") : null;
+}
+
+// The classes a character can take its next level in: a class it has, or a new one when it meets
+// the prerequisites of both every class it has and the new one ("Prerequisites")
+export interface ClassChoice {
+  klass: SW5EClass;
+  // The level in the class now (0 for a class not yet taken)
+  level: number;
+  unmet: string[];
+}
+export function classChoices(character: any): ClassChoice[] {
+  const have = classLevels(character);
+  const scores = character?.abilityScores ?? {};
+  const leaving = have
+    .map((e) => ({ name: e.klass.name, unmet: multiclassPrerequisiteUnmet(e.klass.id, scores) }))
+    .filter((x) => x.unmet)
+    .map((x) => `${x.name} (to leave it): ${x.unmet}`);
+  return classes.map((klass) => {
+    const level = have.find((e) => e.klass.id === klass.id)?.level ?? 0;
+    if (level) return { klass, level, unmet: [] };
+    const own = multiclassPrerequisiteUnmet(klass.id, scores);
+    return { klass, level, unmet: [...leaving, ...(own ? [`${klass.name}: ${own}`] : [])] };
+  });
+}
+
+// The proficiencies entering a class later gives ("Multiclassing Proficiencies"): armor and
+// weapons outright, and the skills and tools the player chooses
+export interface MulticlassProficiencies {
+  armor: string[];
+  weapons: string[];
+  // How many skills, and from which list (every skill for "any one skill")
+  skills: { count: number; from: string[] };
+  tools: { count: number; from: string[] };
+}
+export function multiclassProficiencies(classId: string): MulticlassProficiencies {
+  const klass = getClassById(classId);
+  const out: MulticlassProficiencies = { armor: [], weapons: [], skills: { count: 0, from: [] }, tools: { count: 0, from: [] } };
+  for (const item of MULTICLASS.proficiencies[classId] ?? []) {
+    const text = item.trim();
+    const skill = text.match(/^(\w+) skills? from the class's (?:skill )?list$/i) ?? text.match(/^any (\w+) skills?$/i);
+    const tool = text.match(/^(\w+) tools? from the class's list$/i);
+    if (skill) out.skills = { count: wordNumber(skill[1]), from: /^any/i.test(text) ? SKILLS.map((s) => s.name) : klass?.skillChoices ?? [] };
+    else if (tool) out.tools = { count: wordNumber(tool[1]), from: classToolList(classId) };
+    else if (/\barmor$/i.test(text)) out.armor.push(capital(text));
+    else out.weapons.push(text);
+  }
+  return out;
+}
+
+// A class's tool list as the importer has it ("Tinker's implements", "one of your choice", "One
+// specialist's kit of your choice", "Any one"): the named tools, and every tool where it leaves the
+// choice open (a specialist's kit where it says so)
+function classToolList(classId: string): string[] {
+  const row = (classData as any[]).find((c) => c.id === classId);
+  const listed: string[] = (row?.toolProficienciesList ?? []).filter((t: string) => !/^none$/i.test(t));
+  const named = listed.filter((t) => !/of your choice|^any\b/i.test(t));
+  const open = listed.filter((t) => /of your choice|^any\b/i.test(t));
+  const tools = equipment.filter((e) => e.category === "Tool");
+  const kits = open.some((t) => /specialist's kit/i.test(t)) ? tools.filter((t) => t.kind === "Kit") : open.length ? tools : [];
+  return Array.from(new Set([...named, ...kits.map((t) => t.name)]));
+}
+
+// Weapons a character is proficient with through its classes: the first class's full list, and
+// what each class taken after it gives ("Light armor, all vibroweapons"; the monk's "Techblades")
+export function classWeaponProficient(character: any, weapon: { name?: string; weaponClassification?: string; properties?: string[] }): boolean {
+  return classLevels(character).some((e) => (e.first ? hasWeaponProficiency(e.klass.id, weapon) : weaponListCovers(multiclassProficiencies(e.klass.id).weapons, weapon)));
+}
+
+// The Hit Dice of every class, kept apart by size ("five d10 Hit Dice and five d8 Hit Dice"), largest first
+export function hitDicePool(character: any): { die: number; count: number }[] {
+  const bySize = new Map<number, number>();
+  for (const e of classLevels(character)) bySize.set(e.klass.hitDie, (bySize.get(e.klass.hitDie) ?? 0) + e.level);
+  if (!bySize.size) bySize.set(8, Math.max(1, Number(character?.level) || 1));
+  return Array.from(bySize.entries()).map(([die, count]) => ({ die, count })).sort((a, b) => b.die - a.die);
+}
+
+// The die the next Hit Die spent rolls. House rule ("Multiclass Hit Dice", Play rules): the
+// largest dice are spent first, since the app keeps only how many have been spent
+export function nextHitDie(character: any, used = Number(character?.hitDiceUsed) || 0): number | null {
+  let left = used;
+  for (const { die, count } of hitDicePool(character)) {
+    if (left < count) return die;
+    left -= count;
+  }
+  return null;
+}
+
+// "d10 x5, d8 x5"; "d8" for a single size
+export const hitDiceLabel = (character: any): string => {
+  const pool = hitDicePool(character);
+  return pool.length === 1 ? `d${pool[0].die}` : pool.map((p) => `${p.count}d${p.die}`).join(" + ");
+};
 
 export function characterFeatures(character: any): Feature[] {
-  const level = Number(character?.level) || 1;
   const species = getSpeciesById(character?.species);
-  const klass = getClassById(character?.class);
-  const archetype = findArchetype(character);
   const taken = (character?.feats ?? []).map((feat: any) => findFeatByName(featName(feat))).filter(Boolean) as Feat[];
+  // "If you already have the Unarmored Defense feature, you can't gain it again from another class"
+  const holder = new Map<string, string>();
+  const once = (f: Feature) => {
+    if (!MULTICLASS.onceOnly.includes(f.name)) return true;
+    const had = holder.get(f.name);
+    if (had && had !== f.classId) return false;
+    holder.set(f.name, f.classId!);
+    return true;
+  };
+  const fromClasses = classLevels(character).flatMap((e) => [
+    ...e.klass.features.filter((f) => f.level <= e.level).map((f) => ({ ...f, source: e.klass.name, classId: e.klass.id })),
+    ...(e.archetype?.features ?? []).filter((f) => f.level <= e.level).map((f) => ({ ...f, source: e.archetype!.name, classId: e.klass.id })),
+  ]);
   return [
     ...(species?.traits ?? []).map((t) => ({ name: t.name, description: t.description, source: species!.name })),
-    ...(klass?.features ?? []).filter((f) => f.level <= level).map((f) => ({ ...f, source: klass!.name })),
-    ...(archetype?.features ?? []).filter((f) => f.level <= level).map((f) => ({ ...f, source: archetype!.name })),
+    ...fromClasses.filter(once),
     ...taken.map((f) => ({ name: f.name, description: f.description, source: "Feat" })),
   ];
 }
@@ -93,7 +274,7 @@ export interface FeatureEffects {
   unarmoredSpeed: number;
 }
 
-export function featureEffects(features: Feature[], character: { class?: string; level?: number } = {}): FeatureEffects {
+export function featureEffects(features: Feature[], character: { class?: string; level?: number; multiclass?: unknown } = {}): FeatureEffects {
   const effects: FeatureEffects = { armor: [], skills: [], saves: [], hitPointsPerLevel: 0, speed: 0, unarmoredSpeed: 0 };
   const dieSize = (dice: string) => Number(dice.split("d")[1]) || 0;
 
@@ -139,14 +320,18 @@ export function featureEffects(features: Feature[], character: { class?: string;
     if (speed) effects.speed += Number(speed[1]);
   }
 
-  // The Monk's class table: the Martial Arts die and Unarmored Movement
-  if (character.class && features.some((f) => f.name === "Martial Arts")) {
-    const die = getClassLevelValue(character.class, Number(character.level) || 1, "Martial Arts");
-    if (die > dieSize(effects.unarmed?.dice ?? "")) effects.unarmed = { dice: `1d${die}`, damageType: "kinetic", source: "Martial Arts" };
-  }
-  if (character.class && features.some((f) => f.name === "Unarmored Movement")) {
-    effects.unarmoredSpeed = getClassLevelValue(character.class, Number(character.level) || 1, "Unarmored Movement");
-  }
+  // The Monk's class table: the Martial Arts die and Unarmored Movement, at the level in the class
+  // the feature comes from
+  const column = (f: Feature | undefined, name: string): number => {
+    const classId = f?.classId ?? character.class;
+    if (!f || !classId) return 0;
+    const level = f.classId ? levelInClass(character, f.classId) || Number(character.level) || 1 : Number(character.level) || 1;
+    return getClassLevelValue(classId, level, name);
+  };
+  const martial = column(features.find((f) => f.name === "Martial Arts"), "Martial Arts");
+  if (martial > dieSize(effects.unarmed?.dice ?? "")) effects.unarmed = { dice: `1d${martial}`, damageType: "kinetic", source: "Martial Arts" };
+  const movement = features.find((f) => f.name === "Unarmored Movement");
+  if (movement) effects.unarmoredSpeed = column(movement, "Unarmored Movement");
   return effects;
 }
 
@@ -175,7 +360,7 @@ export interface CombatFeature {
   uses?: { max: number; recharge: "short" | "long" };
   // Power points (force or tech) or focus points spent when it is used; `perDie` for a number of
   // dice bought one point each, up to `upTo`
-  cost?: { pool: "power" | "focus" | "die"; points: number };
+  cost?: { pool: "power" | "focus" | "die"; points: number; kind?: "force" | "tech" };
   // The attacks the Attack action makes (Extra Attack), an extra action (Action Surge)
   attacksPerAction?: number;
   extraAction?: boolean;
@@ -232,7 +417,10 @@ export interface CombatFeature {
 }
 
 export interface FeatureContext {
+  // The level in the class the feature comes from ("your consular level", a use gained at 5th level)
   level: number;
+  // The character level, for the proficiency bonus and "your level" (the class level when absent)
+  totalLevel?: number;
   scores: Record<string, number>;
   className?: string;
   // A cell of the class table at this level, as printed
@@ -256,8 +444,11 @@ export function evalAmount(expression: string, ctx: FeatureContext): Amount | nu
     let m: RegExpMatchArray | null;
     if ((m = t.match(/^(\d+d\d+)$/))) dice.push(m[1]);
     else if ((m = t.match(/^(\d+)$/))) flat += Number(m[1]);
-    else if ((m = t.match(/^(half )?your (?:[a-z' -]+ )?level$/))) flat += m[1] ? Math.floor(ctx.level / 2) : ctx.level;
-    else if ((m = t.match(/^your proficiency bonus$/))) flat += calculateProficiencyBonus(ctx.level);
+    else if ((m = t.match(/^(half )?your (?:([a-z' -]+) )?level$/))) {
+      // "your fighter level" is the level in that class; "your level" the character level
+      const n = m[2] && m[2] !== "character" ? ctx.level : ctx.totalLevel ?? ctx.level;
+      flat += m[1] ? Math.floor(n / 2) : n;
+    } else if ((m = t.match(/^your proficiency bonus$/))) flat += calculateProficiencyBonus(ctx.totalLevel ?? ctx.level);
     else if ((m = t.match(/^your ((?:strength|dexterity|constitution|intelligence|wisdom|charisma)(?: or (?:strength|dexterity|constitution|intelligence|wisdom|charisma))*) modifier/))) {
       flat += Math.max(...m[1].split(" or ").map(ability));
     } else if ((m = t.match(/^(?:\+)?(\d+)$/))) flat += Number(m[1]);
@@ -312,7 +503,7 @@ function usesOf(text: string, ctx: FeatureContext): CombatFeature["uses"] | unde
   const column = text.match(/number of times as shown in the ([A-Za-z' -]+?) column/i);
   if (column) max = Number(ctx.column(column[1]).match(/\d+/)?.[0] ?? 0);
   const prof = text.match(/number of times equal to your (proficiency bonus|\w+ modifier)/i);
-  if (prof) max = prof[1].startsWith("proficiency") ? calculateProficiencyBonus(ctx.level) : Math.max(1, Math.floor(((ctx.scores[prof[1].split(" ")[0].toLowerCase()] ?? 10) - 10) / 2));
+  if (prof) max = prof[1].startsWith("proficiency") ? calculateProficiencyBonus(ctx.totalLevel ?? ctx.level) : Math.max(1, Math.floor(((ctx.scores[prof[1].split(" ")[0].toLowerCase()] ?? 10) - 10) / 2));
   if (!max && /(?:once you've used this|once you have used this|you can't use (?:it|this feature) again until|must (?:finish|complete) a (?:short|long)[^.]* before you can use (?:it|this))/i.test(text)) max = 1;
   if (!max) return undefined;
   // "You gain an additional use at 5th, 9th, 13th, and 17th level"
@@ -330,7 +521,8 @@ function usesOf(text: string, ctx: FeatureContext): CombatFeature["uses"] | unde
 function costOf(text: string): CombatFeature["cost"] | undefined {
   const m = text.match(/(?:expend|spend|costs?)\s+(an?|one|two|three|\d+)\s+(?:additional\s+)?(force|tech|focus) points?/i);
   if (!m) return undefined;
-  return { pool: m[2].toLowerCase() === "focus" ? "focus" : "power", points: wordNumber(m[1] === "a" || m[1] === "an" ? "one" : m[1]) };
+  const kind = m[2].toLowerCase();
+  return { pool: kind === "focus" ? "focus" : "power", points: wordNumber(m[1] === "a" || m[1] === "an" ? "one" : m[1]), ...(kind === "focus" ? {} : { kind: kind as "force" | "tech" }) };
 }
 
 const STANDARD_ACTIONS = ["Dash", "Disengage", "Hide", "Dodge", "Help"];
@@ -457,7 +649,7 @@ function parseSegment(feature: Feature, name: string, text: string, ctx: Feature
   if (saving && activation === "action") {
     const amount = evalAmount(saving[3], ctx);
     const range = Number(text.match(/within (\d+) feet/i)?.[1] ?? 60);
-    if (amount) set({ save: { ability: saving[1].toLowerCase(), dc: 8 + calculateProficiencyBonus(ctx.level) + Math.max(0, ...["wisdom", "charisma", "intelligence"].map((a) => Math.floor(((ctx.scores[a] ?? 10) - 10) / 2))), damage: amount, type: saving[2].toLowerCase(), range } });
+    if (amount) set({ save: { ability: saving[1].toLowerCase(), dc: 8 + calculateProficiencyBonus(ctx.totalLevel ?? ctx.level) + Math.max(0, ...["wisdom", "charisma", "intelligence"].map((a) => Math.floor(((ctx.scores[a] ?? 10) - 10) / 2))), damage: amount, type: saving[2].toLowerCase(), range } });
   }
 
   // Reckless Attack: "advantage on melee weapon attack rolls using Strength during this turn, but
@@ -493,7 +685,8 @@ function parseSegment(feature: Feature, name: string, text: string, ctx: Feature
   const perPoint = text.match(/you can expend (?:force|tech|focus) points to deal additional damage[^.]*?(\d+d\d+) for each point spent[^.]*?(?:shown in the ([A-Za-z' -]+?) column)?/i);
   if (perPoint) {
     const cap = perPoint[2] ? Number(ctx.column(perPoint[2]).match(/^(\d+)/)?.[1] ?? 0) : 0;
-    set({ extraDamage: { dice: perPoint[1], oncePerTurn: false, needs: "none", weapon: /melee/i.test(text) ? "melee" : "any", perPoint: true, maxDice: cap || undefined }, cost: { pool: "power", points: 1 }, activation: "free" });
+    const kind = (text.match(/you can expend (force|tech) points to deal additional damage/i)?.[1]?.toLowerCase() as "force" | "tech" | undefined);
+    set({ extraDamage: { dice: perPoint[1], oncePerTurn: false, needs: "none", weapon: /melee/i.test(text) ? "melee" : "any", perPoint: true, maxDice: cap || undefined }, cost: { pool: "power", points: 1, ...(kind ? { kind } : {}) }, activation: "free" });
   }
   // Improved Force-Empowered Strikes: "Whenever you hit a creature with a melee weapon attack, the creature takes an extra 1d8 damage"
   const always = text.match(/whenever you hit a creature with a (melee )?weapon attack, the creature takes an extra (\d+d\d+) damage/i);
@@ -534,15 +727,26 @@ function parseSegment(feature: Feature, name: string, text: string, ctx: Feature
 
 // Every feature the character has that matters in a fight or has limited uses, parsed. Options
 // ("#### Cause Harm") of a feature are listed on their own and share the feature's uses.
-export function combatFeatures(character: any): CombatFeature[] {
-  const level = Number(character?.level) || 1;
-  const klass = getClassById(character?.class);
-  const ctx: FeatureContext = {
+// What a feature's text is read against: for a class or archetype feature its class's level and
+// table, for the others (species, feats, fighting styles) the character level and the first class's table
+export function featureContext(character: any, classId?: string): FeatureContext {
+  const total = Number(character?.level) || 1;
+  const entries = classLevels(character);
+  const own = classId ? entries.find((e) => e.klass.id === classId) : undefined;
+  const entry = own ?? entries[0];
+  const level = own ? own.level : total;
+  const tableLevel = entry ? (own ? own.level : entry.level) : total;
+  return {
     level,
+    totalLevel: total,
     scores: character?.abilityScores ?? {},
-    className: klass?.name,
-    column: (name) => String(klass?.levelTable?.[String(Math.min(20, Math.max(1, level)))]?.[name] ?? ""),
+    className: entry?.klass.name,
+    column: (name) => String(entry?.klass.levelTable?.[String(Math.min(20, Math.max(1, tableLevel)))]?.[name] ?? ""),
   };
+}
+
+export function combatFeatures(character: any): CombatFeature[] {
+  const ctx = featureContext(character);
   const out: CombatFeature[] = [];
   const seen = new Set<string>();
   // The highest-level copy of a feature that repeats ("Brutal Critical" at 9, 13 and 17) is the one in force.
@@ -558,7 +762,14 @@ export function combatFeatures(character: any): CombatFeature[] {
     const was = latest.get(key);
     if (!was || (f.level ?? 0) >= (was.level ?? 0)) latest.set(key, f);
   }
+  const contexts = new Map<string, FeatureContext>();
+  const contextOf = (f: Feature) => {
+    if (!f.classId) return ctx;
+    if (!contexts.has(f.classId)) contexts.set(f.classId, featureContext(character, f.classId));
+    return contexts.get(f.classId)!;
+  };
   for (const feature of Array.from(latest.values())) {
+    const fctx = contextOf(feature);
     const text = withoutHeader(feature.description ?? "");
     if (!text || /^Ability Score Improvement/i.test(feature.name) || seen.has(`${feature.source}:${feature.name}`)) continue;
     seen.add(`${feature.source}:${feature.name}`);
@@ -567,12 +778,12 @@ export function combatFeatures(character: any): CombatFeature[] {
       const [title, ...rest] = o.split("\n");
       return { title: title.trim(), text: rest.join("\n").trim() };
     });
-    const whole = parseSegment(feature, feature.name, intro, ctx, `${feature.source}:${feature.name}`, text);
+    const whole = parseSegment(feature, feature.name, intro, fctx, `${feature.source}:${feature.name}`, text);
     out.push(whole);
     // Options that are used, as opposed to ones that are only chosen between or described
     for (const option of options) {
       if (!option.title || !option.text) continue;
-      const parsed = parseSegment(feature, `${feature.name}: ${option.title}`, option.text, ctx, whole.key, text);
+      const parsed = parseSegment(feature, `${feature.name}: ${option.title}`, option.text, fctx, whole.key, text);
       if (parsed.automated || parsed.activation !== "passive") out.push(parsed);
     }
   }
@@ -593,8 +804,15 @@ export const combatChoicesOf = (character: any): CombatChoices => {
   return { styles: Array.isArray(raw.styles) ? raw.styles : [], maneuvers: Array.isArray(raw.maneuvers) ? raw.maneuvers : [] };
 };
 
-const tableCell = (character: any, column: string): string =>
-  String(getClassById(character?.class)?.levelTable?.[String(Math.min(20, Math.max(1, Number(character?.level) || 1)))]?.[column] ?? "");
+// A column of each class's table at the level in that class (or at another level), as numbers
+const classColumn = (character: any, column: string, level?: (e: ClassLevel) => number): { entry: ClassLevel; value: number }[] =>
+  classLevels(character).map((entry) => ({
+    entry,
+    value: Number(String(entry.klass.levelTable?.[String(Math.min(20, Math.max(1, level ? level(entry) : entry.level)))]?.[column] ?? "").match(/\d+/)?.[0] ?? 0),
+  }));
+
+// A column summed over the character's classes, each at its own level (the Monk's Focus Points)
+export const classColumnTotal = (character: any, column: string): number => classColumn(character, column).reduce((n, c) => n + c.value, 0);
 
 // How many fighting styles the character may have (one for each Fighting Style feature, and for
 // the Fighting Stylist feat) and how many maneuvers (the class table's Maneuvers Known, and one for
@@ -605,15 +823,20 @@ export function combatChoiceSlots(character: any): { styles: number; maneuvers: 
     + (character?.feats ?? []).map(featName).filter((n: string) => /^Fighting Stylist$/i.test(n)).length;
   const chosen = combatChoicesOf(character).styles.map((n) => fightingStyles.find((s) => s.name === n)).filter(Boolean);
   const extraManeuvers = chosen.filter((s) => /you learn one maneuver/i.test(s!.description)).length;
-  return { styles, maneuvers: Number(tableCell(character, "Maneuvers Known").match(/\d+/)?.[0] ?? 0) + extraManeuvers };
+  // ("Maneuvers Known: Choose your maneuvers from each class separately and then combine them into a single pool")
+  return { styles, maneuvers: classColumnTotal(character, "Maneuvers Known") + extraManeuvers };
 }
 
 // Superiority dice: the class table's number and size, or the one die a Superiority Style gives,
-// which grows as the style's text says ("to d6 at 5th level, to d8 at 9th level ...")
+// which grows as the style's text says ("to d6 at 5th level, to d8 at 9th level ..."). With
+// superiority from more than one class the dice of each are one pool, and the size is read from
+// the tables at the levels in those classes added together ("Superiority and Maneuvers")
 export function superiorityDice(character: any): { size: number; count: number } | null {
   const level = Number(character?.level) || 1;
-  const count = Number(tableCell(character, "Superiority Dice Quantity").match(/\d+/)?.[0] ?? 0);
-  const size = Number(tableCell(character, "Superiority Dice Size").match(/\d+/)?.[0] ?? 0);
+  const counted = classColumn(character, "Superiority Dice Quantity").filter((c) => c.value > 0);
+  const count = counted.reduce((n, c) => n + c.value, 0);
+  const levels = counted.reduce((n, c) => n + c.entry.level, 0);
+  const size = Math.max(0, ...classColumn(character, "Superiority Dice Size", () => levels).filter((c) => counted.some((k) => k.entry.klass.id === c.entry.klass.id)).map((c) => c.value));
   if (count && size) return { size, count };
   const style = combatChoicesOf(character).styles.map((n) => fightingStyles.find((f) => f.name === n)).find((f) => f && /superiority die/i.test(f.description));
   if (!style) return null;
@@ -635,7 +858,7 @@ export function maneuverModifier(character: any, type: string): number {
 function maneuverFeature(m: Maneuver, character: any, ctx: FeatureContext, dice: { size: number; count: number }): CombatFeature {
   const text = m.description.replace(/\s+/g, " ").trim();
   const modifier = maneuverModifier(character, m.type);
-  const proficiency = calculateProficiencyBonus(ctx.level);
+  const proficiency = calculateProficiencyBonus(ctx.totalLevel ?? ctx.level);
   const onHit = /when you hit a creature with a (?:melee |ranged )?weapon attack/i.test(text) || /when you (?:score a critical hit|hit) with a weapon attack/i.test(text);
   const onRoll = /when you make (?:a|an) (?:melee |ranged )?(?:weapon )?attack roll[^.]*(?:expend|add)/i.test(text) || /when you make a weapon attack roll against a creature, you can expend/i.test(text);
   const damage = /(?:add|adding)[^.]*(?:superiority die|number rolled|result)[^.]*damage roll|(?:additional|extra)(?: \w+)? damage equal to[^.]*(?:superiority die|number rolled|result|amount rolled)|damage equal to the (?:number|amount) rolled/i.test(text);
@@ -988,7 +1211,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     const trained = kind ? weaponTraining(character?.playState?.training)[kind[2].toLowerCase() as WeaponKind] : undefined;
     // (a weapon trained in the downtime before 2026-11-09 is kept: its name is in `weaponProficiencies`)
     const drilled = (character?.weaponProficiencies ?? []).some((n: unknown) => String(n).toLowerCase() === e.name.toLowerCase());
-    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e) || grantedWeapon(character, e) || drilled || (!!trained && (trained === "master" || !/^exotic/i.test(kind![1])));
+    const proficient = classWeaponProficient(character, e) || grantedWeapon(character, e) || drilled || (!!trained && (trained === "master" || !/^exotic/i.test(kind![1])));
     const mastery = trained === "master" ? MASTERY_ATTACK : 0;
     const [dice, damageType = ""] = e.damage!.split(" ");
     return {
@@ -1039,14 +1262,15 @@ export function featPrerequisiteUnmet(feat: Feat, character: any): string | null
   const text = feat.prerequisite;
   if (!text) return null;
   const level = Number(character.level) || 1;
-  const klass = getClassById(character.class);
   const needLevel = text.match(/(\d+)(?:st|nd|rd|th) level/i);
   if (needLevel && level < Number(needLevel[1])) return `needs ${needLevel[0]}`;
   const cast = text.match(/ability to cast (?:(\d+)(?:st|nd|rd|th)-level )?(force or tech|force|tech) powers/i);
   if (cast) {
     const kinds = cast[2].toLowerCase().split(" or ");
-    const can = kinds.some((kind) => klass?.casterType.toLowerCase() === kind || (kind === "force" ? character.forcePowers : character.techPowers)?.length > 0);
-    if (!can || (cast[1] && calculateMaxPowerLevel(level, klass?.id) < Number(cast[1]))) return `needs ${cast[0]}`;
+    const pools = castingPools(character);
+    const pool = (kind: string) => pools.find((p) => p.kind.toLowerCase() === kind);
+    const can = kinds.some((kind) => pool(kind) || (kind === "force" ? character.forcePowers : character.techPowers)?.length > 0);
+    if (!can || (cast[1] && Math.max(0, ...kinds.map((kind) => pool(kind)?.maxLevel ?? 0)) < Number(cast[1]))) return `needs ${cast[0]}`;
   }
   const other = text.match(/([A-Z][\w' ]*?) feat/);
   if (other && !(character.feats ?? []).map(featName).includes(other[1])) return `needs the ${other[1]} feat`;
@@ -1075,28 +1299,64 @@ function featureChanges(before: any, after: any) {
   };
 }
 
-// Archetypes open to a character that has reached the level for one and has none yet
-export function archetypeOptions(character: any, level = Number(character?.level) || 1): ClassArchetype[] {
-  const klass = getClassById(character?.class);
-  if (!klass || level < klass.archetypeLevel || findArchetype(character)) return [];
+// The character with an archetype taken in one of its classes: the first class's is saved in
+// `subclass`, another's in its `multiclass` entry
+function withArchetype(character: any, classId: string, archetypeId: string | undefined): any {
+  if (!archetypeId) return character;
+  if (classId === character.class) return { ...character, subclass: archetypeId };
+  return { ...character, multiclass: multiclassOf(character).map((e) => (e.class === classId ? { ...e, subclass: archetypeId } : e)) };
+}
+
+// The character after a level in a class: the first class's levels follow from the character
+// level, another class's are counted in its `multiclass` entry (a new class starts at 1)
+function withLevelIn(character: any, classId: string, entry: Partial<MulticlassEntry> = {}): any {
+  const next = { ...character, level: (Number(character.level) || 1) + 1 };
+  if (classId === character.class) return next;
+  const extra = multiclassOf(character);
+  return {
+    ...next,
+    multiclass: extra.some((e) => e.class === classId)
+      ? extra.map((e) => (e.class === classId ? { ...e, level: e.level + 1 } : e))
+      : [...extra, { class: classId, level: 1, ...entry }],
+  };
+}
+
+// Archetypes open in a class that has reached the level for one and has none yet: in `classId`,
+// or in the first class with one due. `level`: the level in that class (by default the one it has).
+export function archetypeOptions(character: any, level?: number, classId?: string): ClassArchetype[] {
+  const entries = classLevels(character);
+  const entry = classId
+    ? entries.find((e) => e.klass.id === classId)
+    : entries.find((e) => !e.archetype && (level ?? e.level) >= e.klass.archetypeLevel);
+  const klass = entry?.klass ?? (classId ? getClassById(classId) : undefined);
+  const at = level ?? entry?.level ?? 0;
+  if (!klass || at < klass.archetypeLevel || entry?.archetype) return [];
   return archetypes.filter((a) => a.parentClass === klass.id);
 }
 
 // The saved fields that change when a character takes an archetype outside a level-up
 export function chooseArchetype(character: any, archetypeId: string): Record<string, any> | null {
-  if (!archetypeOptions(character).some((a) => a.id === archetypeId)) return null;
-  const { hitPoints, fields } = featureChanges(character, { ...character, subclass: archetypeId });
-  // (an archetype with a caster table of its own brings its points)
   const taken = archetypes.find((a) => a.id === archetypeId);
-  const points = castingPoints(character, Number(character.level) || 1, character.abilityScores ?? {}, taken) - castingPoints(character, Number(character.level) || 1, character.abilityScores ?? {});
-  return { subclass: archetypeId, maxHp: character.maxHp + hitPoints, currentHp: character.currentHp + hitPoints, ...(points ? { maxForcePoints: Math.max(0, (character.maxForcePoints ?? 0) + points), currentForcePoints: Math.max(0, (character.currentForcePoints ?? 0) + points) } : {}), ...fields };
+  if (!taken || !archetypeOptions(character, undefined, taken.parentClass).some((a) => a.id === archetypeId)) return null;
+  const after = withArchetype(character, taken.parentClass, archetypeId);
+  const { hitPoints, fields } = featureChanges(character, after);
+  // (an archetype with a caster table of its own brings its points)
+  const points = pointChanges(character, after, character.abilityScores ?? {}, character.abilityScores ?? {});
+  return {
+    ...(taken.parentClass === character.class ? { subclass: archetypeId } : { multiclass: after.multiclass }),
+    maxHp: character.maxHp + hitPoints,
+    currentHp: character.currentHp + hitPoints,
+    ...points,
+    ...fields,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
 // Gaining a level
 // ---------------------------------------------------------------------------------------------
 
-// Experience points needed to be a level (Player's Handbook, Character Advancement)
+// Experience points needed to be a level (Player's Handbook, Character Advancement). Always the
+// character level, whatever class the level is taken in ("Experience Points").
 export const experienceForLevel = (level: number): number =>
   (advancement as any[]).find((row) => row.level === level)?.experiencePoints ?? Infinity;
 
@@ -1107,27 +1367,11 @@ export const calculateExperienceForNextLevel = (currentLevel: number, currentExp
   currentLevel >= 20 ? 0 : Math.max(0, experienceForLevel(currentLevel + 1) - currentExperience);
 
 const knownPowers = (character: any): any[] => [...(character.forcePowers ?? []), ...(character.techPowers ?? [])];
+const powerKind = (power: any): "Force" | "Tech" => ("forceAlignment" in (power ?? {}) ? "Force" : "Tech");
 
-// Powers the character may learn at a level: of its class's kind, castable, not yet known, and
-// with the power they build on already known
-export function powerOptions(character: any, level: number, archetype = findArchetype(character)): any[] {
-  const cast = castingAt(character, level, archetype);
-  if (cast.type === "None") return [];
-  const known = new Set(knownPowers(character).map((p) => String(p.name).toLowerCase()));
-  // (house rule, shared/logic "Power Masters") a power of 6th level or more, of Expanded Content, of the other kind of casting or of the
-  // opposite alignment is learned only after its school's Master's trials; the other kind's powers are offered once a school of it is open
-  const schools = powerTraining(character?.playState?.training);
-  const align = String(character?.forceAlignment ?? "");
-  const own: any[] = cast.type === "Force" ? forcePowers : techPowers;
-  const other: any[] = cast.type === "Force" ? (schools.tech ? techPowers : []) : schools.light || schools.dark || schools.universal ? forcePowers : [];
-  return [...own, ...other]
-    .filter((p) => powerGate(p, cast.type, align) <= (schools[powerSchool(p)] ?? 0))
-    .filter((p) => p.level <= cast.maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
-    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
-}
-
-// What the character's casting grants at a level: its class's table, or, for a class that has none, the table of its archetype (audit T-014: nine
-// archetypes make a Marauder, a Slicer or a Shield Specialist a partial caster). Points exclude the ability modifier.
+// What one class's casting grants at a level in it: the class's table, or, for a class that has none, the table of its archetype
+// (audit T-014: nine archetypes make a Marauder, a Slicer or a Shield Specialist a partial caster). Points exclude the ability
+// modifier. `character.class` names the class; `level` is the level in it.
 export function castingAt(character: any, level: number, archetype = findArchetype(character)): { type: "Force" | "Tech" | "None"; known: number; points: number; maxLevel: number } {
   const klass = getClassById(character?.class);
   if (klass && klass.casterType !== "None") {
@@ -1138,47 +1382,158 @@ export function castingAt(character: any, level: number, archetype = findArchety
   return at && archetype && archetype.casterType !== "None" ? { type: archetype.casterType, ...rows[at] } : { type: "None", known: 0, points: 0, maxLevel: 0 };
 }
 
-// Force or tech: the kind of power the character can learn
-export const castingKind = (character: any): "Force" | "Tech" | "None" => castingAt(character, Number(character?.level) || 1).type;
+// A kind of casting the character has, with every class that gives it ("Force- and Tech-casting"):
+// the points of each class's table added together, the casting modifier added once; the highest
+// power level of the class when one class gives it, else from the Multiclass Max Power Level table
+export interface CastingPool {
+  kind: "Force" | "Tech";
+  // The tables' points, and with the casting modifier
+  tablePoints: number;
+  points: number;
+  maxLevel: number;
+  classes: { id: string; name: string; level: number; known: number; maxLevel: number }[];
+}
 
-// Force or tech points at a level: the table's plus the casting modifier (Force: the better of Wisdom and Charisma; tech: Intelligence)
-function castingPoints(character: any, level: number, scores: any, archetype = findArchetype(character)): number {
-  const cast = castingAt(character, level, archetype);
-  if (cast.type === "None" || cast.points === 0) return 0;
-  const mod = cast.type === "Force" ? Math.max(getAbilityModifier(scores.wisdom ?? 10), getAbilityModifier(scores.charisma ?? 10)) : getAbilityModifier(scores.intelligence ?? 10);
-  return Math.max(0, cast.points + mod);
+export function castingPools(character: any, scores: Record<string, number> = character?.abilityScores ?? {}): CastingPool[] {
+  const casters = classLevels(character)
+    .map((e) => ({ e, cast: castingAt(asClass(character, e), e.level, e.archetype) }))
+    .filter((c) => c.cast.type !== "None");
+  const kinds = Array.from(new Set(casters.map((c) => c.cast.type))) as ("Force" | "Tech")[];
+  return kinds.map((kind) => {
+    const own = casters.filter((c) => c.cast.type === kind);
+    const tablePoints = own.reduce((n, c) => n + c.cast.points, 0);
+    const modifier = kind === "Force" ? Math.max(getAbilityModifier(scores.wisdom ?? 10), getAbilityModifier(scores.charisma ?? 10)) : getAbilityModifier(scores.intelligence ?? 10);
+    // "dividing each class's potential Max Power Level by 9, multiplying the result by the number of levels in that class,
+    // adding the results for each class together, and consulting the Multiclass Max Power Level table" (in ninths, so no rounding creeps in)
+    const ninths = own.reduce((n, c) => n + castingAt(asClass(character, { ...c.e, level: 20 }), 20, c.e.archetype).maxLevel * c.e.level, 0);
+    const casterLevel = Math.min(20, Math.max(1, Math.floor(ninths / 9)));
+    return {
+      kind,
+      tablePoints,
+      points: tablePoints ? Math.max(0, tablePoints + modifier) : 0,
+      maxLevel: own.length === 1 ? own[0].cast.maxLevel : MULTICLASS.maxPowerLevel[casterLevel - 1],
+      classes: own.map((c) => ({ id: c.e.klass.id, name: c.e.klass.name, level: c.e.level, known: c.cast.known, maxLevel: c.cast.maxLevel })),
+    };
+  });
+}
+
+// Where each pool's points are saved: the first kind in `maxForcePoints`/`currentForcePoints` (a
+// tech caster's tech points too, as before multiclassing), the second in `maxOtherPoints`/`currentOtherPoints`
+export const POOL_FIELDS = [
+  { max: "maxForcePoints", current: "currentForcePoints" },
+  { max: "maxOtherPoints", current: "currentOtherPoints" },
+] as const;
+
+// Each pool with its saved points
+export function savedPools(character: any): (CastingPool & { max: number; current: number; field: (typeof POOL_FIELDS)[number] })[] {
+  return castingPools(character).slice(0, 2).map((pool, i) => ({ ...pool, field: POOL_FIELDS[i], max: Number(character?.[POOL_FIELDS[i].max]) || 0, current: Number(character?.[POOL_FIELDS[i].current]) || 0 }));
+}
+
+// The saved points that change when a character's classes or scores change: each kind's pool keeps
+// what was spent and grows by what the tables add, in whichever field it is saved now
+function pointChanges(before: any, after: any, scoresBefore: Record<string, number>, scoresAfter: Record<string, number>): Record<string, number> {
+  const was = castingPools(before, scoresBefore);
+  const now = castingPools(after, scoresAfter).slice(0, 2);
+  const out: Record<string, number> = {};
+  now.forEach((pool, i) => {
+    const j = was.findIndex((p) => p.kind === pool.kind);
+    const delta = pool.points - (j >= 0 ? was[j].points : 0);
+    // (a first pool where there was none keeps what was saved there already: points a Master taught, a substance's boost)
+    const from = j >= 0 && j < 2 ? POOL_FIELDS[j] : !was.length && i === 0 ? POOL_FIELDS[0] : undefined;
+    out[POOL_FIELDS[i].max] = Math.max(0, (from ? Number(before[from.max]) || 0 : 0) + delta);
+    out[POOL_FIELDS[i].current] = Math.max(0, (from ? Number(before[from.current]) || 0 : 0) + delta);
+  });
+  return Object.fromEntries(Object.entries(out).filter(([k, v]) => v !== (Number(before[k]) || 0)));
+}
+
+// Force or tech: the first kind of power the character casts (the one its saved points are for)
+export const castingKind = (character: any): "Force" | "Tech" | "None" => castingPools(character)[0]?.kind ?? "None";
+
+// The class a known power is cast through ("Each power you know is associated with one of your classes"): saved with it
+// (`castClass`) when it is learned; one learned before is the first class of its kind, or the first class that casts at all
+export function powerClass(character: any, power: any, pools = castingPools(character)): string | undefined {
+  if (power?.castClass && classLevels(character).some((e) => e.klass.id === power.castClass)) return power.castClass;
+  return (pools.find((p) => p.kind === powerKind(power)) ?? pools[0])?.classes[0]?.id;
+}
+export const powersKnownIn = (character: any, classId: string): any[] => {
+  const pools = castingPools(character);
+  return knownPowers(character).filter((p) => powerClass(character, p, pools) === classId);
+};
+
+// Powers the character may learn at a level in a class ("as if you were a single-classed member of that class"): of the class's
+// kind, no higher than its own Max Power Level, not yet known, and with the power they build on already known
+export function powerOptions(character: any, level: number, archetype = findArchetype(character), classId: string = character?.class): any[] {
+  // (only an archetype of that class: the default is the first class's)
+  const own = archetype && archetype.parentClass === classId ? archetype : undefined;
+  const cast = castingAt({ ...character, class: classId }, level, own);
+  if (cast.type === "None") return [];
+  const known = new Set(knownPowers(character).map((p) => String(p.name).toLowerCase()));
+  // (house rule, shared/logic "Power Masters") a power of 6th level or more, of Expanded Content, of the other kind of casting or of the
+  // opposite alignment is learned only after its school's Master's trials; the other kind's powers are offered once a school of it is open
+  const schools = powerTraining(character?.playState?.training);
+  const align = String(character?.forceAlignment ?? "");
+  const ofKind: any[] = cast.type === "Force" ? forcePowers : techPowers;
+  const other: any[] = cast.type === "Force" ? (schools.tech ? techPowers : []) : schools.light || schools.dark || schools.universal ? forcePowers : [];
+  return [...ofKind, ...other]
+    .filter((p) => powerGate(p, cast.type, align) <= (schools[powerSchool(p)] ?? 0))
+    .filter((p) => p.level <= cast.maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
+    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 }
 
 export interface LevelUpPlan {
+  // The character level reached, and the class the level is in with the level in it
   level: number;
-  // Class features gained at the new level
+  classId: string;
+  className: string;
+  classLevel: number;
+  // A class the character did not have; what stops it (unmet prerequisites); the proficiencies it gives
+  newClass: boolean;
+  unmet: string[];
+  proficiencies?: MulticlassProficiencies;
+  hitDie: number;
+  // Class features gained at the new level in the class
   features: Feature[];
-  // Archetypes to choose from, when the character has reached the level for one and has none
+  // Archetypes to choose from, when the class has reached the level for one and has none
   archetypes: ClassArchetype[];
   abilityScoreImprovement: boolean;
   powersToLearn: number;
   powerOptions: any[];
 }
 
-// (`archetypeId`: the archetype chosen with this level, when the character has none yet: its casting counts for the new level)
-export function levelUpPlan(character: any, archetypeId?: string): LevelUpPlan | null {
+// (`archetypeId`: the archetype chosen with this level, when the class has none yet: its casting counts for the new level;
+// `classId`: the class the level is taken in, the first class by default)
+export function levelUpPlan(character: any, archetypeId?: string, classId: string = character?.class): LevelUpPlan | null {
   const level = Number(character?.level) || 1;
-  const klass = getClassById(character?.class);
-  if (!klass || !canLevelUp(level, Number(character.experience) || 0)) return null;
-  const next = level + 1;
-  const taking = archetypeOptions(character, next).find((a) => a.id === archetypeId) ?? findArchetype(character);
-  const options = powerOptions(character, next, taking);
+  if (!getClassById(character?.class) || !canLevelUp(level, Number(character.experience) || 0)) return null;
+  const choice = classChoices(character).find((c) => c.klass.id === classId);
+  if (!choice) return null;
+  const klass = choice.klass;
+  const classLevel = choice.level + 1;
+  const entry = classLevels(character).find((e) => e.klass.id === klass.id);
+  const due = !entry?.archetype && classLevel >= klass.archetypeLevel ? archetypes.filter((a) => a.parentClass === klass.id) : [];
+  const taking = due.find((a) => a.id === archetypeId) ?? entry?.archetype;
+  const options = powerOptions(character, classLevel, taking, klass.id);
+  const known = castingAt({ ...character, class: klass.id }, classLevel, taking).known;
   return {
-    level: next,
-    features: klass.features.filter((f) => f.level === next).map((f) => ({ ...f, source: klass.name })),
-    archetypes: archetypeOptions(character, next),
-    abilityScoreImprovement: klass.features.some((f) => f.level === next && /^Ability Score Improvement/i.test(f.name)),
-    powersToLearn: Math.min(options.length, Math.max(0, castingAt(character, next, taking).known - knownPowers(character).length)),
+    level: level + 1,
+    classId: klass.id,
+    className: klass.name,
+    classLevel,
+    newClass: choice.level === 0,
+    unmet: choice.unmet,
+    ...(choice.level === 0 ? { proficiencies: multiclassProficiencies(klass.id) } : {}),
+    hitDie: klass.hitDie,
+    features: klass.features.filter((f) => f.level === classLevel).map((f) => ({ ...f, source: klass.name, classId: klass.id })),
+    archetypes: due,
+    abilityScoreImprovement: klass.features.some((f) => f.level === classLevel && /^Ability Score Improvement/i.test(f.name)),
+    powersToLearn: Math.min(options.length, Math.max(0, known - powersKnownIn(character, klass.id).length)),
     powerOptions: options,
   };
 }
 
 export interface LevelUpChoices {
+  // The class the level is taken in (the first class when absent)
+  class?: string;
   archetype?: string;
   // An Ability Score Improvement: two points among the abilities (the same one twice for +2), or a feat
   abilities?: string[];
@@ -1186,14 +1541,19 @@ export interface LevelUpChoices {
   // The ability a feat raises, when it offers more than one
   featAbility?: string;
   powers?: string[];
+  // The skills and tools a new class's multiclass proficiencies let the player choose
+  skills?: string[];
+  tools?: string[];
 }
 
 // The saved fields that change when the character gains a level with these choices, or what is
 // still missing from the choices
 export function applyLevelUp(character: any, choices: LevelUpChoices): { changes?: Record<string, any>; problems: string[] } {
-  const plan = levelUpPlan(character, choices.archetype);
-  if (!plan) return { problems: ["Not enough experience for the next level."] };
-  const klass = getClassById(character.class)!;
+  const classId = choices.class ?? character.class;
+  const plan = levelUpPlan(character, choices.archetype, classId);
+  if (!plan) return { problems: [getClassById(character?.class) && canLevelUp(Number(character?.level) || 1, Number(character?.experience) || 0) ? "That class is not in the rules data." : "Not enough experience for the next level."] };
+  if (plan.unmet.length) return { problems: [`Multiclassing into ${plan.className} needs ${plan.unmet.join("; ")}.`] };
+  const klass = getClassById(classId)!;
   const problems: string[] = [];
   const scores: Record<string, number> = { ...character.abilityScores };
   const raise = (ability: string) => {
@@ -1225,18 +1585,35 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
     }
   }
 
+  // A new class's proficiencies: the skills and tools to choose ("one skill from the class's list")
+  const gained = plan.proficiencies;
+  const skills = gained ? (choices.skills ?? []).filter((s, i, all) => gained.skills.from.includes(s) && all.indexOf(s) === i) : [];
+  // (no skill is asked for that the character has already: one proficient in the whole list chooses none)
+  const skillsOpen = gained ? gained.skills.from.filter((s) => !(character.skillProficiencies ?? []).includes(s)).length : 0;
+  const tools = gained ? (choices.tools ?? []).filter((t, i, all) => gained.tools.from.includes(t) && all.indexOf(t) === i) : [];
+  if (gained && skills.length !== Math.min(gained.skills.count, skillsOpen)) problems.push(`Choose ${gained.skills.count} skill${gained.skills.count === 1 ? "" : "s"} ${klass.name} gives (${skills.length} chosen).`);
+  if (gained && tools.length !== Math.min(gained.tools.count, gained.tools.from.length)) problems.push(`Choose ${gained.tools.count} tool${gained.tools.count === 1 ? "" : "s"} ${klass.name} gives (${tools.length} chosen).`);
+
   const picked = plan.powerOptions.filter((p) => (choices.powers ?? []).includes(p.name));
   if (picked.length !== plan.powersToLearn) problems.push(`Choose ${plan.powersToLearn} new power${plan.powersToLearn === 1 ? "" : "s"} (${picked.length} chosen).`);
   if (problems.length) return { problems };
 
-  const featured = featureChanges(character, { ...character, level: plan.level, subclass: archetype?.id ?? character.subclass, feats, abilityScores: scores });
+  const after = withArchetype(
+    withLevelIn({ ...character, feats, abilityScores: scores }, classId, { ...(skills.length ? { skills } : {}), ...(tools.length ? { tools } : {}) }),
+    classId,
+    archetype?.id,
+  );
+  const featured = featureChanges(character, after);
   const conBefore = getAbilityModifier(character.abilityScores?.constitution ?? 10);
   const conNow = getAbilityModifier(scores.constitution ?? 10);
-  // The average of the Hit Die, plus Constitution; a higher Constitution counts for earlier levels too
+  // The average of the Hit Die of the class the level is in, plus Constitution ("You gain the hit points from your new class as
+  // described for levels after 1st"); a higher Constitution counts for earlier levels too
   const hitPoints = Math.max(1, klass.hitDie / 2 + 1 + conNow) + (conNow - conBefore) * (plan.level - 1) + featured.hitPoints;
-  const points = castingPoints(character, plan.level, scores, archetype ?? findArchetype(character)) - castingPoints(character, plan.level - 1, character.abilityScores);
-  const force = picked.filter((p) => "forceAlignment" in p);
-  const tech = picked.filter((p) => !("forceAlignment" in p));
+  const points = pointChanges(character, after, character.abilityScores ?? {}, scores);
+  // Each power learned is cast through the class it was learned for
+  const learned = picked.map((p) => ({ ...p, castClass: classId }));
+  const force = learned.filter((p) => "forceAlignment" in p);
+  const tech = learned.filter((p) => !("forceAlignment" in p));
 
   return {
     problems,
@@ -1246,10 +1623,12 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
       abilityScores: scores,
       maxHp: character.maxHp + hitPoints,
       currentHp: character.currentHp + hitPoints,
-      maxForcePoints: Math.max(0, character.maxForcePoints + points),
-      currentForcePoints: Math.max(0, character.currentForcePoints + points),
+      ...points,
       ...featured.fields,
-      ...(archetype ? { subclass: archetype.id } : {}),
+      ...(skills.length ? { skillProficiencies: union(featured.fields.skillProficiencies, skills) } : {}),
+      ...(tools.length ? { toolProficiencies: union(character.toolProficiencies ?? [], tools) } : {}),
+      ...(gained?.armor.length ? { armorProficiencies: union(character.armorProficiencies ?? [], gained.armor) } : {}),
+      ...(classId !== character.class ? { multiclass: after.multiclass } : archetype ? { subclass: archetype.id } : {}),
       ...(feats.length !== (character.feats ?? []).length ? { feats } : {}),
       ...(force.length ? { forcePowers: [...(character.forcePowers ?? []), ...force] } : {}),
       ...(tech.length ? { techPowers: [...(character.techPowers ?? []), ...tech] } : {}),
