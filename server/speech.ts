@@ -3,7 +3,8 @@
 // engine on this machine, and the page gives each speaker a voice of their own (client/src/lib/voice.ts: the voice picked, its pitch, its
 // timbre and the effects over it, droids, helmets and comms).
 //   GET  /api/speech/status   { engine, voices, speakers? }  which engine speaks, and with what voices
-//   POST /api/speech          { text, voice: { name, rate, pitch } } -> audio/wav (one sentence or a short run of them)
+//   POST /api/speech          { text, voice: { name, rate, pitch, energy? } } -> audio/wav (one sentence or a short run of them; energy:
+//                             calm, normal or excited, how lively Piper speaks it, see PIPER_ENERGY)
 //
 // Engines, in order:
 //  - Piper (a small neural speech engine, one program and a voice model; found by findPiper: PIPER_EXE and PIPER_MODEL, or a folder beside
@@ -167,38 +168,61 @@ async function speakWindows(text: string, name: string, rate: number, pitch: num
   });
 }
 
-// Piper loads its model (about 2.5 s) on every start, so one process is kept per pace (the length scale, in steps of 0.1) and fed a JSON
-// line per sentence (--json-input: it answers with the file's path). A few at most, each let go after three idle minutes. A line that
-// cannot be had from a kept process is made by a process of its own.
+// How lively a line is spoken (2026-11-17; the user: make the voices "a little more animated"). Piper has no emotion or excitement setting
+// and reads no SSML, but it has two knobs for how much its model varies: noise_scale (the sound itself: the pitch moves more) and noise_w
+// (the timing of each sound). The libritts_r voice sets both to 0.333, half of Piper's own defaults (0.667 and 0.8), which is part of why it
+// sounds flat. Measured on three speakers (an arena shout): Piper's defaults widened the pitch range from 7.6 to 10.4 and from 6.9 to
+// 8.0 semitones on two of them; 1.0 and 1.4 gave the widest contours but an uneven rhythm and lines 25-60% longer, so "excited" stops at
+// 0.8 and 1.0. An exclamation mark did as much again (median pitch up 2 to 5 semitones), so the text's punctuation is kept for Piper.
+// A house tuning, set by ear: the page picks the level from the reply's mood (client/src/lib/voice.ts energyOf). Windows' voices ignore it.
+export const ENERGIES = ["calm", "normal", "excited"] as const;
+export type Energy = (typeof ENERGIES)[number];
+export const PIPER_ENERGY: Record<Energy, { noise: number; noiseW: number }> = {
+  calm: { noise: 0.333, noiseW: 0.333 },
+  normal: { noise: 0.667, noiseW: 0.8 },
+  excited: { noise: 0.8, noiseW: 1.0 },
+};
+export const energyFrom = (v: unknown): Energy => (ENERGIES.includes(v as Energy) ? (v as Energy) : "calm");
+// The command line for a Piper process at a pace (length scale) and a liveliness
+export function piperArgs(model: string, scale: string, energy: Energy): string[] {
+  const e = PIPER_ENERGY[energy];
+  return ["--model", model, "--length_scale", scale, "--noise_scale", String(e.noise), "--noise_w", String(e.noiseW)];
+}
+
+// Piper loads its model (about 2.5 s) on every start, so one process is kept per pace (the length scale, in steps of 0.1) and liveliness,
+// and fed a JSON line per sentence (--json-input: it answers with the file's path; a line cannot change the noise, only the speaker). A few
+// at most, each let go after three idle minutes. A line that cannot be had from a kept process is made by a process of its own.
 type Resident = { p: ChildProcessWithoutNullStreams; buf: string; waiting: ((ok: boolean) => void) | null; idle: NodeJS.Timeout | null };
 const residents = new Map<string, Resident>();
-const MAX_RESIDENT = 3;
-function residentFor(scale: string): Resident {
-  const had = residents.get(scale);
+// (each holds the model, about 150 MB; six covers two or three paces at the moods heard together)
+const MAX_RESIDENT = 6;
+function residentFor(scale: string, energy: Energy): Resident {
+  const key = `${scale}/${energy}`;
+  const had = residents.get(key);
   if (had) return had;
   if (residents.size >= MAX_RESIDENT) { const [oldest] = residents.keys(); residents.get(oldest)!.p.kill(); residents.delete(oldest); }
-  const p = spawn(piper().exe, ["--model", piper().model, "--length_scale", scale, "--json-input"], { windowsHide: true });
+  const p = spawn(piper().exe, [...piperArgs(piper().model, scale, energy), "--json-input"], { windowsHide: true });
   const r: Resident = { p, buf: "", waiting: null, idle: null };
-  residents.set(scale, r);
+  residents.set(key, r);
   p.stdout.on("data", (d) => { r.buf += d; if (r.buf.includes("\n") && r.waiting) { const w = r.waiting; r.waiting = null; r.buf = ""; w(true); } });
   p.stderr.on("data", () => undefined);
-  const gone = () => { if (residents.get(scale) === r) residents.delete(scale); if (r.idle) clearTimeout(r.idle); const w = r.waiting; r.waiting = null; w?.(false); };
+  const gone = () => { if (residents.get(key) === r) residents.delete(key); if (r.idle) clearTimeout(r.idle); const w = r.waiting; r.waiting = null; w?.(false); };
   p.on("exit", gone);
   p.on("error", gone);
   return r;
 }
 
-function speakPiper(text: string, speaker: number, rate: number, out: string): Promise<void> {
+function speakPiper(text: string, speaker: number, rate: number, energy: Energy, out: string): Promise<void> {
   const scale = Math.min(2, Math.max(0.5, Math.round(10 / rate) / 10)).toFixed(1);
   const oneShot = () => new Promise<void>((resolve, reject) => {
-    const p = spawn(piper().exe, ["--model", piper().model, "--speaker", String(speaker), "--length_scale", scale, "--output_file", out], { windowsHide: true });
+    const p = spawn(piper().exe, [...piperArgs(piper().model, scale, energy), "--speaker", String(speaker), "--output_file", out], { windowsHide: true });
     const timer = setTimeout(() => { p.kill(); reject(new Error("speech timed out")); }, 30000);
     p.stderr.on("data", () => undefined);
     p.on("exit", (code) => { clearTimeout(timer); code === 0 && fs.existsSync(out) ? resolve() : reject(new Error(`piper ended ${code}`)); });
     p.on("error", (e) => { clearTimeout(timer); reject(e); });
     p.stdin.end(text);
   });
-  const r = residentFor(scale);
+  const r = residentFor(scale, energy);
   return new Promise<boolean>((resolve) => {
     if (r.idle) clearTimeout(r.idle);
     const timer = setTimeout(() => { r.p.kill(); resolve(false); }, 30000);
@@ -274,12 +298,14 @@ export function registerSpeechRoutes(app: Express) {
       const name = String(v.name ?? "");
       const rate = within(v.rate, 0.5, 2, 1);
       const pitch = within(v.pitch, -50, 50, 0);
-      const key = createHash("sha1").update(JSON.stringify([engine, name, rate.toFixed(2), Math.round(pitch), text])).digest("hex");
+      const energy = engine === "piper" ? energyFrom(v.energy) : "calm";
+      // (a calm line keeps the key it had before liveliness was added, so the lines already cached are still found)
+      const key = createHash("sha1").update(JSON.stringify([engine, name, rate.toFixed(2), Math.round(pitch), text, ...(energy === "calm" ? [] : [energy])])).digest("hex");
       fs.mkdirSync(CACHE, { recursive: true });
       const file = path.join(CACHE, `${key}.wav`);
       if (!fs.existsSync(file)) {
         const tmp = `${file}.${process.pid}.${++tmpCount}.tmp.wav`;
-        await alone(() => (engine === "piper" ? speakPiper(text, Math.max(0, Math.floor(Number(name.replace(/^piper:/, "")) || 0)), rate, tmp) : speakWindows(text, name, rate, pitch, tmp)));
+        await alone(() => (engine === "piper" ? speakPiper(text, Math.max(0, Math.floor(Number(name.replace(/^piper:/, "")) || 0)), rate, energy, tmp) : speakWindows(text, name, rate, pitch, tmp)));
         await placeCached(tmp, file);
       }
       res.setHeader("Content-Type", "audio/wav");

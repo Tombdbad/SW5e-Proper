@@ -134,6 +134,13 @@ export function toneOf(text: string, disposition = ""): Tone {
   return { mood: "calm", rate: 1, pitch: 1, gain: 1, drive: 0 };
 }
 
+// How lively the speech engine says it (2026-11-17; Piper's noise settings, server/speech.ts PIPER_ENERGY): a weary line as flat as the voice's own
+// file, an ordinary or nervous one at Piper's usual variation, an excited, angry or amused one livelier. A house tuning, set by ear.
+export type Energy = "calm" | "normal" | "excited";
+export function energyOf(tone: Tone): Energy {
+  return tone.mood === "weary" ? "calm" : tone.mood === "calm" || tone.mood === "nervous" ? "normal" : "excited";
+}
+
 // ---- Pure: a tongue the party does not speak, from the words meant (the same words give the same sounds) ------------------------------
 const CHATTER = ["u", "ti", "ni", "ee", "too", "ta", "ka", "wa", "yo", "ma", "kee", "chu", "mo", "ba", "ri"];
 export function gibberish(text: string, seed = 0): string {
@@ -438,7 +445,8 @@ export function speakQueued(text: string, speaker: VoiceSpeaker, o: { comms?: bo
 // Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped. `ambient`: two people of
 // the world talking to each other (2026-11-02), at `gain` (quieter the further off they are): never over a reply to the party (it is not
 // spoken while one is, and one stops it), and a new one stops the last
-export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number; at?: Place } = {}): Promise<void> {
+// `energy` overrides the liveliness the reply's mood gives (a shout in a fight is always excited).
+export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number; at?: Place; energy?: Energy } = {}): Promise<void> {
   if (o.ambient) {
     if (playing) return;
     ambient?.stop();
@@ -450,6 +458,7 @@ export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: bo
   const eng = await speechEngine();
   const p = voiceOf(speaker, eng.engine === "none" ? { voices: [] } : eng);
   const tone = toneOf(text, speaker.disposition);
+  const energy = o.energy ?? energyOf(tone);
   const parts = partsOf(text);
   let stopped = false;
   const stopNow = { stop: () => { stopped = true; } };
@@ -467,7 +476,7 @@ export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: bo
   const speechOf = (say: string) => {
     const words = p.tongue === "chatter" ? gibberish(say, hashOf(speaker.id)) : say;
     const playback = p.pitch * tone.pitch;
-    return bufferOf(c, "/api/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: words, voice: { name: p.voice, rate: (p.rate * tone.rate) / playback, pitch: p.shift } }) });
+    return bufferOf(c, "/api/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: words, voice: { name: p.voice, rate: (p.rate * tone.rate) / playback, pitch: p.shift, energy } }) });
   };
   // Each run of speech is asked for one ahead of where it is heard
   const ahead = parts.map((part) => ("say" in part && (p.tongue === "basic" || p.tongue === "chatter") ? speechOf(part.say) : "cue" in part && SPOKEN_CUES[part.cue] && p.tongue === "basic" && p.bank !== "droid" ? speechOf(SPOKEN_CUES[part.cue]) : null));
