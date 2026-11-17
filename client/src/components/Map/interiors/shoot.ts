@@ -23,6 +23,9 @@ export interface Session {
   // The powers that can be cast in real time (keys 1 to 4), and the force or tech points the party has for them
   powers?: RtPower[];
   points?: number;
+  // (Multiclassing) a force-and-tech caster's second pool and the tradition it pays for
+  points2?: number;
+  tradition2?: "force" | "tech";
   // (2026-11-16) A co-op game's fight: played by the server for everyone in the place (`area`); `me` is this member's id there
   shared?: { area: string; me: string };
 }
@@ -40,6 +43,9 @@ export interface Hud {
   foes: number;
   // the points left and the powers on the keys (what each costs, and whether it can be cast now)
   points: number;
+  // (a force-and-tech multiclass) the second pool, and its tradition
+  points2?: number;
+  tradition2?: "force" | "tech";
   powers: { name: string; cost: number; ready: boolean }[];
   // (2026-11-03) the page of powers shown (nine a page), what is on the party (its buffs and seconds left, unseen, anchored, held, slowed), what
   // it senses (foes beyond walls: how many), the zoom held and how far the crosshair is (feet), shots heard out of sight (the way they came

@@ -439,6 +439,9 @@ export interface Unit {
   ads?: number;
   // The party's force or tech points and the powers it can use in real time (keys 1 to 4), and the pause before the next
   points?: number;
+  // (Multiclassing) a force-and-tech caster's second pool, for the powers of `tradition2` ("you keep your pools separate")
+  points2?: number;
+  tradition2?: "force" | "tech";
   powers?: RtPower[];
   powerCd?: number;
   // Being pushed or pulled: a velocity (squares a second), for how long, and the damage if it strikes a wall
@@ -1090,7 +1093,7 @@ function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rid
     if (next) hurt(sim, next, base, type, p, events, { x: next.x, y: next.y, h: next.h + 0.8 }, false, rider.pierce), events.push({ type: "line", x: u.x, y: u.y, h: u.h + 1, tx: next.x, ty: next.y, th: next.h + 1 });
   }
   if (u.dead && p.killPoints && once(p.killPoints.item)) {
-    p.points = (p.points ?? 0) + p.killPoints.points;
+    p[poolKey(p, "tech")] = (p[poolKey(p, "tech")] ?? 0) + p.killPoints.points;
     events.push({ type: "use", id: p.id, name: p.killPoints.item, text: `${p.killPoints.points} tech points back` });
   }
 }
@@ -1252,6 +1255,9 @@ function hurtProp(sim: Sim, o: Prop, amount: number, env: Env, events: Event[], 
   events.push({ type: "broke", id: o.id, x: at.x, y: at.y });
   if (o.burst) blow(sim, at, o.burst, by, env, events);
 }
+// The pool a power of a tradition is paid from: the second one when it holds that tradition, else the first
+export const poolKey = (u: Pick<Unit, "tradition2">, tradition?: "force" | "tech"): "points" | "points2" => (tradition && u.tradition2 === tradition ? "points2" : "points");
+
 export function castPower(sim: Sim, index: number, env: Env, events: Event[], aim?: { x: number; y: number; h: number } | null, place?: (x: number, y: number) => boolean, given?: RtPower): string {
   const p = playerOf(sim);
   const power = given ?? p.powers?.[index];
@@ -1259,13 +1265,14 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
   if (p.dead || p.stagger > 0) return "Cannot cast now";
   if ((p.powerCd ?? 0) > 0) return "";
   const cost = given ? 0 : power.cost;
-  if ((p.points ?? 0) < cost) return `Not enough points for ${power.name} (${cost})`;
+  const key = poolKey(p, power.tradition);
+  if ((p[key] ?? 0) < cost) return `Not enough points for ${power.name} (${cost})`;
   const ch = p.channel ?? {};
   const mine = power.tradition && ch.perPoint?.kind === power.tradition;
   let extra = 0;
   // (a subroutine is spent only on a tech power, only while uses and points are left)
   const sub = (name: string, points: number) => {
-    if (power.tradition !== "tech" || given || !ch.subroutines?.includes(name) || (ch.subUses ?? 0) <= 0 || (p.points ?? 0) < cost + extra + points) return false;
+    if (power.tradition !== "tech" || given || !ch.subroutines?.includes(name) || (ch.subUses ?? 0) <= 0 || (p[key] ?? 0) < cost + extra + points) return false;
     ch.subUses = (ch.subUses ?? 0) - 1;
     extra += points;
     events.push({ type: "once", name: `${name} subroutine` });
@@ -1278,7 +1285,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
   let at = { x: p.x, y: p.y, h: p.h + 1.0 };
   const secs = (s: number) => Math.min(SHOOT.power.longest * 2, s);
   const spend = () => {
-    p.points = (p.points ?? 0) - cost - extra;
+    p[key] = (p[key] ?? 0) - cost - extra;
     p.powerCd = sub("quickened", 2) ? 0.2 : SHOOT.power.pause;
     events.push({ type: "power", id: p.id, kind: power.kind, name: power.name, ...from, tx: at.x, ty: at.y, th: at.h });
     // (a power is a hostile act unless it is on the party itself)
@@ -1305,7 +1312,7 @@ export function castPower(sim: Sim, index: number, env: Env, events: Event[], ai
     return spend();
   }
   if (power.kind === "imbue") {
-    const jolt = power.tradition === "force" && ch.jolt && (p.points ?? 0) >= cost + 1 ? ch.jolt : undefined;
+    const jolt = power.tradition === "force" && ch.jolt && (p[key] ?? 0) >= cost + 1 ? ch.jolt : undefined;
     if (jolt) extra += 1;
     p.imbue = { damage: power.damage + (jolt?.damage ?? 0), type: jolt?.type ?? power.type, ...(power.rider?.stagger ? { stagger: power.rider.stagger } : {}), ...(power.rider?.slow ? { slow: true } : {}) };
     events.push({ type: "use", id: p.id, name: power.name, text: `the next ${p.gun ? "shot or blow" : "blow"} +${Math.round(p.imbue.damage)} ${p.imbue.type}` });

@@ -140,7 +140,6 @@ export default function CharacterCreation() {
   const [currentTab, setCurrentTab] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isAddingMulticlass, setIsAddingMulticlass] = useState(false);
   const [validationSteps, setValidationSteps] = useState<any[]>([]);
 
   // Form setup with validation

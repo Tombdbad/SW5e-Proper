@@ -52,7 +52,7 @@ export function ShooterHud() {
         <div style={{ fontSize: 12, opacity: 0.85 }}>Hostiles: {hud.foes}{hud.crouching ? " · crouching" : ""}</div>
         {hud.powers.length > 0 && (
           <div style={{ marginTop: 4, fontSize: 12 }} data-testid="shooter-powers">
-            <div style={{ opacity: 0.8 }}>Points: {hud.points}{hud.pages > 1 ? ` · page ${hud.page + 1}/${hud.pages} [0]` : ""}</div>
+            <div style={{ opacity: 0.8 }}>Points: {hud.points}{hud.tradition2 ? ` · ${hud.tradition2} points: ${hud.points2 ?? 0}` : ""}{hud.pages > 1 ? ` · page ${hud.page + 1}/${hud.pages} [0]` : ""}</div>
             {hud.powers.map((w, i) => (
               <div key={`${w.name}-${i}`} style={{ opacity: w.ready ? 1 : 0.45 }}>[{i + 1}] {w.name}{w.cost ? ` (${w.cost})` : ""}</div>
             ))}

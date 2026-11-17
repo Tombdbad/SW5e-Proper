@@ -19,7 +19,7 @@ import { fightingStyles } from "@/lib/sw5e/fightingStyles";
 import {
   ABILITIES, applyLevelUp, archetypeOptions, calculateExperienceForNextLevel, characterFeatures, chooseArchetype,
   featAbilityOptions, featPrerequisiteUnmet, findArchetype, levelUpPlan, type LevelUpChoices,
-  combatChoicesOf, combatChoiceSlots, superiorityDice,
+  combatChoicesOf, combatChoiceSlots, superiorityDice, classChoices, classSummary, hitDiceLabel, isMulticlass,
 } from "@/lib/sw5e/characterCalculation";
 
 const selectClass = "w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm";
@@ -130,21 +130,28 @@ function CombatOptions({ character, onSave, saving }: { character: any; onSave: 
 
 
 // Gaining a level when the experience is there, or taking an archetype that is due. What a level
-// gives comes from the class table; the choices are the archetype (3rd level), an Ability Score
-// Improvement or a feat, and new powers.
+// gives comes from the class table; the choices are the class the level is in (a class the character
+// has, or a new one whose prerequisites are met: Multiclassing), the archetype (3rd level in a class),
+// an Ability Score Improvement or a feat, new powers, and a new class's skill and tool.
 function Advancement({ character, onSave, saving }: { character: any; onSave: (changes: Record<string, any>) => void; saving: boolean }) {
   const [choices, setChoices] = useState<LevelUpChoices>({});
-  const plan = levelUpPlan(character, choices.archetype);
+  const plan = levelUpPlan(character, choices.archetype, choices.class ?? character.class);
   const [useFeat, setUseFeat] = useState(false);
   const set = (changes: LevelUpChoices) => setChoices((current) => ({ ...current, ...changes }));
   // Start the choices over for each new level
   useEffect(() => {
     setChoices({});
     setUseFeat(false);
-  }, [character.level, character.subclass]);
+  }, [character.level, character.subclass, JSON.stringify(character.multiclass ?? [])]);
 
   const level = Number(character.level) || 1;
-  const klass = getClassById(character.class);
+  const klass = getClassById(plan?.classId ?? character.class);
+  const classOptions = classChoices(character);
+  // Changing the class starts the other choices over
+  const pickClass = (id: string) => {
+    setChoices({ class: id === character.class ? undefined : id });
+    setUseFeat(false);
+  };
   const due = plan ? plan.archetypes : archetypeOptions(character);
   const archetype = due.find((a) => a.id === choices.archetype);
   const picker = due.length > 0 && (
@@ -189,9 +196,48 @@ function Advancement({ character, onSave, saving }: { character: any; onSave: (c
   return (
     <Card className="bg-gray-800 border-yellow-500 mb-6" data-testid="advancement">
       <CardHeader className="pb-2">
-        <CardTitle className="text-yellow-400">Level up to {plan.level}</CardTitle>
+        <CardTitle className="text-yellow-400">Level up to {plan.level}{isMulticlass(character) || plan.newClass ? ` (${plan.className} ${plan.classLevel})` : ""}</CardTitle>
       </CardHeader>
       <CardContent className="p-4 pt-0 space-y-4">
+        <div className="space-y-1" data-testid="level-up-class">
+          <label className="text-sm font-semibold" htmlFor="level-class">Class for this level</label>
+          <select id="level-class" className={selectClass} value={plan.classId} onChange={(e) => pickClass(e.target.value)}>
+            {classOptions.map((c) => (
+              <option key={c.klass.id} value={c.klass.id} disabled={c.unmet.length > 0}>
+                {c.klass.name} {c.level ? `${c.level} to ${c.level + 1}` : "1 (multiclass)"}{c.unmet.length ? ` (needs ${c.unmet.join("; ")})` : ""}
+              </option>
+            ))}
+          </select>
+          {plan.newClass && (
+            <p className="text-xs text-gray-400" data-testid="multiclass-note">
+              A new class: its 1st-level hit points are not gained again (d{plan.hitDie} average), and it gives only some of its starting proficiencies
+              {plan.proficiencies && (plan.proficiencies.armor.length || plan.proficiencies.weapons.length) ? `: ${[...plan.proficiencies.armor, ...plan.proficiencies.weapons].join(", ")}` : ""}.
+            </p>
+          )}
+        </div>
+
+        {plan.proficiencies && plan.proficiencies.skills.count > 0 && (
+          <div className="space-y-1 text-sm" data-testid="multiclass-skill">
+            <label className="font-semibold" htmlFor="multiclass-skill">Skill from {plan.className} ({plan.proficiencies.skills.count})</label>
+            <select id="multiclass-skill" className={selectClass} value={choices.skills?.[0] ?? ""} onChange={(e) => set({ skills: e.target.value ? [e.target.value] : [] })}>
+              <option value="">Choose a skill</option>
+              {plan.proficiencies.skills.from.map((skill) => {
+                const had = (character.skillProficiencies ?? []).includes(skill);
+                return <option key={skill} value={skill} disabled={had}>{skill}{had ? " (already proficient)" : ""}</option>;
+              })}
+            </select>
+          </div>
+        )}
+        {plan.proficiencies && plan.proficiencies.tools.count > 0 && plan.proficiencies.tools.from.length > 0 && (
+          <div className="space-y-1 text-sm" data-testid="multiclass-tool">
+            <label className="font-semibold" htmlFor="multiclass-tool">Tool from {plan.className} ({plan.proficiencies.tools.count})</label>
+            <select id="multiclass-tool" className={selectClass} value={choices.tools?.[0] ?? ""} onChange={(e) => set({ tools: e.target.value ? [e.target.value] : [] })}>
+              <option value="">Choose a tool</option>
+              {plan.proficiencies.tools.from.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
+            </select>
+          </div>
+        )}
+
         {gained.length > 0 && (
           <div className="text-sm space-y-1">
             <p className="font-semibold">You gain</p>
@@ -289,7 +335,8 @@ function Advancement({ character, onSave, saving }: { character: any; onSave: (c
         ) : (
           <p className="text-sm text-gray-300" data-testid="level-up-summary">
             Hit points {character.maxHp} to {result.changes!.maxHp}
-            {result.changes!.maxForcePoints !== character.maxForcePoints ? `, power points ${character.maxForcePoints} to ${result.changes!.maxForcePoints}` : ""}
+            {result.changes!.maxForcePoints !== undefined && result.changes!.maxForcePoints !== character.maxForcePoints ? `, power points ${character.maxForcePoints ?? 0} to ${result.changes!.maxForcePoints}` : ""}
+            {result.changes!.maxOtherPoints !== undefined && result.changes!.maxOtherPoints !== character.maxOtherPoints ? `, second pool of power points ${character.maxOtherPoints ?? 0} to ${result.changes!.maxOtherPoints}` : ""}
             {result.changes!.proficiencyBonus !== character.proficiencyBonus ? `, proficiency bonus +${result.changes!.proficiencyBonus}` : ""}
             {result.changes!.armorClass !== character.armorClass ? `, armor class ${result.changes!.armorClass}` : ""}.
           </p>
@@ -297,7 +344,7 @@ function Advancement({ character, onSave, saving }: { character: any; onSave: (c
         <Button disabled={result.problems.length > 0 || saving} onClick={() => result.changes && onSave(result.changes)}>
           Level up to {plan.level}
         </Button>
-        {klass && <p className="text-xs text-gray-500">Hit points use the average of the d{klass.hitDie} Hit Die.</p>}
+        {klass && <p className="text-xs text-gray-500">Hit points use the average of the d{klass.hitDie} Hit Die of the {klass.name} level.</p>}
       </CardContent>
     </Card>
   );
@@ -381,8 +428,8 @@ export default function CharacterManagement() {
           <div>
             <h1 className="text-3xl font-bold text-yellow-400">{character.name}</h1>
             <p className="text-gray-300">
-              Level {character.level} {getSpeciesById(character.species)?.name ?? character.species} {getClassById(character.class)?.name ?? character.class}
-              {findArchetype(character) ? ` (${findArchetype(character)!.name})` : ""}
+              Level {character.level} {getSpeciesById(character.species)?.name ?? character.species} <span data-testid="class-summary">{classSummary(character)}</span>
+              {isMulticlass(character) && <span className="block text-xs text-gray-400">Hit Dice {hitDiceLabel(character)}</span>}
             </p>
           </div>
           <div className="flex flex-wrap gap-2 md:gap-4">
