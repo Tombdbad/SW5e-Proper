@@ -33,6 +33,8 @@ import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
 import { moonlight, isArenaBowl, terrainStyleOf, districtGround, districtGroundOf, seamMarks } from "@shared/logic";
+import { signOf, signpostOf } from "@shared/logic/signs";
+import { CLUSTER } from "./babylon";
 import { ReliefGround, reliefSets } from "./terrain";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
@@ -45,10 +47,10 @@ import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { extPackOf, roofPropOf, roofSpot, propScale, awningOf, corniceOf, facadePlan, bayRing, interiorStyleOf, INTERIOR_BAY_MIN_R, type ExtPack } from "./interiors/modular";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, SeamPilaster, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { SignBoards, SignLights, LightPool, nearest, type MountedSign, type LightSlot, BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, SeamPilaster, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, timberFloor, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, TIMBER_SET, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, HullOutline, ShipDoor, ShipViewOut, SideRamp, Turbolift, shipMakeOf, type ShipFaction, type Style } from "./models";
+import { usePartyLook, useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, UNITS_PER_M, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, ModPiece, ModFacade, ModBays, RoofEdge, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, HullOutline, ShipDoor, ShipViewOut, SideRamp, Turbolift, shipMakeOf, type ShipFaction, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -454,6 +456,62 @@ function CoopPeers({ hereId, open, height, water }: { hereId: string; open: (x: 
       ))}
     </>
   );
+}
+
+// ---- What glows in a fight lights what is round it (2026-11-16, batch F) ----
+// A bolt in flight, where it strikes, a muzzle as it fires, and a lit saber in a fighter's hands throw their colour on the walls, the floor and
+// the fighters, through a pool of clustered lights (siteAssets.tsx LightPool; babylon.ts lightBudget: 8 on full detail, 4 on lite, none where
+// the device cannot cluster), the nearest and the brightest first. Read from the live fight (`window.__shooter`, the sim the shooter layer
+// runs: interiors/Shooter.tsx is not touched), in the same frame of the scene as the shooter draws it (a square (x, y) at (x - cx, h, y - cz)).
+const BOLT_LIGHT: Record<string, string> = { foe: "#ff3b30", ally: "#5ac8fa", player: "#7dd3fc", reflected: "#ffd60a" };
+const FLASH_S = 0.08; // a muzzle flash, a second
+const STRIKE_S = 0.14; // a bolt's strike
+type Glint = { x: number; y: number; z: number; color: string; until: number; intensity: number; distance: number };
+function FightLights({ session, ctx }: { session: { id: string | number }; ctx: { current: { cx: number; cz: number } } }) {
+  const saber = usePartyLook((s) => s.blade) ?? "#5aa9ff";
+  const seen = useRef(new Map<number, { x: number; y: number; z: number; color: string; life: number }>());
+  const glints = useRef<Glint[]>([]);
+  const started = useRef(false);
+  return (
+    <LightPool
+      count={8}
+      fill={(camera, slots, now) => {
+        const sim = (window as unknown as { __shooter?: { _session?: string | number; units: { x: number; y: number; h: number; hp: number; side: string; gun?: unknown; swing: number; blocking: boolean; blade?: { saber: boolean } }[]; bolts: { id: number; x: number; y: number; h: number; side: string; life: number; reflected?: boolean; natural?: boolean; harpoon?: boolean; blade?: boolean }[] } }).__shooter;
+        if (!sim || sim._session !== session.id) return;
+        const { cx, cz } = ctx.current;
+        const live = new Set<number>();
+        const candidates: LightSlot[] = [];
+        for (const b of sim.bolts) {
+          if (b.natural || b.harpoon || b.blade) continue;
+          live.add(b.id);
+          const color = b.reflected ? BOLT_LIGHT.reflected : BOLT_LIGHT[b.side] ?? BOLT_LIGHT.foe;
+          const at = { x: b.x - cx, y: b.h, z: b.y - cz, color, life: b.life };
+          // (a new bolt: its muzzle flashes where it left; not those already in flight when the lights came)
+          if (started.current && !seen.current.has(b.id)) glints.current.push({ x: at.x, y: at.y, z: at.z, color: "#fff2b0", until: now + FLASH_S, intensity: 10, distance: 6 });
+          seen.current.set(b.id, at);
+          candidates.push({ x: at.x, y: at.y, z: at.z, color, intensity: 3, distance: 4 });
+        }
+        started.current = true;
+        // (a bolt gone with flight left in it struck something where it was last seen; one that ran out of range just fades)
+        for (const [id, at] of seen.current) if (!live.has(id)) { seen.current.delete(id); if (at.life > 0.1) glints.current.push({ x: at.x, y: at.y, z: at.z, color: at.color, until: now + STRIKE_S, intensity: 8, distance: 4.5 }); }
+        glints.current = glints.current.filter((g) => g.until > now);
+        for (const g of glints.current) candidates.push({ x: g.x, y: g.y, z: g.z, color: g.color, intensity: g.intensity, distance: g.distance });
+        // (a saber lights only while it is in use: a fighter with no gun, or one swinging or guarding with it; a gun drawn, the blade is off)
+        for (const u of sim.units) if (u.blade?.saber && u.hp > 0 && (!u.gun || u.swing > 0 || u.blocking)) candidates.push({ x: u.x - cx, y: u.h + 1.1, z: u.y - cz, color: u.side === "foe" ? "#ff4040" : saber, intensity: 4, distance: 5 });
+        // (the flashes and strikes first, then the nearest)
+        const near = nearest(candidates, (s) => [s.x, s.y, s.z], camera, 32).sort((a, b) => b.intensity - a.intensity);
+        for (const s of near) slots.push(s);
+      }}
+    />
+  );
+}
+// The party's own light (a glowrod switched on, a luminous weapon: GameBoard's protections().light) lights the map round it outside a fight too
+export const useCarriedLight = create<{ on: boolean }>(() => ({ on: false }));
+// (carried at the chest; dark until the renderer has clustered its lights, and where it cannot: babylon.ts CLUSTER, checked each frame)
+function CarriedLight() {
+  const light = useRef<THREE.PointLight>(null);
+  useFrame(() => { if (light.current) light.current.intensity = CLUSTER.on ? 6 : 0; });
+  return <pointLight ref={light} position={[0, 1.3, 0.3]} color="#fff1d6" intensity={0} distance={9} decay={2} />;
 }
 
 const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
@@ -3689,6 +3747,75 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const night = useLamps((s) => s.lit);
   const lightsOff = useRoomLights((s) => s.off);
   const lit = (room: Area) => night && !shut.has(room.parentId ?? "") && !lightsOff[`${world.seed}:${room.id}`];
+  const glowrod = useCarriedLight((s) => s.on);
+  // The signs (2026-11-16, batch F; shared/logic/signs.ts says what each shows, siteAssets.tsx SignBoards paints and draws them): over each
+  // building's main way in, as the style of the place has it (a board flat on the wall, or a blade standing out beside the door), and a board
+  // painted on both faces on its roof, that the map seen from above can still tell the buildings apart; the street's signposts painted with
+  // where they lead; and inside the building the party is in, a sign on a wall of each room that has one (a hangar's bay number, a ward's
+  // light box, a bar's neon). They replace the names that floated over the buildings and the signposts.
+  const signs = useMemo<MountedSign[]>(() => {
+    if (!planned) return [];
+    const out: MountedSign[] = [];
+    const faction = (b: Area) => b.faction ?? [...trail].reverse().find((a) => a.faction)?.faction ?? "";
+    const turnOf = (dx: number, dy: number) => Math.atan2(dx, dy);
+    for (const b of buildings) {
+      const own = rooms.filter((a) => a.parentId === b.id && a.layout);
+      const front = street.doors[b.id];
+      const root = own.find((a) => a.gateway && !formOf(a)) ?? own.find((a) => a.gateway) ?? own[0];
+      if (!front || !root?.layout || (!front.outward.x && !front.outward.y)) continue;
+      const box = districtPlan?.boxes[b.id] ?? plan!;
+      const across = front.outward.x ? box.height : box.width;
+      const spec = signOf({ name: b.name, type: b.type, faction: faction(b), biome, wealth: wealthOf(b.type), seed: world.seed, span: across });
+      if (!spec) continue;
+      const { x: ox, y: oy } = front.outward;
+      // (the door is in the wall between the square beyond it and the one inside: its middle on that line)
+      const wx = front.door.x + 0.5 - ox * 0.5, wz = front.door.y + 0.5 - oy * 0.5;
+      const sill = levelY(root.layout);
+      if (spec.shape === "blade") {
+        // (standing out from the wall a square to the side of the door, its arm back to the wall)
+        const arm = 0.3, reach = 0.12 + arm + spec.w / 2;
+        out.push({ spec, at: [wx + ox * reach - oy * 1.2, sill + 2.3 + spec.h / 2, wz + oy * reach + ox * 1.2], turn: Math.atan2(-oy, ox), both: true, arm, owner: b.id });
+      } else out.push({ spec, at: [wx + ox * 0.16, sill + 2.45 + spec.h / 2, wz + oy * 0.16], turn: turnOf(ox, oy), owner: b.id });
+      if (spec.shape !== "blade") {
+        const top = Math.max(...own.map((a) => levelY(a.layout) + (a.layout!.tall ? LEVEL_H * 2 : LEVEL_H)));
+        out.push({ spec, at: [box.x + box.width / 2, top + 0.4 + spec.h / 2, box.y + box.height / 2], turn: turnOf(ox, oy), both: true });
+      }
+    }
+    for (const { exit, x, y } of street.signs) {
+      const to = world.areas[exit.to];
+      if (!to) continue;
+      const spec = signpostOf(`${exit.via === "leave" ? "Out to " : ""}${to.name}`, exit.via === "leave", biome, world.seed);
+      const dx = x + 0.5 - cx, dz = y + 0.5 - cz;
+      // (on top of the post, which is 1.6 high)
+      out.push({ spec, at: [x + 0.5, groundSq(x, y) + 1.62 + spec.h / 2, y + 0.5], turn: Math.atan2(-dz, dx), both: true });
+    }
+    // Inside: the rooms of this building, on the first wall with no way through near its middle
+    const shownInside = new Set<string>();
+    for (const room of rooms.filter((a) => a.parentId === building.id && a.layout && !a.layout.mask)) {
+      const l = room.layout!;
+      const spec = signOf({ name: building.name, type: building.type, room: room.name, faction: faction(building), biome, wealth: wealthOf(building.type, room.name), seed: world.seed, span: Math.min(l.width, l.height) });
+      // (one of each: a cantina's bar has its neon, its dance floor and gaming room no second copy of the same name)
+      if (!spec || shownInside.has(`${spec.style}|${spec.text}`)) continue;
+      shownInside.add(`${spec.style}|${spec.text}`);
+      const floor = levelY(l);
+      const high = Math.min(floor + 2.3 + spec.h / 2, floor + (l.tall ? LEVEL_H * 2 : LEVEL_H) - spec.h / 2 - 0.2);
+      for (const side of ["n", "s", "w", "e"] as const) {
+        const len = side === "n" || side === "s" ? l.width : l.height;
+        if (len < spec.w + 0.6) continue;
+        if (l.assets.some((a) => a.side === side && Math.abs((side === "n" || side === "s" ? a.x : a.y) + 0.5 - len / 2) < spec.w / 2 + 0.6)) continue;
+        const at: V3 = side === "n" ? [l.x + l.width / 2, high, l.y + 0.14] : side === "s" ? [l.x + l.width / 2, high, l.y + l.height - 0.14] : side === "w" ? [l.x + 0.14, high, l.y + l.height / 2] : [l.x + l.width - 0.14, high, l.y + l.height / 2];
+        out.push({ spec, at, turn: side === "n" ? 0 : side === "s" ? Math.PI : side === "w" ? Math.PI / 2 : -Math.PI / 2 });
+        break;
+      }
+    }
+    return out;
+  }, [planned, world, buildings, street, districtPlan, biome, building.id]);
+  // (for scripts, e2e/lights.mjs: where each sign hangs in the scene, and which way it faces)
+  useEffect(() => {
+    const w = window as unknown as { __signs?: unknown };
+    w.__signs = signs.map((s) => ({ text: s.spec.text, style: s.spec.style, shape: s.spec.shape, at: [s.at[0] - cx, s.at[1], s.at[2] - cz], face: [Math.sin(s.turn), 0, Math.cos(s.turn)], both: !!s.both, w: s.spec.w, h: s.spec.h }));
+    return () => { delete w.__signs; };
+  }, [signs, cx, cz]);
   const settlementId = trail.find((a) => a.kind === "settlement")?.id;
   const blockade =!!settlementId && blockadeAt(world, settlementId, minutes);
   const barricades = useMemo(() => {
@@ -5638,14 +5765,21 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           );
         })}
 
+        {/* The signs, and the light the lit ones throw at night (siteAssets.tsx; see `signs`) */}
+        {planned && signs.length > 0 && (
+          <>
+            <SignBoards signs={signs} night={night} />
+            <SignLights signs={signs} night={night} />
+          </>
+        )}
+
         {planned && !opened && (
           <>
             {street.signs.map(({ exit, x, y }) => (
               <group key={`${exit.via}-${exit.to}`} position={[x + 0.5, groundSq(x, y), y + 0.5]}>
+                {/* (the board itself, painted with where it leads, is one of the scene's signs: `signs`) */}
                 <Cyl at={[0, 0.8, 0]} r={0.07} h={1.6} color={WOOD} />
-                <Box at={[0, 1.4, 0]} size={[1.1, 0.36, 0.08]} color="#e8dcc0" glow={0.4} />
-                <Label at={[0, 2.1, 0]} size={0.36} color="#e8dcc0">{`${exit.via === "leave" ? "Out to" : "To"} ${world.areas[exit.to].name}`}</Label>
-                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => (blockade ? onAct?.({ type: "note", text: "The officers hold the way out: barricades across the road until the search is called off." }) : walkTo(around(x, y), () => onAct?.({ type: "exit", exit })))} label="Way out" />}
+                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => (blockade ? onAct?.({ type: "note", text: "The officers hold the way out: barricades across the road until the search is called off." }) : walkTo(around(x, y), () => onAct?.({ type: "exit", exit })))} label={`${exit.via === "leave" ? "Out to" : "To"} ${world.areas[exit.to].name}`} />}
               </group>
             ))}
             {barricades.map((b) => (
@@ -5773,7 +5907,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 {tappable && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} label="Cache" />}
               </group>
             ))}
-            {buildings.map((b) => {
+            {buildings.filter((b) => !signs.some((s) => s.owner === b.id)).map((b) => {
+              // (a building with no sign of its own, a hideout or a wreck, keeps its name over it)
               const box = districtPlan?.boxes[b.id] ?? plan!;
               return <Label key={`name-${b.id}`} at={[box.x + box.width / 2, 4.6, box.y + box.height / 2]} size={0.8}>{b.name}</Label>;
             })}
@@ -5784,6 +5919,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {duel && <DuelPieces ground={groundY} pad={padAt} />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
+            {/* The party's own light, carried at the chest (a clustered light: none where the device cannot cluster, see babylon.ts CLUSTER) */}
+            {glowrod && !shootSession && <CarriedLight />}
             {/* In the saddle: the beast under the character, who sits on its back (and while getting off it) */}
             {underRider && <Figure kind="beast" ring={SIDE_COLORS.player} name={underRider.name} large={isLarge(underRider.size)} creature={underRider.creature} size={underRider.size} />}
             {/* At the helm of a water craft: the craft under the character, who sits in its pilot's seat, the followers who fit in the others */}
@@ -5888,6 +6025,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       {shootSession && <ShooterLayer key={shootSession.id} session={shootSession} ctx={shootCtx} />}
+      {shootSession && <FightLights key={`lights-${shootSession.id}`} session={shootSession} ctx={shootCtx} />}
       {mode !== "overhead" && viewing ? (
         <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (

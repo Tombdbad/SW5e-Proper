@@ -62,7 +62,9 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   sheen: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color("#5a5a5a"), emissive: new THREE.Color("#0a0a0a") }),
   // (both faces: the blade models of the saber pack have triangles wound both ways in a blade, so that a lit blade drawn one-sided was dim or gone from some
   // sides: the lower half of a double blade, a second saber, 2026-11-04)
-  glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide }),
+  // (userData.glow, 2026-11-16: drawn that much brighter where the bloom is on, so that a blade, a bulb or a lit panel blooms and nothing
+  // else does: babylon.ts glowOf)
+  glow: Object.assign(new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide }), { userData: { glow: 2.2 } }),
   // The blasters' metal and polymer (tools/blender/build-weapons.py, 2026-11-05, the user: "they are transparent on one side, we MUST use double sided textures"): the same as sheen and matte,
   // drawn on both sides, so that no face wound the wrong way, no thin rail and no scope's ring is a hole from the other side
   gunmetal: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color("#5a5a5a"), emissive: new THREE.Color("#0a0a0a"), side: THREE.DoubleSide }),

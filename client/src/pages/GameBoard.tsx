@@ -18,7 +18,7 @@ import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { partyMotion, stance, useNotice, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, usePlacing, whereNow, facingNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, partyLive, usePlacing, whereNow, facingNow, useClock, useMinutes, CLOCK_STEP, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, useCarriedLight, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
@@ -5074,12 +5074,15 @@ export default function GameBoard() {
     toast[damage ? "error" : "success"](`You ${out.text.replace(/\b(falls|drops|fires|lands)\b/g, (v) => v.slice(0, -1)).replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")}${damage ? ` and take ${damage} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}` : ""}.${pull.g !== 1 ? ` The pull here is ${pull.label} (house rule).` : ""}`);
     return damage;
   };
+  // A glowrod switched on, or a luminous weapon: the party's own light (also lights the 3D map round it: LocalMap useCarriedLight)
+  const carriedLight = ((character?.equipment ?? []) as string[]).some((n) => /^glowrod/i.test(n) && running(n)) || (character ? carriedWeapons(character).some((w) => w.properties.some((p) => /^(luminous|bright)/i.test(p))) : false);
+  useEffect(() => { useCarriedLight.setState({ on: carriedLight }); }, [carriedLight]);
   const protections = (): Protections => ({
     wearing: wearingNow,
     carried: (character?.equipment ?? []) as string[],
     resist: [...wearingNow.flatMap((n) => suitFacts(n)?.resist ?? []), ...speciesTraits.flatMap((t) => Array.from(String(t.description ?? "").matchAll(/resistance to (\w+) damage/gi)).map((m) => m[1].toLowerCase()))],
     darkvision: speciesTraits.some((t) => /^darkvision/i.test(t.name)) || ((character as any)?.itemSenses?.darkvision ?? 0) > 0,
-    light: ((character?.equipment ?? []) as string[]).some((n) => /^glowrod/i.test(n) && running(n)) || (character ? carriedWeapons(character).some((w) => w.properties.some((p) => /^(luminous|bright)/i.test(p))) : false),
+    light: carriedLight,
     generators: ((character?.equipment ?? []) as string[]).filter((n) => running(n)).map((n) => (/heat generator/i.test(n) ? "cold" : /gravity generator/i.test(n) ? "gravity" : "")).filter(Boolean) as EnvHazard[],
     water: supplies.water > 0,
     air: (() => { const b = breather(); return b ? play.air?.[b] ?? airCapacity(b) : 0; })(),
