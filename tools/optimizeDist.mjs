@@ -105,7 +105,8 @@ export function optimizeDistPlugin() {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
+// (by the script's own name: server/vite.ts imports vite.config, so this module is bundled into dist/index.js, where import.meta.url is the server's)
+if (/optimizeDist\.mjs$/.test(process.argv[1] ?? "")) {
   const dir = process.argv[2];
   if (!dir) throw new Error("usage: node tools/optimizeDist.mjs <build dir>");
   await optimizeDist(path.resolve(dir));
