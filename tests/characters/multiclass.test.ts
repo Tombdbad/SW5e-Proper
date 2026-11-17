@@ -256,3 +256,16 @@ test("a single-class character is as before", () => {
   assert.equal(levelUpPlan(c)!.classId, "consular");
   assert.equal(savedPools(c).length, 1);
 });
+
+test("review fixes: a later class does not cast through the first class's archetype; saved points kept; no skill asked that is known", () => {
+  // a fighter with a tech archetype (Adept Specialist) who takes operative learns no powers through the operative
+  const adept = hero("fighter", 4, [], { subclass: "adept-specialist" });
+  assert.equal(levelUpPlan(adept, undefined, "operative")!.powerOptions.length, 0);
+  // a fighter with 4 points a Master taught keeps them on becoming a consular
+  const taught = levelUp(hero("fighter", 1, [], { maxForcePoints: 4, currentForcePoints: 4 }), "consular");
+  assert.equal(taught.maxForcePoints, 4 + castingPools(taught)[0].points);
+  // proficient in every skill a scout may take: the level-up asks for none
+  const scoutSkills = multiclassProficiencies("scout").skills.from;
+  const done = applyLevelUp(hero("fighter", 1, [], { abilityScores: { ...even }, skillProficiencies: scoutSkills }), { class: "scout" });
+  assert.ok(!done.problems.some((p) => /skill/.test(p)), done.problems.join("; "));
+});

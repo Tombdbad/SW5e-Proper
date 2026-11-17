@@ -1438,7 +1438,8 @@ function pointChanges(before: any, after: any, scoresBefore: Record<string, numb
   now.forEach((pool, i) => {
     const j = was.findIndex((p) => p.kind === pool.kind);
     const delta = pool.points - (j >= 0 ? was[j].points : 0);
-    const from = j >= 0 && j < 2 ? POOL_FIELDS[j] : undefined;
+    // (a first pool where there was none keeps what was saved there already: points a Master taught, a substance's boost)
+    const from = j >= 0 && j < 2 ? POOL_FIELDS[j] : !was.length && i === 0 ? POOL_FIELDS[0] : undefined;
     out[POOL_FIELDS[i].max] = Math.max(0, (from ? Number(before[from.max]) || 0 : 0) + delta);
     out[POOL_FIELDS[i].current] = Math.max(0, (from ? Number(before[from.current]) || 0 : 0) + delta);
   });
@@ -1462,16 +1463,18 @@ export const powersKnownIn = (character: any, classId: string): any[] => {
 // Powers the character may learn at a level in a class ("as if you were a single-classed member of that class"): of the class's
 // kind, no higher than its own Max Power Level, not yet known, and with the power they build on already known
 export function powerOptions(character: any, level: number, archetype = findArchetype(character), classId: string = character?.class): any[] {
-  const cast = castingAt({ ...character, class: classId }, level, archetype);
+  // (only an archetype of that class: the default is the first class's)
+  const own = archetype && archetype.parentClass === classId ? archetype : undefined;
+  const cast = castingAt({ ...character, class: classId }, level, own);
   if (cast.type === "None") return [];
   const known = new Set(knownPowers(character).map((p) => String(p.name).toLowerCase()));
   // (house rule, shared/logic "Power Masters") a power of 6th level or more, of Expanded Content, of the other kind of casting or of the
   // opposite alignment is learned only after its school's Master's trials; the other kind's powers are offered once a school of it is open
   const schools = powerTraining(character?.playState?.training);
   const align = String(character?.forceAlignment ?? "");
-  const own: any[] = cast.type === "Force" ? forcePowers : techPowers;
+  const ofKind: any[] = cast.type === "Force" ? forcePowers : techPowers;
   const other: any[] = cast.type === "Force" ? (schools.tech ? techPowers : []) : schools.light || schools.dark || schools.universal ? forcePowers : [];
-  return [...own, ...other]
+  return [...ofKind, ...other]
     .filter((p) => powerGate(p, cast.type, align) <= (schools[powerSchool(p)] ?? 0))
     .filter((p) => p.level <= cast.maxLevel && !known.has(p.name.toLowerCase()) && (!p.prerequisite || known.has(p.prerequisite.toLowerCase())))
     .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
@@ -1585,8 +1588,10 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
   // A new class's proficiencies: the skills and tools to choose ("one skill from the class's list")
   const gained = plan.proficiencies;
   const skills = gained ? (choices.skills ?? []).filter((s, i, all) => gained.skills.from.includes(s) && all.indexOf(s) === i) : [];
+  // (no skill is asked for that the character has already: one proficient in the whole list chooses none)
+  const skillsOpen = gained ? gained.skills.from.filter((s) => !(character.skillProficiencies ?? []).includes(s)).length : 0;
   const tools = gained ? (choices.tools ?? []).filter((t, i, all) => gained.tools.from.includes(t) && all.indexOf(t) === i) : [];
-  if (gained && skills.length !== Math.min(gained.skills.count, gained.skills.from.length)) problems.push(`Choose ${gained.skills.count} skill${gained.skills.count === 1 ? "" : "s"} ${klass.name} gives (${skills.length} chosen).`);
+  if (gained && skills.length !== Math.min(gained.skills.count, skillsOpen)) problems.push(`Choose ${gained.skills.count} skill${gained.skills.count === 1 ? "" : "s"} ${klass.name} gives (${skills.length} chosen).`);
   if (gained && tools.length !== Math.min(gained.tools.count, gained.tools.from.length)) problems.push(`Choose ${gained.tools.count} tool${gained.tools.count === 1 ? "" : "s"} ${klass.name} gives (${tools.length} chosen).`);
 
   const picked = plan.powerOptions.filter((p) => (choices.powers ?? []).includes(p.name));

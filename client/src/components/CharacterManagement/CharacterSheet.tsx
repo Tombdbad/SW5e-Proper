@@ -928,7 +928,7 @@ export default function CharacterSheet({
                           <div>
                             <span className="text-gray-400">Type:</span>{" "}
                             {"forceAlignment" in power ? `Force (${power.forceAlignment})` : "Tech"}
-                            {isMulticlass(character) && powerClass(character, power) ? `, ${getClassById(powerClass(character, power)!)?.name ?? ""}` : ""}
+                            {isMulticlass(character) && powerClass(character, power, pools) ? `, ${getClassById(powerClass(character, power, pools)!)?.name ?? ""}` : ""}
                           </div>
                           <div>
                             <span className="text-gray-400">Casting Time:</span> {power.castingTime}

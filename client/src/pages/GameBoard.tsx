@@ -2613,6 +2613,8 @@ export default function GameBoard() {
     if (playMode === "shooter" && fightAroundParty([foe(occupant, `${occupant.id}-0`, occupant.name)])) return;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     initiateCombat(fighterNow(), [{ ...foe(occupant, `${occupant.id}-0`, occupant.name), x: 10, y: 4, z: 0 }] as any, combatKit(), false, { width: 16, height: 12, assets: [], open: true, floor: "sea" }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
@@ -2637,6 +2639,8 @@ export default function GameBoard() {
       roadFightRef.current = { riders, who: amb.a.who };
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       initiateCombat(fighterNow(), enemies as any, combatKit(), false, { width: 16, height: 12, assets: rocks as any, open: true, floor: atSea ? "sea" : world ? trailOf(world, amb.exit.to).find((a) => a.kind === "planet")?.type : undefined }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
@@ -2660,6 +2664,8 @@ export default function GameBoard() {
     gangFight.current = open;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -2689,6 +2695,8 @@ export default function GameBoard() {
     });
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -2746,6 +2754,8 @@ export default function GameBoard() {
       fightAreas.current = sources.map((a) => a.id);
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       startFight(
@@ -2793,6 +2803,8 @@ export default function GameBoard() {
       fightAreas.current = sources.map((a) => a.id);
       lastSavedHp.current = character.currentHp;
       lastSavedPoints.current = character.currentForcePoints;
+
+      lastSavedOther.current = character.currentOtherPoints ?? 0;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
       startFight(
@@ -2841,6 +2853,8 @@ export default function GameBoard() {
     fightAreas.current = [here.id];
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     startFight(
@@ -3616,6 +3630,7 @@ export default function GameBoard() {
     for (const pool of savedPools(character)) {
       if (pool.kind !== "Tech" || pool.current >= pool.max) continue;
       changes[pool.field.current] = pool.max;
+      if (pool.field.current === "currentOtherPoints") lastSavedOther.current = pool.max;
       notes.push("tech points restored");
     }
     const work = await workTool("short");
@@ -6110,6 +6125,8 @@ export default function GameBoard() {
     const enemies = foes.map((o: Occupant, i: number) => foe(o, `enemy-${i}`, o.name));
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+
+    lastSavedOther.current = character.currentOtherPoints ?? 0;
     fightBegun.current = true;
     initiateCombat(fighterNow(), enemies, combatKit());
   };
