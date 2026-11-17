@@ -191,6 +191,45 @@ function attachFeatures(loaded: Record<string, any[]>, features: any[]) {
   return attached;
 }
 
+// Multiclassing (Player's Handbook, Customization Options): the ability score each class asks for
+// ("Constitution 13, Wisdom or Charisma 13": every group met, any ability of a group), the
+// proficiencies a class gives one who enters it later, the Multiclass Max Power Level table, and
+// the class features that are gained only once
+function deriveMulticlassing(handbook: any[]) {
+  const text: string = handbook.find((c) => c.chapterName === "Customization Options")?.contentMarkdown ?? "";
+  const start = text.search(/^## Multiclassing/m);
+  const end = text.search(/^## Feats/m);
+  const chapter = start >= 0 ? text.slice(start, end > start ? end : undefined) : "";
+  const found = tables(chapter);
+  const lower = (s: string) => s.trim().toLowerCase();
+  const prerequisites: Record<string, { any: string[]; min: number }[]> = {};
+  for (const row of found.find((t) => t.title === "Multiclassing Prerequisites")?.rows ?? []) {
+    const cells = row.filter(Boolean);
+    prerequisites[lower(cells[0])] = cells[1].split(/,\s*/).map((part) => {
+      const m = part.match(/^(.*?)\s+(\d+)$/);
+      return { any: (m?.[1] ?? "").split(/\s+or\s+/).map(lower), min: Number(m?.[2] ?? 0) };
+    });
+  }
+  const proficiencies: Record<string, string[]> = {};
+  for (const row of found.find((t) => t.title === "Multiclassing Proficiencies")?.rows ?? []) {
+    const cells = row.filter(Boolean);
+    proficiencies[lower(cells[0])] = cells[1].split(/,\s*/).map((p) => p.trim()).filter(Boolean);
+  }
+  // (the table is printed in two halves, 1st to 10th and 11th to 20th)
+  const maxPowerLevel: number[] = [];
+  for (const t of found.filter((t) => /Caster Level/i.test(t.header[0] ?? ""))) {
+    for (const row of t.rows) maxPowerLevel[(number(row[0]) ?? 0) - 1] = number(row[1]) ?? 0;
+  }
+  // "If you already have the Unarmored Defense feature, you can't gain it again from another class."
+  const onceOnly = Array.from(chapter.matchAll(/If you already have the ([A-Z][\w' -]+?) feature, you can't gain it again/g)).map((m) => m[1]);
+  // "If you gain the Extra Attack class feature from more than one class, the features don't add together."
+  const noStacking = Array.from(chapter.matchAll(/If you gain the ([A-Z][\w' -]+?) class feature from more than one class, the features don't add together/g)).map((m) => m[1]);
+  if (Object.keys(prerequisites).length < 10 || Object.keys(proficiencies).length < 10 || maxPowerLevel.length !== 20 || maxPowerLevel.some((n) => !n) || !onceOnly.length) {
+    throw new Error("could not read the multiclassing tables from the Player's Handbook");
+  }
+  return { prerequisites, proficiencies, maxPowerLevel, onceOnly, noStacking };
+}
+
 // Short lists the books give as prose or tables
 function deriveLookups(handbook: any[], loaded: Record<string, any[]>) {
   const personality = handbook.find((c) => c.chapterName === "Personality and Backgrounds")?.contentMarkdown ?? "";
@@ -219,7 +258,9 @@ function deriveLookups(handbook: any[], loaded: Record<string, any[]>) {
     Array.from(abilityScores.slice(abilityScores.indexOf("Minimum Roll Threshold")).matchAll(/(\d+) for (d\d+)/g)).map((m) => [m[2], Number(m[1])]),
   );
   if (!minimumRollThreshold.d4 || !minimumRollThreshold.d12) throw new Error("could not read the Minimum Roll Threshold from the Player's Handbook");
+  const multiclassing = deriveMulticlassing(handbook);
   return {
+    multiclassing,
     wealthByLevel,
     minimumRollThreshold,
     languages,
