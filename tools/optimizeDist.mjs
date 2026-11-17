@@ -81,7 +81,8 @@ function stampWorker(dir, log) {
   if (!fs.existsSync(sw)) return;
   const hash = crypto.createHash("sha1");
   for (const file of [...walk(dir)].sort()) if (/(index\.html|\.js|\.css)$/.test(file) && file !== sw) hash.update(path.relative(dir, file)).update(fs.readFileSync(file));
-  fs.writeFileSync(sw, fs.readFileSync(sw, "utf8").replace("__BUILD_ID__", hash.digest("hex").slice(0, 12)));
+  // (replaceAll: sw.js names the placeholder in a comment above the line that uses it)
+  fs.writeFileSync(sw, fs.readFileSync(sw, "utf8").replaceAll("__BUILD_ID__", hash.digest("hex").slice(0, 12)));
   log("optimizeDist: service worker stamped");
 }
 
