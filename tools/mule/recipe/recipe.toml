@@ -1,0 +1,18 @@
+# The SW5e brief recipe for Mule Create (format: Mule's docs/recipes.md). Installed into %APPDATA%\Mule\recipes\sw5e by tools/mule/setup.mjs,
+# which fills in @@REPO@@. A brief made with it is built from a Claude Code session in the game's repo (skill `mule`), not in the brief folder:
+# that session has the repo's rules, skills and memory, and the game's own Blender pipeline. No hooks: nothing here runs on its own.
+id = "sw5e"
+name = "SW5e game asset"
+version = "v1.0"
+author = "SW5e"
+description = "Build the sketch as a game asset of SW5e from the repo session: the game's units, kits, Blender scripts and budgets; review in Mixar and in the model gallery."
+made_for = ["objects", "vehicles", "buildings", "creatures", "environments"]
+size = "any"
+harness = "claude-code"
+brief_interface = 1
+
+[templates]
+start = "templates/start.md"
+
+[files]
+"CLAUDE.md" = "brief/CLAUDE.md"

@@ -10,7 +10,7 @@ Audited 2026-11-07 from the repo at `main` (a658f7b), the 3 older docs (`HANDOFF
 - Stack: Express server (127.0.0.1:5000), Vite + React client, **three.js via React Three Fiber builds scenes; Babylon.js 9 actually draws them** (a bridge, `components/Map/babylon.ts`), Postgres via drizzle, TypeScript ESM everywhere, ~119k lines in server/shared/client/tests.
 - Runs on the user's **Windows 11 PC** (moved from an Oracle VM on 2026-10-23), reached from phones/friends over **Tailscale Serve (HTTPS)**; no login, loopback-only by default. Goal: playable from a phone browser; up to 4-player LAN/tailnet co-op.
 - Rules content (species, classes, powers, 507 items, 1,918 enhanced items, 271 monsters, starships…) comes **only** from the sw5e.com API, imported to `shared/data/sw5e/*.json` (9.5 MB, 36 datasets, data version 199). Never hand-edit; never duplicate rules elsewhere.
-- Local AI: **Gemma 4 E2B (via Ollama; NOT gemma3)** writes NPC/party dialogue and transcribes the player's microphone; **Piper TTS** speaks it; SeptaBee (a GUI DAW) is for music/SFX; **Mixar** (Blender 5.2 fork + AI agent, MCP-connected) is the 3D modelling workbench.
+- Local AI: **Gemma 4 E2B (via Ollama; NOT gemma3)** writes NPC/party dialogue and transcribes the player's microphone; **Piper TTS** speaks it; SeptaBee (a GUI DAW) is for music/SFX; **Mixar** (Blender 5.2 fork + AI agent, MCP-connected) is the 3D modelling workbench; **Mule Create** (`../MuleCreate`, MCP `sketch_machine`) is where the user sketches assets for Claude to build (skill `mule`).
 - The user is the sole designer; they give long numbered feedback lists with screenshots. The owner of the GitHub repo: `Tombdbad/SW5e-Proper`.
 
 ## 2. Repo map (where to look)
@@ -25,10 +25,10 @@ Audited 2026-11-07 from the repo at `main` (a658f7b), the 3 older docs (`HANDOFF
 | Character math | `client/src/lib/sw5e/characterCalculation.ts`, `rules.ts` | Feature effects are **parsed from rules text**, never hard-coded by name. |
 | Voice | `client/src/lib/voice.ts`, `components/Play/TalkPanel.tsx` | §8. |
 | Assets | `client/public/figures/*.glb` (body, head, hair, species, creature, weapons, architecture + `.lo` variants), `textures/`, `audio/voice/` | Built by `tools/blender/*.py`. |
-| Tools | `tools/` (item-audit, model-coverage, soundlab, kitbash, texture builders, `mixar-mcp.mjs`) | |
+| Tools | `tools/` (item-audit, model-coverage, soundlab, kitbash, texture builders, `mixar-mcp.mjs`, `mule/` + `blender/mule.py` for Mule Create) | |
 | Tests | `tests/{combat,dice,games,interiors,items,server,ships,world}`, `e2e/*.mjs` (Playwright) | `npm test` ≈ 697 tests (2026-11-06). |
-| Deploy | `deploy/windows-start.ps1 -Mode prod|test [-Lan]`, `finish-*.ps1`, old Linux units (`sw5e.service`, backup timer) | Linux files are historical. |
-| Skills (agent playbooks) | `.claude/skills/{mixar,septabee,sw5e-architecture}/SKILL.md` | Worth pasting alongside this file for those topics. |
+| Deploy | `deploy/windows-start.ps1 -Mode prod|test [-Lan]`, `deploy/windows-backup.ps1` | The old Linux units, `test-*.sh` and `finish-*.ps1` are in `Archive/deploy/`. |
+| Skills (agent playbooks) | `.claude/skills/{mixar,mule,septabee,sw5e-architecture,terrain-studio}/SKILL.md` | Worth pasting alongside this file for those topics. |
 
 ## 3. Hard rules (from `CLAUDE.md`; any proposal must respect them)
 1. **No 2D maps/HUD plans.** Everything is on the 3D map; use tap/double-tap. Local maps of settlement buildings are *sites* built from the asset library (`siteAssets.tsx`); new props go in the library, not drawn one-by-one in `LocalMap.tsx`.
