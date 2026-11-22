@@ -24,6 +24,7 @@ Audited 2026-11-07 from the repo at `main` (a658f7b), the 3 older docs (`HANDOFF
 | Figures/animation | `components/Map/interiors/limbs.ts` (joint rig + poses), `saberplay.ts` (saber combos), `body.ts`, `shoot.ts`, `Shooter.tsx`, `architecture.ts`, `stock.ts`, `ItemModel.tsx` | See §9. |
 | Character math | `client/src/lib/sw5e/characterCalculation.ts`, `rules.ts` | Feature effects are **parsed from rules text**, never hard-coded by name. |
 | Voice | `client/src/lib/voice.ts`, `components/Play/TalkPanel.tsx` | §8. |
+| Music, effects, mixer | `client/src/lib/music.ts` (pieces as notes for synthesized instruments, a mood per place with fights and chases over it, stingers), `components/Map/interiors/fx.ts` (synthesized effects and engines), `client/src/lib/audio.ts` (one context, music/effects/voice buses, volumes in the HUD "Sound" tab) | No audio files; `renderMood`/`renderSfx` render offline for checks. |
 | Assets | `client/public/figures/*.glb` (body, head, hair, species, creature, weapons, architecture + `.lo` variants), `textures/`, `audio/voice/` | Built by `tools/blender/*.py`. |
 | Tools | `tools/` (item-audit, model-coverage, soundlab, kitbash, texture builders, `mixar-mcp.mjs`, `mule/` + `blender/mule.py` for Mule Create) | |
 | Tests | `tests/{combat,dice,games,interiors,items,server,ships,world}`, `e2e/*.mjs` (Playwright) | `npm test` ≈ 697 tests (2026-11-06). |

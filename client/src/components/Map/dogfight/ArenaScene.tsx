@@ -15,6 +15,7 @@ import { ShipModel } from "../LocalMap";
 import { SpeederModel } from "../models";
 import { raceLook } from "../FlightScene";
 import { PlanetBall, WorldSky } from "../scenery";
+import { sfx } from "../interiors/fx";
 import { useQuality } from "../siteAssets";
 import { skyLook, terrainColorAt } from "@shared/logic";
 import { CapitalShip, type CapitalRig } from "./CapitalShip";
@@ -449,6 +450,14 @@ export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, on
 
     // Blasts and sparks: what the rules say happened this step
     for (const f of st.fx) spawnFx(f, blastData.current, rigs.current, st, me);
+    // The fight's sounds (interiors/fx.ts, which spaces out repeats): the player's guns and the foes', launches, strikes on shields and hulls, blasts
+    for (const e of st.events) sfx.shot(e.by === "player", 0);
+    for (const f of st.fx) {
+      if (f.kind === "boom" || f.kind === "wreck") sfx.boom();
+      else if (f.kind === "shield") sfx.deflect();
+      else if (f.kind === "spark") sfx.impact();
+      else if (f.kind === "launch") sfx.power("push");
+    }
     if (blastMesh.current) {
       const alive = blastData.current.filter((b) => (b.t += dt) < b.life);
       blastData.current = alive.slice(-BLASTS - FLASHES);

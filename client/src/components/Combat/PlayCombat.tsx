@@ -7,6 +7,8 @@ import {
   type GrappleMove, pointsKey,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
+import { sfx } from "@/components/Map/interiors/fx";
+import { sting } from "@/lib/music";
 
 // What the character can use in a fight, made by the Play page from what is carried: `target` says
 // who it is used on (an ally or the character, an enemy, nobody), `use` does it and says whether it was used
@@ -34,6 +36,18 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   useEffect(() => {
     (window as any).__fight = useCombat;
   }, []);
+  // The fight's sounds, read off its log as lines are added: a hit, a critical hit, a miss, a power, someone down, the victory
+  useEffect(() => useCombat.subscribe((s, prev) => {
+    if (s.combatLog.length <= prev.combatLog.length) return;
+    for (const line of s.combatLog.slice(prev.combatLog.length)) {
+      if (/^Victory!/.test(line)) sting("victory");
+      else if (/\bis (down|defeated)!/.test(line)) sfx.fall();
+      else if (/critical hit/.test(line)) sfx.strike("crit");
+      else if (/\bhits\b/.test(line)) sfx.strike("hit");
+      else if (/\bmisses\b/.test(line)) sfx.strike("miss");
+      else if (/\bcasts\b/.test(line)) sfx.power(/heal|mend|cure|kolto|restor/i.test(line) ? "heal" : "");
+    }
+  }), []);
 
   // Close with the target as far as movement allows, then strike if it is in reach
   const melee = () => {

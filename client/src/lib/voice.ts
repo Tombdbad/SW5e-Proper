@@ -11,6 +11,7 @@
 //  - The cues ([sigh], [chuckle], [beep], [static] ...) are played where they stand: from a sound bank made in SeptaBee if the game has one
 //    (client/public/audio/voice/manifest.json; see .claude/skills/septabee/SKILL.md), else made here on the spot (noise, oscillators).
 // Pure parts (`voiceOf`, `partsOf`, `toneOf`, `gibberish`) are tested in tests/world/voice.test.ts; the rest needs a browser.
+import { audioContext, busOf } from "./audio";
 
 export interface VoiceSpeaker { id: string; name: string; species?: string; role?: string; kind?: string; gender?: string; creature?: string; disposition?: string }
 export type VoiceFx = "droid" | "metal" | "helmet" | "comms" | "masked" | "breath";
@@ -156,15 +157,8 @@ export function gibberish(text: string, seed = 0): string {
 }
 
 // ---- In the browser: playing a reply -------------------------------------------------------------------------------------------------
-let ctx: AudioContext | null = null;
-const audio = () => {
-  if (typeof window === "undefined") return null;
-  const C = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!C) return null;
-  ctx ??= new C();
-  if (ctx.state === "suspended") void ctx.resume();
-  return ctx;
-};
+// The page's one context (lib/audio.ts); the voices go to its voice bus, so the player's voice volume applies to them
+const audio = (): AudioContext | null => audioContext();
 let noise: AudioBuffer | null = null;
 const noiseOf = (c: AudioContext) => {
   if (noise) return noise;
@@ -293,7 +287,7 @@ function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, i
   const out = c.createGain();
   out.gain.value = 0.9 * tone.gain * gain;
   if (place) at = placed(c, at, place);
-  at.connect(out).connect(c.destination);
+  at.connect(out).connect(busOf("voice") ?? c.destination);
   return { input, out, stop: () => nodes.forEach((n) => { try { n.stop(); } catch { /* stopped */ } }) };
 }
 // A small space's echo, made on the spot (a SeptaBee-rendered one is used instead when the manifest lists it)

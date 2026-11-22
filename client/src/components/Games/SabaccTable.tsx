@@ -6,6 +6,7 @@ import { createRandom } from "@shared/logic";
 import { actor, bombedOut, handTotal, newSabacc, nextHand, sabaccActions, sabaccAi, sabaccDeck, sabaccDo, type Sabacc, type SabaccAction } from "@shared/logic/sabacc";
 import type { Shot } from "@/components/Map/interiors/limbs";
 import { CardBack, SabaccCard } from "./cards";
+import { sfx } from "@/components/Map/interiors/fx";
 
 export interface TableOpponent { id: string; name: string; note?: string }
 export const BUY_IN_CHIPS = 20;
@@ -42,6 +43,11 @@ export function SabaccTable({ place, player, opponents, croupier, unit, trained,
     const cur = ref.current;
     const seat = cur.seats[actor(cur)];
     const next = sabaccDo(cur, a, rng.current);
+    // the table's sounds: chips for a bet, cards for a draw or a swap, the shift die, cards turned up at the call
+    if (a.type === "bet" || a.type === "raise" || a.type === "match") sfx.chips();
+    else if (a.type === "draw" || a.type === "swap") sfx.deal();
+    else if (a.type === "roll") sfx.dice(1);
+    else if (a.type === "call") sfx.flip();
     const shot = shotFor(a);
     if (shot) onGesture?.(seat.id, shot);
     if (a.type === "roll" && next.die !== undefined) croupierSays(next.die <= 3 ? "The shift! Cards change hands." : "No shift.");
@@ -78,6 +84,7 @@ export function SabaccTable({ place, player, opponents, croupier, unit, trained,
     // (a player with no chips for the ante is out of the next hand; a computer player who has been cleaned out buys in again)
     const refill: Sabacc = { ...ref.current, seats: ref.current.seats.map((s) => (s.id !== "me" && s.credits < 4 ? { ...s, credits: BUY_IN_CHIPS } : s)) };
     const next = nextHand(refill, rng.current);
+    sfx.deal();
     ref.current = next;
     setGame(next);
   };

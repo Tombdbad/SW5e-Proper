@@ -14,6 +14,8 @@ import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
 import { Scatter, Sea, groundTexture, raceScenery, useQuality, type Placed } from "./siteAssets";
 import { RacePackDress, useGroundMaterial } from "./terrain";
 import { WorldSky } from "./scenery";
+import { engine, sfx, type Engine } from "./interiors/fx";
+import { musicOverlay } from "@/lib/music";
 import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
 import type { Dogfight } from "@shared/logic/dogfight";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
@@ -765,6 +767,12 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   const ahead = useMemo(() => new THREE.Vector3(), []);
   const behind = useMemo(() => new THREE.Vector3(), []);
   const party = race0.racers.findIndex((racer) => racer.party);
+  // The party's engine (interiors/fx.ts), its pitch and roar following the speeder's speed and throttle; it dies away when the race ends
+  const motor = useRef<Engine | null>(null);
+  useEffect(() => {
+    motor.current = engine(race0.racers[party]?.kind === "bike" ? "bike" : "speeder");
+    return () => motor.current?.stop();
+  }, [race0]);
   useFrame((_, delta) => {
     let now = raceRef.current;
     // For test scripts: window.__raceTrack is the course, and window.__raceWarp = s puts the party's speeder on the track s metres round the
@@ -781,7 +789,18 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       raceRef.current = now;
     }
     const absorb = (events: RaceEvent[], at: Race) => {
+      const me = at.racers[party];
       for (const e of events) {
+        // what is heard: the party's own knocks, landings, gates and finish, and what happens within earshot (90 m)
+        const mine = e.by === me.id;
+        if (mine || Math.hypot(e.p[0] - me.craft.p[0], e.p[2] - me.craft.p[2]) < 90) {
+          if (e.kind === "mine" || e.kind === "wreck") sfx.boom();
+          else if ((e.kind === "hit" || e.kind === "smash") && (mine || e.power > 6)) sfx.impact();
+          else if (e.kind === "shot") sfx.shot(mine, 0);
+          else if (e.kind === "land" && mine && e.power > 5) sfx.strike("hit");
+          else if (e.kind === "gate" && mine) sfx.click();
+          else if (e.kind === "finish" && mine) sfx.confirm();
+        }
         if (e.kind === "hit" || e.kind === "smash" || e.kind === "mine") sparks.current.push(e);
         if (e.kind === "shot") {
           shots.current.push(e);
@@ -821,6 +840,9 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       onFrame(now);
       if (now.over) onFinish(now);
     }
+    const driving = now.racers[party];
+    if (driving && (now.over || driving.wrecked)) motor.current?.stop();
+    else if (driving) motor.current?.set(Math.abs(driving.craft.speed) / RACE.boost, remote ? 0.7 : Math.max(0, input.current.throttle));
     now.racers.forEach((rc, i) => {
       const group = racerRefs.current[i];
       if (group) {
@@ -1230,6 +1252,8 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : game.kind === "convoy" ? raceCourse(game.seed, raceScenery(biome), 1, {}) : null), [gameKey, biome]);
   const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
   const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy";
+  // The chase's music over whatever played before, for as long as the minigame is open (lib/music.ts)
+  useEffect(() => musicOverlay("chase"), []);
   const [count, setCount] = useState(game.kind === "road" || game.kind === "convoy" ? 4 : 5);
   // At a convoy's gun: the pad (and A, D, W and S, or a drag on the scene) turn it at a rate, all round and up into the sky
   const aimRate = useRef({ x: 0, y: 0 });
@@ -1532,6 +1556,7 @@ export function RoadRide({ gunner, gunnerAboard, pilotName }: { gunner: boolean;
     return () => clearInterval(timer);
   }, []);
   const game = spec?.game as Extract<Minigame, { kind: "road" }> | undefined;
+  useEffect(() => musicOverlay("chase"), []);
   const input = useRef<RaceInput>({ steer: { x: 0, y: 0 }, throttle: 0, aim: gunner ? 0 : undefined });
   const go = useRef(true);
   const biome = game?.biome ?? "temperate";

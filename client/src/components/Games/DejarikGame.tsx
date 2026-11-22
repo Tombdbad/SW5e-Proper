@@ -4,6 +4,7 @@
 // are not ours to copy.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRandom } from "@shared/logic";
+import { sfx } from "@/components/Map/interiors/fx";
 import { CENTRE, KINDS, ROLES, SPECIES, dejarikAi, dejarikDo, legalActions, moves, neighbours, newDejarik, orbitOf, randomPicks, rayOf, targets, type Dejarik, type Kind, type Piece, type Variant } from "@shared/logic/dejarik";
 
 const MID = 200;
@@ -43,6 +44,9 @@ export function DejarikGame({ player, rival, stake, onDone }: { player: string; 
   const act = (a: Parameters<typeof dejarikDo>[1]) => {
     if (!ref.current) return;
     const next = dejarikDo(ref.current, a, rng.current);
+    // a holographic piece moving, or striking
+    if (a.type === "attack") sfx.strike("hit");
+    else if (a.type === "move" || a.type === "push") sfx.pickup();
     ref.current = next;
     setG(next);
     setSel(null);

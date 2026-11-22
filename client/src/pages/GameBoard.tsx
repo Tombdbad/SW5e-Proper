@@ -35,6 +35,9 @@ import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
 import { TestMenu, type TestCategory, type TestItem } from "@/components/Play/TestMenu";
 import { Compass, CompassRig } from "@/components/Map/Compass";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
+import SoundControls from "@/components/ui/SoundControls";
+import { moodOfPlace, musicOverlay, setMusicBase, sting } from "@/lib/music";
+import { sfx } from "@/components/Map/interiors/fx";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
@@ -241,7 +244,7 @@ function ClockLine({ after }: { after: string }) {
   );
 }
 
-type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "comms" | "pack" | "downtime" | "gm" | "test";
+type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "comms" | "pack" | "downtime" | "gm" | "sound" | "test";
 // A test copy is built with VITE_TEST_MENU=1 (`deploy/windows-start.ps1 -Mode test`) and has a god-mode menu; the build the game is played on never does
 const TEST_MENU = import.meta.env.VITE_TEST_MENU === "1";
 
@@ -3510,6 +3513,7 @@ export default function GameBoard() {
     }
     saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
     recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
+    sfx.coins();
     toast.success(`Bought ${line.name} for ${line.price} credits.${line.contraband ? " Contraband here (house rule): keep it out of sight." : ""}`);
   };
   const sell = (trader: Occupant, name: string, offer: number) => {
@@ -3517,6 +3521,7 @@ export default function GameBoard() {
     if (at < 0 || offer <= 0) return;
     saveCharacter({ credits: (character.credits ?? 0) + offer, equipment: (character.equipment ?? []).filter((_: string, i: number) => i !== at) });
     recordDeal(trader.id, (e) => ({ ...e, sold: { ...e.sold, [name]: (e.sold[name] ?? 0) + 1 } }));
+    sfx.coins();
     toast.success(`Sold ${name} for ${offer} credits.`);
   };
   // Haggling (house rule for the DC): Charisma (Persuasion), with what the character's features
@@ -5586,6 +5591,7 @@ export default function GameBoard() {
     const key = `${dayOf(clockMinutes)}|${ringing.id}`;
     if (rungFor.current === key) return;
     rungFor.current = key;
+    sfx.comms();
     toast(`${personById(world, ringing.id)?.name ?? "Someone"} is calling you (Comms tab).`);
   }, [ringing]);
   const talkScene = (): string => {
@@ -9496,6 +9502,45 @@ export default function GameBoard() {
     </div>
   );
 
+  // The music (lib/music.ts): the mood of where the party is (a cantina, a town, the wild, a place held by foes, space), a fight's music
+  // over it while a fight lasts (tabletop, real-time, the arena, a starship fight), and a stinger when the character dies
+  // (while the campaign loads, what played before goes on: no mood is guessed from nothing)
+  const placeMood = world && hereId ? moodOfPlace(world, hereId, !!aboardShip) : null;
+  useEffect(() => {
+    if (placeMood) setMusicBase(placeMood);
+  }, [placeMood]);
+  const fighting = inCombat || pitOpen || !!shipFight;
+  useEffect(() => (fighting ? musicOverlay("combat") : undefined), [fighting]);
+  useEffect(() => {
+    if (dead) sting("defeat");
+  }, [dead]);
+  // The sounds of going somewhere (interiors/fx.ts), read off the way between where the party was and where it is: a door, a jump to
+  // hyperspace, lifting off a world or setting down on one; an alarm raised where the party is; a quest completed
+  const wasHere = useRef<string | null>(null);
+  useEffect(() => {
+    const from = wasHere.current;
+    wasHere.current = hereId ?? null;
+    if (!world || !from || !hereId || from === hereId) return;
+    const a = world.areas[from];
+    const b = world.areas[hereId];
+    const way = world.paths.find((p) => (p.from === from && p.to === hereId) || (p.from === hereId && p.to === from));
+    const sky = (k?: string) => k === "planet" || k === "system" || k === "region" || k === "galaxy";
+    if (way?.kind === "hyperlane") sfx.jump();
+    else if (sky(b?.kind) && a && !sky(a.kind)) sfx.takeoff(false);
+    else if (sky(a?.kind) && b && !sky(b.kind)) sfx.takeoff(true);
+    else if (way?.kind === "door" || a?.kind === "room" || b?.kind === "room") sfx.door(true);
+  }, [hereId]);
+  const alarmHere = !!here?.alarm || (!!here?.parentId && !!world?.areas[here.parentId]?.alarm);
+  useEffect(() => {
+    if (alarmHere) sfx.alarm();
+  }, [alarmHere]);
+  const questsDone = quests.filter((q) => q.status === "completed").length;
+  const questsSeen = useRef<number | null>(null);
+  useEffect(() => {
+    if (questsSeen.current !== null && questsDone > questsSeen.current) sting("quest");
+    questsSeen.current = questsDone;
+  }, [questsDone]);
+
   if (isLoading || characterLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900">
@@ -9966,9 +10011,9 @@ export default function GameBoard() {
             </div>
 
             <div className="mb-3 flex flex-wrap gap-1" data-testid="hud-tabs">
-              {(["here", "party", "trade", "quests", "nemeses", "comms", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
+              {(["here", "party", "trade", "quests", "nemeses", "comms", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", "sound", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
                 <Button key={tab} role="tab" aria-selected={hudTab === tab} size="sm" variant={hudTab === tab ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setHudTab(tab)} data-testid={`hud-tab-${tab}`}>
-                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", nemeses: "Enemies", comms: "Comms", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
+                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", nemeses: "Enemies", comms: "Comms", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", sound: "Sound", test: "Test" }[tab]}
                   {tab === "nemeses" && (world?.nemeses?.mercy.length ?? 0) > 0 && hudTab !== "nemeses" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-red-400" />}
                   {tab === "trade" && dealingNow && hudTab !== "trade" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />}
                 </Button>
@@ -10800,6 +10845,11 @@ export default function GameBoard() {
               saveCampaign={saveCampaign}
               disabled={inCombat || dead}
             />
+              </div>
+            )}
+            {hudTab === "sound" && (
+              <div data-testid="hud-sound">
+                <SoundControls />
               </div>
             )}
             {TEST_MENU && hudTab === "test" && (

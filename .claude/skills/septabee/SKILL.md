@@ -111,7 +111,6 @@ client/public/audio/
     ir/<name>.wav            # impulse responses: helmet, mask, comms
   music/<place-or-mood>-<n>.ogg
   sfx/<thing>-<action>-<n>.ogg
-client/public/sounds/        # the three old Howler sounds (useAudio.tsx); leave them
 ```
 
 - Banks (`<bank>`): `human`, `droid`, `wookiee`, `small` (Jawas, Ewoks, Ugnaughts), `large` (Hutts, Besalisks, Gamorreans).
@@ -159,12 +158,14 @@ makes one, add a `phrase` cue to the code first: it is not in `CUES` yet.
 ### Music
 Short loops per place and moment: cantina band (`music/cantina-<n>.ogg`), spaceport, wilderness by biome, travel, tension, combat, the
 convoy and dogfight minigames, victory and defeat stingers (2-6 s). Microtonal scales from the Waggleboard suit alien music (a 5-limit or
-7-limit just scale, or a non-octave equave). There is no music player in the game yet; wiring one in (Howler is installed, see
-`client/src/lib/stores/useAudio.tsx`) is code work to plan with the user.
+7-limit just scale, or a non-octave equave). Since 2026-11-22 the game has music made in code (`client/src/lib/music.ts`: pieces written
+as notes for synthesized instruments, a mood per place with fights and races over it, stingers; the mixer and volumes in
+`client/src/lib/audio.ts`). A SeptaBee piece would be added as a recorded mood beside them (a file the music player loops), not instead.
 
 ### Sound effects
-Blasters, sabers, speeder and ship engines, doors, UI clicks. No game code plays most of these yet; add them with the code that needs them,
-listed by name in the code that plays them.
+Since 2026-11-22 these are synthesized in `client/src/components/Map/interiors/fx.ts` (blasters, sabers, powers, blasts, the interface,
+dice, cards, coins, doors, comms, alarms, hyperspace, engines) and played where they happen. A designed SeptaBee take would replace an
+effect by name there (a file instead of the synthesis), checked with `soundlab inspect` first.
 
 ## Steps after the user exports
 

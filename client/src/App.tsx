@@ -14,6 +14,8 @@ const CoopJoin = lazy(() => import('./pages/CoopJoin'));
 import { Toaster } from './components/ui/sonner';
 import DiceRoller from './components/ui/DiceRoller';
 import ErrorBoundary from './components/ui/ErrorBoundary';
+import { installUiSounds } from './components/Map/interiors/fx';
+import { setMusicBase } from './lib/music';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 const ModelGallery = lazy(() => import('./pages/ModelGallery'));
 const DogfightLab = lazy(() => import('./pages/DogfightLab'));
@@ -59,6 +61,14 @@ function App() {
     check();
     document.addEventListener('visibilitychange', check);
     return () => document.removeEventListener('visibilitychange', check);
+  }, [location.pathname]);
+
+  // Sound (lib/audio.ts, lib/music.ts): a soft click on the buttons, and the title music on every page but Play, which sets its own
+  // music by where the party is (and the model gallery, kept quiet)
+  useEffect(() => installUiSounds(), []);
+  useEffect(() => {
+    if (location.pathname.startsWith('/game/')) return;
+    setMusicBase(location.pathname.startsWith('/dev/models') ? null : 'title');
   }, [location.pathname]);
 
   return (

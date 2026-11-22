@@ -66,6 +66,14 @@ Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-p
 | `client/public/textures/wall/*/*-megascans.jpg`, `client/public/megascans/doors.glb` (NOT in the repository) | Quixel Megascans, free on Fab (Standard License, claimed 2026-11-12): Plaster Wall (th0mecug) and Hewn Sandstone Wall (ub3ffiilw) 1K maps; Historic Miscellaneous Door Wood Old 01 and 02 and Painted Wooden Door, low tier | Fab Standard License: not redistributable | https://www.fab.com/sellers/Quixel%20Megascans | plain walls and the doors of the buildings |
 | `textures/figure/head` (the people's four cells: the colour of the faces) | Derived from a screenshot of four photograph-scan face textures that the project owner supplied (2026-11-05, `tools/refs/snips/face-scans-sheet.png`, not in the repository): only a colour ratio over each skin's own colour, blurred, with the eyes and brows cut out, is kept, laid on this project's own head shape. Provenance of the photographs is the owner's: replace them if they cannot be used | the owner's choice | `tools/face-scans.mjs`, `tools/build-head-textures.mjs` | the colour of a person's face (lips, nostrils, cheeks, skin grain) |
 
+## Music and sound effects
+
+All made for this project (2026-11-22), CC0 1.0 (public domain); no recordings and no audio files. The music (`client/src/lib/music.ts`:
+title, exploring, town, cantina, tension, combat, space and chase pieces, and the victory, defeat, level-up and quest stingers) is written
+here as notes for instruments synthesized in the browser, in the manner of a space-opera score and a swing band, quoting no film or game.
+The sound effects (`client/src/components/Map/interiors/fx.ts`) are synthesized the same way. The non-verbal voice cues and impulse
+responses are listed with the voice work (`client/public/audio/voice/manifest.json`).
+
 ## Libraries
 
 three.js, @react-three/fiber, @react-three/drei, @react-three/postprocessing (MIT); glTF Transform and meshoptimizer

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createRandom } from "@shared/logic";
 import { newPazaak, nextSet, pazaakActions, pazaakAi, pazaakDo, total, type Pazaak, type PazaakAction, type SideCard } from "@shared/logic/pazaak";
 import { PazaakCardFace } from "./cards";
+import { sfx } from "@/components/Map/interiors/fx";
 
 // A decent side deck for someone who plays: +1 to +5, -1 to -3 and two flips (the plain starting deck is all plus cards)
 export const playerDeck = (): SideCard[] => [...[1, 2, 3, 4, 5].map((value) => ({ kind: "plus" as const, value })), ...[1, 2, 3].map((value) => ({ kind: "minus" as const, value })), { kind: "flip", value: 1 }, { kind: "flip", value: 2 }];
@@ -33,6 +34,10 @@ export function PazaakGame({ player, rival, stake, skill = 1, onGesture, onDone 
   const me = 0;
   const act = (a: PazaakAction) => {
     const next = pazaakDo(ref.current, a, rng.current);
+    // a side card laid down, a stand (chips pushed in), or the end of a turn (the next card dealt)
+    if (a.type === "play") sfx.flip();
+    else if (a.type === "stand") sfx.chips();
+    else sfx.deal();
     ref.current = next;
     setG(next);
     setFlip(null);

@@ -21,6 +21,7 @@ import {
   featAbilityOptions, featPrerequisiteUnmet, findArchetype, levelUpPlan, type LevelUpChoices,
   combatChoicesOf, combatChoiceSlots, superiorityDice, classChoices, classSummary, hitDiceLabel, isMulticlass,
 } from "@/lib/sw5e/characterCalculation";
+import { sting } from "@/lib/music";
 
 const selectClass = "w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm";
 
@@ -341,7 +342,7 @@ function Advancement({ character, onSave, saving }: { character: any; onSave: (c
             {result.changes!.armorClass !== character.armorClass ? `, armor class ${result.changes!.armorClass}` : ""}.
           </p>
         )}
-        <Button disabled={result.problems.length > 0 || saving} onClick={() => result.changes && onSave(result.changes)}>
+        <Button disabled={result.problems.length > 0 || saving} onClick={() => { if (!result.changes) return; onSave(result.changes); sting("levelup"); }}>
           Level up to {plan.level}
         </Button>
         {klass && <p className="text-xs text-gray-500">Hit points use the average of the d{klass.hitDie} Hit Die of the {klass.name} level.</p>}

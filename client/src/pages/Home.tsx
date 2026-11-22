@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import TranslucentPane from "@/components/ui/TranslucentPane";
+import SoundControls from "@/components/ui/SoundControls";
 import { Character, Campaign } from "../../../shared/schema";
 
 export default function Home() {
@@ -68,6 +69,9 @@ export default function Home() {
         >
           <h1 className="text-5xl font-bold text-yellow-400 mb-4">SW5E RPG Simulator</h1>
           <p className="text-xl text-gray-300">Forge your destiny in the galaxy far, far away</p>
+          <div className="mt-3 flex justify-center">
+            <SoundControls compact />
+          </div>
         </TranslucentPane>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12">

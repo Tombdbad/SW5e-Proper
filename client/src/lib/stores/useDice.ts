@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { useAudio } from "./useAudio";
+import { sfx } from "@/components/Map/interiors/fx";
 import type { TableDie } from "../sw5e/dice";
 import { passiveFace } from "@shared/logic/shooter";
 
@@ -136,7 +136,7 @@ export const useDice = create<DiceState>()(
     rollDice: (dice: DieType[], options: RollOptions = {}): RollResult => {
       set({ rolling: true });
       
-      useAudio.getState().playSound("hit"); // Play sound effect for dice roll
+      sfx.dice(dice.length); // dice rattling on the table (interiors/fx.ts)
       
       // Generate results for each die
       let diceResults: DieResult[] = dice.map(dieType => {
