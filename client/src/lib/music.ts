@@ -745,6 +745,8 @@ function pump(p: Playing, c: AudioContext) {
   }
 }
 function tick() {
+  // (no music wanted and none playing or fading: nothing to do, and no audio context is made for it)
+  if (!musicOn() && !playing && !fading.length) return;
   const c = audioContext();
   const dest = busOf("music");
   if (!c || !dest || c.state !== "running") return;

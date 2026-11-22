@@ -90,7 +90,8 @@ if (typeof document !== "undefined") {
 export function audioContext(): AudioContext | null {
   if (typeof window === "undefined") return null;
   if (!ctx) {
-    if (!touched) return null;
+    // (muted, none is made: no audio thread runs on a page that makes no sound; unmuting from the Sound tab is a touch, which makes it)
+    if (!touched || levels.muted) return null;
     const C = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!C) return null;
     // At 32 kHz (16 kHz of bandwidth, all the game's sounds need): a third less work than a phone's own 48 kHz for every voice, effect
