@@ -9,7 +9,7 @@ const make = (seed: number): World => generateWorld({ seed, partyLevel: 5 }, cat
 
 test("the showcase is a single planet with its city and wild sites, valid, and every place reachable", () => {
   const started = Date.now();
-  // The world the test copy ships (deploy/test-copy.sh) is the one checked
+  // The world the test copy ships (the old Linux Archive/deploy/test-copy.sh) is the one checked
   process.env.SW5E_SHOWCASE_SEED = "34";
   const world = showcaseWorld(make, 1);
   delete process.env.SW5E_SHOWCASE_SEED;

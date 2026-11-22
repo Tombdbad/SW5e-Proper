@@ -22,6 +22,7 @@ client/public/textures/leaves/forest_leaves_02/diffuse-cutout-megascans.*
 # Megascans wall maps (Fab Standard License: not committed)
 client/public/textures/**/*-megascans.*
 
-# the audit's scratch files, screenshots and logs (large, generated; the reports in AUDIT/*.md are committed)
-AUDIT/tmp/
-AUDIT/05_artifacts/
+# archived scratch: the 2026-11 audit's screenshots and logs, and old e2e run output (large, generated; the reports in Archive/audit/*.md are committed)
+Archive/audit/tmp/
+Archive/audit/05_artifacts/
+Archive/e2e/out/

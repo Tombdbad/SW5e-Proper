@@ -18,7 +18,7 @@ import { emptyOverlay, HudPanels, hudOf, MarkerLayer, Reticule, weaponLabel, typ
 // `foes` and `intro`: a fight against the world's own ships (the shooter mode's Engage), and what the countdown says of it
 export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string; hull?: number }; view?: View; air?: AirOptions; planet?: string; foes?: StartOptions["foes"]; intro?: string }
 
-// TEST BUILD ONLY: the button for unlimited hull and weapons. It exists only in a page built with VITE_TEST_MENU=1 (deploy/test-plain.sh, as the
+// TEST BUILD ONLY: the button for unlimited hull and weapons. It exists only in a page built with VITE_TEST_MENU=1 (`deploy/windows-start.ps1 -Mode test`, as the
 // game's test menu), never in the build the game is played on, so nothing here needs commenting out for production. To take it out by hand as
 // well, delete the `TEST_TOOLS` lines below (the constant, and the button in DogfightControls).
 const TEST_TOOLS = import.meta.env.VITE_TEST_MENU === "1";

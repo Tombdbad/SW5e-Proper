@@ -242,7 +242,7 @@ function ClockLine({ after }: { after: string }) {
 }
 
 type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "comms" | "pack" | "downtime" | "gm" | "test";
-// A test copy is built with VITE_TEST_MENU=1 (deploy/test-plain.sh) and has a god-mode menu; the build the game is played on never does
+// A test copy is built with VITE_TEST_MENU=1 (`deploy/windows-start.ps1 -Mode test`) and has a god-mode menu; the build the game is played on never does
 const TEST_MENU = import.meta.env.VITE_TEST_MENU === "1";
 
 export default function GameBoard() {

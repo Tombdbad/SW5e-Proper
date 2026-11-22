@@ -1,5 +1,5 @@
 // The test menu of a test copy (a god-mode style panel): built into the page only where the page was built with VITE_TEST_MENU=1
-// (deploy/test-plain.sh), never into the build the game is played on. It sets things on the character and the campaign that the game
+// (`deploy/windows-start.ps1 -Mode test`), never into the build the game is played on. It sets things on the character and the campaign that the game
 // itself would make you earn; every action goes through the page's own save paths, so what it does is what play would have done.
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";

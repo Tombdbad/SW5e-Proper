@@ -47,7 +47,7 @@ export async function open() {
   const page = await context.newPage();
   page.setDefaultTimeout(Number(process.env.TIMEOUT || 15000));
   // A 3D scene's first frame is drawn in software on this VM and blocks the page for up to half a
-  // minute (see e2e/probe.mjs): navigations wait longer than the other actions
+  // minute (see Archive/e2e/probe.mjs): navigations wait longer than the other actions
   page.setDefaultNavigationTimeout(Number(process.env.NAV_TIMEOUT || 90000));
   // A campaign's first visit asks how it is played (GameBoard's mode dialog, newer than most steps): the steps play the tabletop
   await page.addLocatorHandler(page.getByTestId("mode-dialog"), async () => {

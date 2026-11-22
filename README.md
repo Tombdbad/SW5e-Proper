@@ -1,47 +1,12 @@
+# SW5e
 
-# Star Wars 5e Character Creator Components
+A Star Wars 5th Edition role-playing game: characters built by the SW5e rules, a generated galaxy played on one 3D map,
+tabletop or real-time fights, card games, races, dogfights and co-op for up to four players. Express + Vite/React,
+Babylon.js, Postgres (drizzle). Made to be played from a phone browser.
 
-This document outlines the component architecture of the SW5e character creator application.
+- Run: `npm run dev` (needs `.env` with `DATABASE_URL`), then http://127.0.0.1:5000.
+- Check: `npx tsc --noEmit`, `npm test`, `npm run e2e` (the play-through, in headless Chromium).
+- Rules data: `npm run import:sw5e` (from sw5e.com into `shared/data/sw5e`; never edited by hand).
 
-## Component Organization
-
-The application has two primary character creation flows:
-
-### 1. Form-Based Creation (`/components/CharacterCreation/`)
-
-The form-based approach allows users to fill out different sections in any order they prefer. This is implemented in:
-- `CharacterCreationForm.tsx` - The main form container
-- Individual form sections (SpeciesSelection, ClassSelection, etc.)
-
-### 2. Guided Step-by-Step Creation (`/components/CharacterCreator/`)
-
-The guided approach walks users through character creation step-by-step with validation at each step:
-- `CharacterCreator.tsx` - The main step-by-step creation flow
-- `StepNavigation.tsx` - Controls for moving between steps
-- Support components specific to the guided flow
-
-### Entry Point
-
-- `CharacterCreatorMain.tsx` - Serves as the selection screen between the two creation flows
-
-## Shared Components
-
-Components in the `CharacterCreation/` folder are used by both flows. They provide the core functionality for selecting character options and are designed to be reusable.
-
-## Validation
-
-- `ValidationProgress.tsx` - A unified component for tracking character completion status
-- Used by both creation flows with different configurations
-
-## Component Structure Best Practices
-
-1. For new character creation features, add the core components to `CharacterCreation/`
-2. For step-specific UI enhancements to the guided flow, add them to `CharacterCreator/`
-3. For shared UI components not specific to character creation, add them to `ui/`
-
-## Future Development
-
-When adding new features, consider:
-- Can this be a shared component used by both flows?
-- Is this specific to the guided step-by-step experience?
-- Does this affect validation and progression tracking?
+Orientation for developers and AI agents: `CLAUDE.md` and `SW5E_AI_GUIDE.md`. Asset credits and licences: `CREDITS.md`.
+Old notes, audits and retired scripts: `Archive/`.
