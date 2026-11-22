@@ -26,3 +26,6 @@ client/public/textures/**/*-megascans.*
 Archive/audit/tmp/
 Archive/audit/05_artifacts/
 Archive/e2e/out/
+
+# finished Claude Code worktrees (2026-11-22), moved here with git worktree move; each keeps its branch, all merged into main
+Archive/worktrees/
