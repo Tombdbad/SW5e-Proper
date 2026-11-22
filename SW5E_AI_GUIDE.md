@@ -35,7 +35,7 @@ Audited 2026-11-07 from the repo at `main` (a658f7b), the 3 older docs (`HANDOFF
 2. **Rules content only from `shared/data/sw5e`.** Feature effects parsed from text in `characterCalculation.ts` (and `statProfile` for stat blocks). Where the books are silent, make a **labelled house rule**, show it on screen, and list it in REVIVAL_NOTES "Play rules".
 3. Extend existing files; add new files only when strictly necessary (user, 2026-10-13).
 4. **Zero warnings and zero type errors**: `npx tsc --noEmit` clean (tests included), `vite build` prints nothing (user: "even silent ones").
-5. No secrets in git (`.env`, PAT). Commit as `Tombdbad`; never force-push. The user's own `client/src/components/ui/Alert.tsx` edit must never be committed.
+5. No secrets in git (`.env`, PAT). Commit as `Tombdbad`; never force-push. No two file names that differ only in case (Windows checkout).
 6. Ask first: exposing ports/internet, API-based game master (Phase 5), changing storage, removing large code, `HOST=0.0.0.0`.
 7. Don't build while `npm run e2e` runs; new DB column ⇒ migrate service DB **and** `sw5e_test` before restart.
 8. Verify in a real browser, not curl (module/API checks passed while UI was broken three times).

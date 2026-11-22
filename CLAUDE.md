@@ -7,7 +7,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 
 ## Rules
 - Work on `main` unless the user names another branch (the `revive` branch is old; `audit` is the 2026-11 audit branch). Small commits with clear messages, push to origin. Never force-push; no destructive git commands.
-- The repo's git identity is already set (Tombdbad). Do not commit `client/src/components/ui/Alert.tsx`: it holds the user's own uncommitted edit.
+- The repo's git identity is already set (Tombdbad). File names differ in more than case: Windows cannot hold `Alert.tsx` and `alert.tsx` side by side (a Linux-era duplicate of that pair was removed on 2026-11-22).
 - Prefer minimal fixes in code that is actually used. Do not rewrite for style. Ask before removing large amounts of code.
 - Ask the user before: exposing anything to the internet or opening ports (Phase 3), building an API-based game master (Phase 5), or changing the storage choice.
 - Never print or commit secrets. `.env` (DATABASE_URL) and `~/.git-credentials` (GitHub PAT) hold them.
