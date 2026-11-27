@@ -4,7 +4,7 @@
 // `window.__dogfight` (state(), input) lets a script move things, as the race's window.__race does.
 // game=road (biome, seed, leg, with mate, block[=toll], wanted, chase) plays a leg of a road trip. game=convoy (biome, seed, level, look, hauler=itt|skiff, mate) rides guard on a convoy. game=race or game=chase (with biome, seed, vehicle) plays the speeder race or the chase on the road instead, to look at a world's course.
 import { useMemo, useState } from "react";
-import { shipSheet } from "@shared/logic";
+import { shipSheet, POD_MAKES, type PodMake } from "@shared/logic";
 import { SCENARIOS, scenarioOf, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
 import starshipEquipment from "@shared/data/sw5e/starshipEquipment.json";
 import { MinigamePage, type Minigame } from "@/components/Map/FlightScene";
@@ -33,7 +33,11 @@ export default function DogfightLab() {
   const scenario = (SCENARIOS.find((s) => s.id === q.get("scenario"))?.id ?? "skirmish") as ScenarioId;
   const course = q.get("game");
   const game = useMemo<Minigame>(
-    () => course === "convoy" ? ({
+    // (a podrace: ?game=pod&make=ring&biome=desert, and &bet=Mira%20Kesh for a 100 cr bet on a pilot at 5 times the stake)
+    () => course === "pod" ? ({
+      kind: "pod", title: "Pod race lab", seed: Number(q.get("seed") ?? 1), make: (Object.keys(POD_MAKES).includes(q.get("make") ?? "") ? q.get("make") : "ring") as PodMake, biome: q.get("biome") ?? "desert",
+      bet: q.has("bet") ? { on: q.get("bet") ?? "You", stake: 100, pays: 5 } : undefined,
+    }) : course === "convoy" ? ({
       kind: "convoy", title: "Convoy lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", look: q.get("look") ?? undefined, biome: q.get("biome") ?? "desert",
       mate: q.has("mate") ? { name: "Mira", pace: 0.95 } : undefined, crew: q.has("mate") ? [{ kind: "person", name: "Mira", role: "pilot" }] : undefined,
       haulers: 3, hauler: "Landspeeder", haulerLook: q.get("hauler") ?? "skiff", level: Number(q.get("level") ?? 5), who: q.get("who") ?? "Black Sun", ally: q.get("ally") ?? "Rebel Alliance",

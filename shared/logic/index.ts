@@ -14274,6 +14274,19 @@ export function tunnelCeiling(track: RaceTrack, x: number, z: number): number {
   }
   return Infinity;
 }
+// For drawing the ground under a podrace's tunnel (the land's own cliffs would cut through the inside between the ground's samples): the
+// height of the way where a point lies under the tunnel's ridge (its lid, `reach` metres either side of the way), else null
+export function tunnelFloor(track: RaceTrack, x: number, z: number, reach = 26): number | null {
+  for (const f of track.features ?? []) {
+    if (f.kind !== "tunnel") continue;
+    if (Math.abs(x - f.p[0]) > f.len || Math.abs(z - f.p[2]) > f.len) continue;
+    if (fieldAt(track, x, z) > (f.wall ?? 18) + reach) continue;
+    const s = fieldS(track, x, z);
+    if (s < f.at - f.len / 2 + f.ramp || s > f.at + f.len / 2 - f.ramp) continue;
+    return track.points[Math.round(s / track.step) % track.points.length][1];
+  }
+  return null;
+}
 // A podrace's sections (2026-11-27): its tunnel (450-600 m through a ridge 55-75 m high, the way 36 m wide under a ceiling 16 m up, on a
 // near-straight), its canyon (1.4-1.8 km between cliffs 40-60 m high), its jump (a rise across the way and a ravine past its lip, 300 m across,
 // cleared at racing speed and climbed out of below it) and a field of rock spires standing on the way. Each is clear of the start (700 m past

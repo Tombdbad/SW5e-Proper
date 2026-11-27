@@ -74,6 +74,9 @@ export const SPECIES_FILE = "/figures/species.glb";
 // The starship kit (2026-11-09, tools/blender/build-ships.py): `ship_<faction>_<size>[_<role>]`, built in metres, each with its regions; the sizes
 // are in shared/art/shipKit.json. A phone loads ships.lo.glb (`--lo`: rounds of fewer sides, half the dressing of the big ships)
 export const SHIP_FILE = TOUCH ? "/figures/ships.lo.glb" : "/figures/ships.glb";
+// The podracers (2026-11-27, tools/blender/build-pods.py): `pod_<make>_engine_l`, `pod_<make>_engine_r` and `pod_<make>_cockpit`, in metres, each
+// with its regions; where they sit is in shared/art/podKit.json. A phone loads pods.lo.glb
+export const POD_FILE = TOUCH ? "/figures/pods.lo.glb" : "/figures/pods.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);
@@ -162,6 +165,11 @@ const modularInt = shelf(MODULAR_INT_FILE, (scene) => Object.fromEntries(Object.
 const modular = shelf(MODULAR_FILE, (scene) => Object.fromEntries(Object.entries(piecesOf(scene)).map(([n, p]) => [n.replace(/^sw5e_/, ""), p])) as CreatureParts);
 const kinds = shelf(SPECIES_FILE, piecesOf);
 const hulls = shelf(SHIP_FILE, piecesOf);
+const pods = shelf(POD_FILE, piecesOf);
+// The podracers' engines and cockpits, once they are in (asked for by a podrace only)
+export const loadPods = pods.load;
+export const podParts = pods.get;
+export const usePodParts = pods.use;
 export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
 export const bodyParts = people.get;

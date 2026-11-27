@@ -571,6 +571,83 @@ const LIBRARY: Record<string, Piece> = {
       for (const x of [-3, 3]) k.cyl(0.04, 2.4, "#3a3f46", { at: [x, 1.2, 1.55], seg: 6, finish: "sheen" });
     },
   },
+  // ---- A podrace's course (2026-11-27, shared/logic "Pod racing"): built in metres at a scale of 1, as the race places them
+  // A hoodoo: a spire of banded rock 24-27 m tall, wider at its foot, under a cap of harder stone; it stands on the way in the spire field and off it
+  rock_pillar: {
+    tags: ["rock", "race", "pod", "large"], size: [8, 8], blocks: true, hit: { r: 3.6, h: 26 },
+    build: (k, p, v) => rockColumn(k, p, v, [0, 0], 26, 3.4),
+  },
+  // A natural arch over the way: two legs of banded rock 60 m apart (struck as two circles, `pair`) and the span between them, its underside 26 m up
+  rock_arch: {
+    tags: ["rock", "race", "pod", "large"], size: [70, 12], blocks: true, hit: { r: 5, pair: 30, h: 34 },
+    build: (k, p, v) => {
+      k.pair((s) => rockColumn(k, p, v + (s > 0 ? 3 : 0), [s * 30, 0], 27, 4.6, false));
+      // (the span: one rock bowed between the legs' tops, thick at its springing and thinner at its crown, its underside 26 m up)
+      const arc: [number, number, number][] = Array.from({ length: 13 }, (_, i) => {
+        const t = i / 12;
+        return [-31 + 62 * t, 27.5 + 5 * Math.sin(Math.PI * t), Math.sin(t * 5 + v) * 0.6];
+      });
+      k.tube(arc, (t) => 5.2 - 1.8 * Math.sin(Math.PI * t), p.stone, { along: 24, around: 9 });
+      k.tube(arc.map(([x, y, z]) => [x, y + 2.2, z + 0.8]), (t) => 3.6 - 1.2 * Math.sin(Math.PI * t), shade(p.stone, 0.84), { along: 24, around: 7 });
+    },
+  },
+  // A podrace's stand: six tiers 40 m long rising away from the front (+z), the crowd on them (figures of a few boxes, in the colours of a
+  // crowd: they are seen at 500 km/h), a canopy on masts, banners along its lip
+  pod_stand: {
+    tags: ["stand", "seating", "race", "crowd", "pod"], size: [40, 12], blocks: true, hit: { box: [20, 6], h: 14 },
+    build: (k, p, v) => {
+      const clothes = ["#b0623a", "#e8dcc0", "#3f6d8f", "#7a8a3a", "#8f3f3f", "#c9a24a", "#5a4a6a", "#d9d4c7", "#2f3a44"];
+      const skins = ["#e0b08a", "#8a5a3a", "#c88a6a", "#5a3a2a", "#9fb7a0", "#c9a2b8", "#7d8fa0"];
+      for (let t = 0; t < 6; t++) {
+        const top = 1.2 + t * 1.6;
+        k.box([40, top, 2.1], shade(p.stone, 0.96 - t * 0.03), { at: [0, top / 2, 5 - t * 2], round: 0.05 });
+        k.box([40, 0.12, 0.5], "#6b4a33", { at: [0, top + 0.06, 5.5 - t * 2] });
+        for (let i = 0; i < 44; i++) {
+          if ((i * 7 + t * 3 + v) % 6 === 0) continue;
+          const x = -19.4 + i * 0.89 + ((i + t) % 2) * 0.12;
+          const z = 5.3 - t * 2;
+          const tall = 1 + ((i * 13 + t * 5 + v) % 5) * 0.04;
+          const arm = (i * 11 + t + v) % 7 === 0;
+          k.box([0.46, 0.72 * tall, 0.3], clothes[(i * 3 + t + v) % clothes.length], { at: [x, top + 0.36 * tall + 0.05, z] });
+          k.box([0.24, 0.26, 0.24], skins[(i * 5 + t * 2) % skins.length], { at: [x, top + 0.86 * tall, z] });
+          if (arm) k.box([0.1, 0.5, 0.1], skins[(i * 5 + t * 2) % skins.length], { at: [x + 0.2, top + 1.05 * tall, z], rot: [0, 0, -0.3] });
+        }
+      }
+      k.box([42, 0.25, 13], p.canvas[v % p.canvas.length], { at: [0, 13.4, 0], rot: [0.1, 0, 0], finish: "cloth" });
+      for (const x of [-20, -10, 0, 10, 20]) k.cyl(0.25, 13.6, "#3a3f46", { at: [x, 6.8, -6.2], seg: 8, finish: "sheen" });
+      for (let x = -18; x <= 18; x += 6) k.box([0.1, 2.2, 1.4], p.canvas[(x / 6 + v + 4) % p.canvas.length], { at: [x, 1.6, 6.15], finish: "cloth" });
+      k.box([40, 0.9, 0.3], shade(p.stone, 0.8), { at: [0, 0.45, 6.2] });
+    },
+  },
+  // The pit hangars behind the stands: a vaulted hall 28 m long, open on the course's side (+z), the dark inside, roof vents and a beacon
+  pod_hangar: {
+    tags: ["hangar", "race", "pod", "building"], size: [28, 20], blocks: true, hit: { box: [14, 10], h: 16 },
+    build: (k, p, v) => {
+      const wall = shade(p.stone, 0.92 + (v % 3) * 0.04);
+      k.box([28, 5, 20], wall, { at: [0, 2.5, 0], round: 0.2 });
+      k.cyl(10, 28, shade(p.stone, 1.05), { at: [0, 5, 0], rot: [0, 0, Math.PI / 2], arc: Math.PI, start: 0, seg: 20 });
+      k.box([20, 8.5, 0.4], "#15181c", { at: [0, 4.6, 10.05] });
+      for (const x of [-11, 11]) k.box([3, 9.5, 1.2], shade(wall, 0.8), { at: [x, 4.75, 10.1] });
+      k.box([28, 0.6, 1.4], shade(wall, 0.75), { at: [0, 9.6, 10.1] });
+      for (const x of [-8, 0, 8]) k.cyl(1.1, 1.6, "#4a4f56", { at: [x, 15.4, -2], seg: 10, finish: "sheen" });
+      k.sphere(0.4, "#ff6a2a", { at: [12, 10.2, 10.4], seg: [8, 6], finish: "glow" });
+      k.box([12, 1.4, 0.15], p.canvas[v % p.canvas.length], { at: [0, 11.6, 10.2], finish: "cloth" });
+    },
+  },
+  // The start gantry over the line: two pylons 50 m apart (struck as two circles), a beam 16 m up with the starting lights and a banner
+  start_arch: {
+    tags: ["gate", "race", "pod"], size: [54, 3], blocks: true, hit: { r: 1.5, pair: 25, h: 18 },
+    build: (k, p, v) => {
+      k.pair((s) => {
+        k.box([2.4, 18, 2.4], "#3a3f46", { at: [s * 25, 9, 0], round: 0.1, finish: "sheen" });
+        k.box([3.4, 1.2, 3.4], shade(p.stone, 0.8), { at: [s * 25, 0.6, 0] });
+        k.box([1.2, 14, 0.2], p.canvas[(v + (s > 0 ? 1 : 0)) % p.canvas.length], { at: [s * 25, 8.5, 1.35], finish: "cloth" });
+      });
+      k.box([54, 2.2, 1.6], "#2b2f36", { at: [0, 17, 0], finish: "sheen" });
+      for (let i = 0; i < 5; i++) k.sphere(0.55, i < 4 ? "#ff4a2a" : "#4ade80", { at: [-6 + i * 3, 17, 0.9], seg: [10, 8], finish: "glow" });
+      k.box([30, 1.4, 0.15], p.canvas[v % p.canvas.length], { at: [0, 15, 0.85], finish: "cloth" });
+    },
+  },
   banner: {
     tags: ["banner", "flag", "race"], size: [1, 1], blocks: false, hit: { r: 0.06, h: 2.6 },
     build: (k, p, v) => {
@@ -773,6 +850,23 @@ export function raceScenery(biome: string, water = false): RaceScenery & { cover
   if (water) return { trees: [], shrubs: [], boulders: biome === "swamp" ? ["sea_stack", "log", "stump"] : ["sea_stack", "sea_stack", "boulder"], cover: [], hits, crossings: [], sea: true, biome };
   // (and what the world's land puts across the course: shared/logic "Skies and landforms")
   return { ...wild, hits, crossings: biomeSky(biome).crossings, biome };
+}
+
+// A podrace's column of rock (a spire on the way, an arch's leg): a turned column of the stone, flared at its foot, narrowing and swelling
+// again under a harder cap (unless `cap` is false), its strata ledges a shade darker, fallen rock about its foot
+function rockColumn(k: Kit, p: Palette, v: number, [x, z]: [number, number], height: number, r: number, cap = true) {
+  const wob = (i: number) => 1 + 0.08 * Math.sin(i * 2.3 + v * 1.7);
+  const profile: [number, number][] = [[0, 0], [r * 1.5, 0], [r * 1.25, height * 0.06], [r * 1.02 * wob(1), height * 0.18], [r * 0.9 * wob(2), height * 0.36], [r * 0.95 * wob(3), height * 0.52], [r * 0.82 * wob(4), height * 0.7], [r * 0.8 * wob(5), height * 0.82]];
+  if (cap) profile.push([r * 1.15, height * 0.86], [r * 1.2, height * 0.92], [r * 0.9, height * 0.98], [0, height]);
+  else profile.push([r * 0.85, height], [0, height]);
+  k.lathe(profile, p.stone, { at: [x, 0, z], rot: [0, v * 0.7, 0], seg: 9 });
+  for (const [f, s] of [[0.3, 0.86], [0.56, 0.8], [0.76, 0.9]] as [number, number][]) {
+    k.lathe([[0, 0], [r * (f < 0.5 ? 1.0 : 0.88) + 0.35, 0.25], [r * (f < 0.5 ? 1.0 : 0.88) + 0.2, 0.9], [0, 1.0]], shade(p.stone, s), { at: [x, height * f, z], rot: [0, v + f * 3, 0], seg: 9 });
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.7 + v;
+    k.blob(r * (0.35 + ((i + v) % 3) * 0.12), shade(p.stone, 0.88), { at: [x + Math.cos(a) * r * 1.7, 0.3, z + Math.sin(a) * r * 1.7], seed: v * 3 + i, rough: 0.35, squash: [1, 0.6, 1], detail: 1 });
+  }
 }
 
 // The trees of every size have a far model (the same build with `farModel` set)

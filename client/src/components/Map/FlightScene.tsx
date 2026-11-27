@@ -6,11 +6,13 @@ import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
-  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, raceWay, terrainSurface,
-  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
+  CROSSING, POD, POD_MAKES, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, raceWay, terrainSurface, podCourse, podStart, podResult, tunnelCeiling, tunnelFloor, canyonWall,
+  type PodMake, type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
-import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
+import { Model, shade, pickOf, type Kit, type CrewMember, type GunAim, type Finish } from "./models";
+import { podParts, usePodParts } from "./interiors/body";
+import podKitJson from "@shared/art/podKit.json";
 import { Scatter, Sea, groundTexture, raceScenery, useQuality, type Placed } from "./siteAssets";
 import { RacePackDress, useGroundMaterial } from "./terrain";
 import { WorldSky } from "./scenery";
@@ -45,7 +47,10 @@ export type Minigame =
   // The convoy (shared/logic "The convoy"): the party's craft rides at the back of a column of haulers (`hauler` their class, `haulerLook` their make)
   // down a road in the ground of `biome`, raiders of `who` coming at it in waves, fighters of `ally` over it; the party drives or takes the gun
   | { kind: "convoy"; title: string; seed: number; vehicle: string; biome: string; look?: string; seats?: number; crew?: CrewMember[]; mate?: { name: string; pace: number }; haulers: number; hauler: string; haulerLook?: string; level: number; who: string; ally: string; intro: string[] }
-  | ({ kind: "dogfight" } & DogfightSpec);
+  | ({ kind: "dogfight" } & DogfightSpec)
+  // A podrace (2026-11-27, shared/logic "Pod racing"): a hired pod of `make` on a course of the world's land; `bet`: a stake on a pilot to win, at its price
+  | { kind: "pod"; title: string; seed: number; make: PodMake; biome: string; bet?: PodBet };
+export type PodBet = { on: string; stake: number; pays: number };
 
 export type MinigameResult =
   | { kind: "road"; race: Race; metres: number; stop?: { outcome: "open" | "run"; paid: number; note: string } }
@@ -53,7 +58,8 @@ export type MinigameResult =
   | { kind: "race"; race: Race }
   | { kind: "chase"; race: Race }
   | { kind: "convoy"; race: Race }
-  | { kind: "dogfight"; state: Dogfight };
+  | { kind: "dogfight"; state: Dogfight }
+  | { kind: "pod"; race: Race; bet?: PodBet };
 
 // The party's craft and its camera: behind and above, looking a little ahead
 function place(group: THREE.Group | null, craft: Craft) {
@@ -191,9 +197,11 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
   const material = useGroundMaterial(track.land?.biome ?? "temperate", groundTexture(track.land?.biome ?? "temperate", "", look.ground)?.set ?? "dirt_floor", true);
   const geo = useMemo(() => {
     const half = track.extent + 220;
-    const CH = 128;
+    // (a podrace's course is three times the size: larger squares, as fine near the way and coarser far from it)
+    const CH = track.pod ? 192 : 128;
     const count = Math.ceil((half * 2) / CH);
-    const [nearSegs, farSegs] = lite ? [20, 8] : [40, 12];
+    const [nearSegs, farSegs] = track.pod ? (lite ? [20, 5] : [32, 8]) : lite ? [20, 8] : [40, 12];
+    const tunnel = !!track.sections?.tunnel;
     const [a, b, verge] = [new THREE.Color(look.ground), new THREE.Color(look.ground2), new THREE.Color(look.track)];
     const [mud, scorched] = [new THREE.Color("#4d4234"), new THREE.Color("#1e1512")];
     const c = new THREE.Color();
@@ -208,12 +216,17 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     for (let cj = 0; cj < count; cj++) {
       for (let ci = 0; ci < count; ci++) {
         const [ox, oz] = [-half + ci * CH, -half + cj * CH];
-        const segs = raceDistance(track, ox + CH / 2, oz + CH / 2) < 150 + CH * 0.72 ? nearSegs : farSegs;
+        const segs = raceDistance(track, ox + CH / 2, oz + CH / 2) < (track.pod ? 120 : 150) + CH * 0.72 ? nearSegs : farSegs;
         const step = CH / segs;
         // The heights with a vertex of border, for the normals and the slope
         const side = segs + 3;
         const hs = new Float32Array(side * side);
-        for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) hs[j * side + i] = groundAt(track, ox + (i - 1) * step, oz + (j - 1) * step, true);
+        // (under a podrace's tunnel the ground is drawn level: the tunnel's own walls and vault stand over it)
+        for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) {
+          const [x, z] = [ox + (i - 1) * step, oz + (j - 1) * step];
+          const floor = tunnel ? tunnelFloor(track, x, z) : null;
+          hs[j * side + i] = floor ?? groundAt(track, x, z, true);
+        }
         const base = pos.length / 3;
         const row = segs + 1;
         for (let j = 0; j <= segs; j++) {
@@ -240,6 +253,8 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             const worn = wornBase * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11));
             if (worn > 0) c.lerp(verge, Math.min(0.7, worn));
             c.multiplyScalar(0.94 + Math.max(-0.08, Math.min(0.12, y * 0.004)));
+            // (in the dark under a podrace's tunnel roof)
+            if (tunnel && tunnelCeiling(track, x, z) < Infinity) c.multiplyScalar(0.32);
             // A river's banks are wet mud; a lava flow's are scorched black
             const water = track.rivers?.length ? raceWater(track, x, z) : null;
             if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
@@ -448,6 +463,162 @@ function Gate({ gate, first, lit, chequer, track }: { gate: RaceGate; first: boo
         </mesh>
       )}
     </group>
+  );
+}
+
+// A podrace's checkpoints (2026-11-27): a pylon at each edge of the way with a lamp on top (gold for the next, white for the start line); the
+// gate itself is passed anywhere near the way (shared/logic `podCourse`), so nothing spans it
+const BEACON_MATS = { post: new THREE.MeshLambertMaterial({ color: "#2b2f36" }), next: new THREE.MeshBasicMaterial({ color: "#ffd24a" }), start: new THREE.MeshBasicMaterial({ color: "#f4f4f4" }), other: new THREE.MeshBasicMaterial({ color: "#5aa8ff" }) };
+function PodBeacon({ gate, first, lit, track }: { gate: RaceGate; first: boolean; lit: boolean; track: RaceTrack }) {
+  const off = track.width / 2 + 3;
+  return (
+    <group position={gate.p} rotation={[0, -gate.yaw, 0]}>
+      {[-1, 1].map((s) => (
+        <group key={s} position={[0, 0, s * off]}>
+          <mesh position={[0, 6, 0]} material={BEACON_MATS.post}>
+            <boxGeometry args={[0.9, 13, 0.9]} />
+          </mesh>
+          <mesh position={[0, 13, 0]} material={lit ? BEACON_MATS.next : first ? BEACON_MATS.start : BEACON_MATS.other}>
+            <sphereGeometry args={[lit ? 1.1 : 0.8, 10, 8]} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// A podrace's tunnel (2026-11-27): the way runs under a ridge (shared/logic `layPodSections`), so over the stretch the ground has a roof: a
+// vault from wall to wall 16 m over the way, the walls themselves to its foot (the land's cliffs stand behind them), lamps along both walls,
+// the ridge's top over it all at the height of the land beside it, and the face over each mouth from the vault up to the ridge
+function PodTunnel({ track, look }: { track: RaceTrack; look: RaceLook }) {
+  const geos = useMemo(() => {
+    const out: { vault: THREE.BufferGeometry; lid: THREE.BufferGeometry; lamps: THREE.BufferGeometry }[] = [];
+    const n = track.points.length;
+    for (const f of track.features ?? []) {
+      if (f.kind !== "tunnel") continue;
+      const [a0, a1] = [f.at - f.len / 2 + f.ramp, f.at + f.len / 2 - f.ramp];
+      const W = canyonWall(f, f.at) + 1.2;
+      const roof = f.roof ?? 16;
+      const ARC = 12;
+      const vault: number[] = [];
+      const lid: number[] = [];
+      const lamps: number[] = [];
+      const rows: { p: Vec3; r: [number, number]; top: number }[] = [];
+      for (let s = a0; s <= a1 + 1e-6; s += track.step) {
+        const i = Math.round(s / track.step) % n;
+        const p = track.points[i];
+        const yaw = track.yaws[i];
+        const r: [number, number] = [-Math.sin(yaw), Math.cos(yaw)];
+        const side = (lat: number) => groundAt(track, p[0] + r[0] * lat, p[2] + r[1] * lat);
+        rows.push({ p, r, top: Math.max(side(-W - 22), side(W + 22), p[1] + roof + 4) + 0.6 });
+      }
+      // The vault and its walls: across from the left wall's foot, up and over, to the right's (a row of points each step along)
+      const across = (row: (typeof rows)[number]): Vec3[] => {
+        const pts: Vec3[] = [];
+        const at = (lat: number, y: number): Vec3 => [row.p[0] + row.r[0] * lat, row.p[1] + y, row.p[2] + row.r[1] * lat];
+        pts.push(at(-W, -1));
+        for (let k = 0; k <= ARC; k++) {
+          const a = Math.PI * (k / ARC);
+          pts.push(at(-Math.cos(a) * W, roof * 0.55 + Math.sin(a) * roof * 0.45));
+        }
+        pts.push(at(W, -1));
+        return pts;
+      };
+      const quad = (list: number[], a: Vec3, b: Vec3, c: Vec3, d: Vec3) => list.push(...a, ...b, ...c, ...a, ...c, ...d);
+      for (let k = 0; k + 1 < rows.length; k++) {
+        const [A, B] = [across(rows[k]), across(rows[k + 1])];
+        for (let j = 0; j + 1 < A.length; j++) quad(vault, A[j], A[j + 1], B[j + 1], B[j]);
+        const lidAt = (row: (typeof rows)[number], lat: number): Vec3 => [row.p[0] + row.r[0] * lat, row.top, row.p[2] + row.r[1] * lat];
+        quad(lid, lidAt(rows[k], W + 24), lidAt(rows[k], -W - 24), lidAt(rows[k + 1], -W - 24), lidAt(rows[k + 1], W + 24));
+        // (a lamp every third step on each wall)
+        if (k % 3 === 0) {
+          for (const s of [-1, 1]) {
+            const row = rows[k];
+            const c: Vec3 = [row.p[0] + row.r[0] * s * (W - 0.3), row.p[1] + 5, row.p[2] + row.r[1] * s * (W - 0.3)];
+            const t: Vec3 = [Math.cos(Math.atan2(row.r[0], -row.r[1])) * 1.6, 0, Math.sin(Math.atan2(row.r[0], -row.r[1])) * 1.6];
+            quad(lamps, [c[0] - t[0], c[1] - 0.3, c[2] - t[2]], [c[0] + t[0], c[1] - 0.3, c[2] + t[2]], [c[0] + t[0], c[1] + 0.3, c[2] + t[2]], [c[0] - t[0], c[1] + 0.3, c[2] - t[2]]);
+          }
+        }
+      }
+      // The faces over the two mouths: from the vault's arc up to the ridge's top
+      for (const row of [rows[0], rows[rows.length - 1]]) {
+        const arc = across(row).slice(1, -1);
+        for (let j = 0; j + 1 < arc.length; j++) {
+          const [a, b] = [arc[j], arc[j + 1]];
+          quad(vault, a, b, [b[0], row.top, b[2]], [a[0], row.top, a[2]]);
+        }
+        const edge = (lat: number): Vec3 => [row.p[0] + row.r[0] * lat, row.top, row.p[2] + row.r[1] * lat];
+        const [l, rr] = [arc[0], arc[arc.length - 1]];
+        quad(vault, edge(-W - 24), [l[0], row.top, l[2]], l, [edge(-W - 24)[0], row.p[1] - 1, edge(-W - 24)[2]]);
+        quad(vault, [rr[0], row.top, rr[2]], edge(W + 24), [edge(W + 24)[0], row.p[1] - 1, edge(W + 24)[2]], rr);
+      }
+      const geo = (list: number[]) => {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(list, 3));
+        g.computeVertexNormals();
+        return g;
+      };
+      out.push({ vault: geo(vault), lid: geo(lid), lamps: geo(lamps) });
+    }
+    return out;
+  }, [track]);
+  useEffect(() => () => geos.forEach((g) => [g.vault, g.lid, g.lamps].forEach((x) => x.dispose())), [geos]);
+  const rock = useMemo(() => new THREE.MeshLambertMaterial({ color: shade(look.ground2, 0.5), side: THREE.DoubleSide }), [look]);
+  const top = useMemo(() => new THREE.MeshLambertMaterial({ color: shade(look.ground2, 0.92), side: THREE.DoubleSide }), [look]);
+  const glow = useMemo(() => new THREE.MeshBasicMaterial({ color: "#ffd9a0", side: THREE.DoubleSide }), []);
+  return (
+    <>
+      {geos.map((g, i) => (
+        <group key={i}>
+          <mesh geometry={g.vault} material={rock} raycast={() => null} />
+          <mesh geometry={g.lid} material={top} raycast={() => null} />
+          <mesh geometry={g.lamps} material={glow} raycast={() => null} />
+        </group>
+      ))}
+    </>
+  );
+}
+
+// Streaks past the camera at a pod's speed (2026-11-27): thin lines strewn about the view's axis ahead of it, sliding back past it at the
+// pod's speed and strewn ahead again, longer and brighter the faster it goes (none below about 300 km/h)
+const STREAKS = 44;
+function SpeedLines({ race, party }: { race: { current: Race }; party: number }) {
+  const { camera } = useThree();
+  const refs = useRef<(THREE.Mesh | null)[]>([]);
+  const state = useMemo(() => Array.from({ length: STREAKS }, () => ({ d: 10 + Math.random() * 110, a: Math.random() * Math.PI * 2, r: 3 + Math.random() * 12 })), []);
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ color: "#fff4dc", transparent: true, opacity: 0.4, depthWrite: false, blending: THREE.AdditiveBlending }), []);
+  const fwd = useMemo(() => new THREE.Vector3(), []);
+  const right = useMemo(() => new THREE.Vector3(), []);
+  const up = useMemo(() => new THREE.Vector3(), []);
+  useFrame((_, delta) => {
+    const me = race.current.racers[party];
+    const speed = me ? Math.abs(me.craft.speed) : 0;
+    const on = speed > 80 && !me?.wrecked;
+    material.opacity = Math.min(0.55, Math.max(0, (speed - 80) / 260)) * (me?.boosting ? 1.4 : 1);
+    camera.getWorldDirection(fwd);
+    right.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    up.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    const dt = Math.min(delta, 0.1);
+    state.forEach((s, i) => {
+      const m = refs.current[i];
+      if (!m) return;
+      m.visible = on;
+      if (!on) return;
+      s.d -= speed * dt;
+      if (s.d < -4) Object.assign(s, { d: 90 + Math.random() * 40, a: Math.random() * Math.PI * 2, r: 3 + Math.random() * 12 });
+      m.position.copy(camera.position).addScaledVector(fwd, s.d).addScaledVector(right, Math.cos(s.a) * s.r).addScaledVector(up, Math.sin(s.a) * s.r * 0.6);
+      m.quaternion.copy(camera.quaternion);
+      m.scale.set(1, 1, 2 + speed * 0.03);
+    });
+  });
+  return (
+    <>
+      {state.map((_, i) => (
+        <mesh key={i} ref={(el) => { refs.current[i] = el; }} material={material} visible={false} raycast={() => null}>
+          <boxGeometry args={[0.035, 0.035, 1]} />
+        </mesh>
+      ))}
+    </>
   );
 }
 
@@ -662,6 +833,177 @@ function RacerModel({ model, look, kind, wrecked, flame, crew, aims, seats, gunn
   );
 }
 
+// ---------------------------------------------------------------------------------------------
+// A podracer (2026-11-27, shared/logic "Pod racing"; the models are tools/blender/build-pods.py's, figures/pods.glb, laid out by
+// shared/art/podKit.json): two engines and the cockpit, each its own model, with the cables from the engines' eyes to the cockpit and the
+// energy binder between the engines' emitters drawn here. `rigPod` moves them each frame: the engines buck a little apart and roll into a
+// turn more than the cockpit, the cockpit trails on its cables and swings out of a turn, each exhaust flares with its engine's thrust
+// (white-blue and long on boost), a burning engine is wrapped in fire, and a wrecked pod lies broken: engines apart, no binder.
+// ---------------------------------------------------------------------------------------------
+type PodEngineLayout = { x: number; z: number; length: number; radius: number; emitter: number[]; eye: number[]; exhaust: number[] };
+type PodLayout = { left: PodEngineLayout; right: PodEngineLayout; cockpit: { x: number; length: number; front: number } };
+const POD_KIT = (podKitJson as { makes: Record<string, PodLayout> }).makes;
+const POD_PAINT = ["#c8663a", "#d9d4c7", "#3f6d8f", "#7a8a3a", "#8f3f3f", "#c9a24a", "#4a3d5c", "#2f3a44", "#b5562f"];
+const POD_LIVERY = ["#f2c14e", "#2b2f36", "#e8dcc0", "#a1495a", "#3f6d8f", "#d9534f"];
+const POD_FINISH: Finish[] = ["sheen", "sheen", "glow", "glass", "sheen", "sheen"];
+// A pilot's colours by region: hull, panels, glow, glass, livery, gunmetal (the party's pod gold with a dark stripe)
+const podPaint = (name: string, party: boolean): string[] => {
+  const hull = party ? "#d0a23a" : pickOf(POD_PAINT, name);
+  return [hull, shade(hull, 0.55), "#bfe6ff", "#16202a", party ? "#2b2f36" : pickOf(POD_LIVERY, name, 1), "#4a4f56"];
+};
+function PodPart({ name, paint, wrecked }: { name: string; paint: string[]; wrecked: boolean }) {
+  usePodParts();
+  const piece = podParts()?.[name];
+  if (!piece) return null;
+  return (
+    <Model
+      id={`pod:${name}:${paint.join("")}:${wrecked ? 1 : 0}`}
+      build={(k) => {
+        for (const [region, g] of Object.entries(piece.part)) {
+          const r = Number(region);
+          k.add(g.clone(), wrecked ? (r === 2 ? "#2b2926" : shade(paint[r] ?? paint[0], 0.45)) : paint[r] ?? paint[0], { finish: wrecked && (r === 2 || r === 3) ? "matte" : POD_FINISH[r] ?? "sheen" });
+        }
+      }}
+    />
+  );
+}
+interface PodRig { engines: (THREE.Group | null)[]; cockpit: THREE.Group | null; cables: (THREE.Mesh | null)[]; binder: THREE.Mesh | null; flames: (THREE.Mesh | null)[]; fires: (THREE.Mesh | null)[] }
+const newPodRig = (): PodRig => ({ engines: [null, null], cockpit: null, cables: [null, null], binder: null, flames: [null, null], fires: [null, null] });
+function PodRacer({ racer, wrecked, rig }: { racer: Racer; wrecked: boolean; rig: PodRig }) {
+  const make = racer.make ?? "ring";
+  const lay = POD_KIT[make] ?? POD_KIT.ring;
+  const paint = useMemo(() => podPaint(racer.name, racer.party), [racer.name, racer.party]);
+  return (
+    <>
+      {(["left", "right"] as const).map((side, k) => (
+        <group key={side} ref={(el) => { rig.engines[k] = el; }} position={[lay[side].x, 0, lay[side].z]}>
+          <PodPart name={`pod_${make}_engine_${k ? "r" : "l"}`} paint={paint} wrecked={wrecked} />
+          <mesh ref={(el) => { rig.flames[k] = el; }} position={[lay[side].exhaust[0] - lay[side].x - 1.2, 0, 0]} rotation={[0, 0, Math.PI / 2]} visible={false}>
+            <coneGeometry args={[lay[side].radius * 0.72, 2.4, 12, 1, true]} />
+            <meshBasicMaterial color="#9fd8ff" transparent opacity={0.7} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+          </mesh>
+          <mesh ref={(el) => { rig.fires[k] = el; }} position={[-0.5, lay[side].radius * 0.6, 0]} scale={[2.4, 1, 1]} visible={false}>
+            <sphereGeometry args={[lay[side].radius * 1.15, 10, 8]} />
+            <meshBasicMaterial color="#ff7a2a" transparent opacity={0.75} blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+        </group>
+      ))}
+      <group ref={(el) => { rig.cockpit = el; }} position={[lay.cockpit.x, -0.15, 0]}>
+        <PodPart name={`pod_${make}_cockpit`} paint={paint} wrecked={wrecked} />
+      </group>
+      {[0, 1].map((k) => (
+        <mesh key={k} ref={(el) => { rig.cables[k] = el; }}>
+          <cylinderGeometry args={[0.045, 0.045, 1, 5]} />
+          <meshLambertMaterial color="#23262b" />
+        </mesh>
+      ))}
+      <mesh ref={(el) => { rig.binder = el; }}>
+        <boxGeometry args={[0.1, 0.1, 1]} />
+        <meshBasicMaterial color="#ffb347" transparent opacity={0.85} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+    </>
+  );
+}
+// A pod's shadow: one under each engine and one under the cockpit (sharing a material, which the race fades with the pod's height)
+function PodShadow({ make }: { make: string }) {
+  const lay = POD_KIT[make] ?? POD_KIT.ring;
+  const material = useMemo(() => new THREE.MeshBasicMaterial({ color: "#000000", transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }), []);
+  const parts: [number, number, number, number][] = [[lay.left.x, lay.left.z, lay.left.length / 2, lay.left.radius * 1.1], [lay.right.x, lay.right.z, lay.right.length / 2, lay.right.radius * 1.1], [lay.cockpit.x, 0, lay.cockpit.length / 2, 0.8]];
+  return (
+    <>
+      {parts.map(([x, z, a, b], k) => (
+        <mesh key={k} position={[x, 0, z]} rotation={[-Math.PI / 2, 0, 0]} scale={[a, b, 1]} material={material}>
+          <circleGeometry args={[1, 16]} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+const RIG_A = new THREE.Vector3();
+const RIG_B = new THREE.Vector3();
+const RIG_D = new THREE.Vector3();
+const RIG_UP = new THREE.Vector3(0, 1, 0);
+const RIG_Z = new THREE.Vector3(0, 0, 1);
+// A stretched part (a cable along y, the binder along z) from a to b, in the pod's frame
+function span(mesh: THREE.Mesh | null, a: THREE.Vector3, b: THREE.Vector3, axis: THREE.Vector3) {
+  if (!mesh) return;
+  RIG_D.subVectors(b, a);
+  const length = RIG_D.length();
+  mesh.position.addVectors(a, b).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(axis, RIG_D.multiplyScalar(1 / Math.max(1e-4, length)));
+  mesh.scale.set(1, 1, 1);
+  if (axis === RIG_UP) mesh.scale.y = length;
+  else mesh.scale.z = length;
+}
+function rigPod(rig: PodRig, rc: Racer, t: number) {
+  const lay = POD_KIT[rc.make ?? "ring"] ?? POD_KIT.ring;
+  const speed = Math.abs(rc.craft.speed);
+  const shake = Math.min(1, speed / 120);
+  const dead = rc.wrecked;
+  const thrust = rc.thrust ?? [0, 0];
+  const fire = rc.fire ?? [false, false];
+  (["left", "right"] as const).forEach((side, k) => {
+    const g = rig.engines[k];
+    if (!g) return;
+    const e = lay[side];
+    if (dead) {
+      g.position.set(e.x + (k ? 1.2 : -0.6), -0.9, e.z * 1.6);
+      g.rotation.set(k ? 0.5 : -0.4, k ? 0.5 : -0.35, k ? -0.15 : 0.2);
+    } else {
+      g.position.set(e.x, 0.12 * shake * Math.sin(t * 9 + k * 2.1 + rc.id) + 0.05 * Math.sin(t * 23 + k), e.z);
+      g.rotation.set(rc.bank * 0.5 + 0.04 * shake * Math.sin(t * 7 + k * 1.3), 0, 0.02 * shake * Math.sin(t * 5 + k));
+    }
+    const flame = rig.flames[k];
+    if (flame) {
+      flame.visible = !dead && thrust[k] > 0.05 && speed > 2;
+      if (flame.visible) {
+        flame.scale.set(1, 0.4 + thrust[k] * 0.8 + (rc.boosting ? 1.3 : 0) + Math.random() * 0.15, 1);
+        (flame.material as THREE.MeshBasicMaterial).color.set(rc.boosting ? "#e8f6ff" : fire[k] ? "#ff9a4d" : "#9fd8ff");
+      }
+    }
+    const blaze = rig.fires[k];
+    if (blaze) {
+      blaze.visible = !dead && fire[k];
+      if (blaze.visible) blaze.scale.set(2.2 + Math.random() * 0.6, 0.9 + Math.random() * 0.4, 1 + Math.random() * 0.3);
+    }
+  });
+  const c = rig.cockpit;
+  if (c) {
+    if (dead) {
+      c.position.set(lay.cockpit.x - 1, -0.7, 0.8);
+      c.rotation.set(0.6, 0.3, 0.1);
+    } else {
+      // (it trails on its cables: swung out of a turn and turned a little against it)
+      c.position.set(lay.cockpit.x, -0.15 + 0.07 * shake * Math.sin(t * 6 + rc.id), -rc.spin * 1.4);
+      c.rotation.set(rc.bank * 0.3, rc.spin * 0.25, 0);
+    }
+  }
+  // The cables: from each engine's eye to the cockpit's front corner on its side
+  (["left", "right"] as const).forEach((side, k) => {
+    const g = rig.engines[k];
+    if (!g || !c) return;
+    const e = lay[side];
+    RIG_A.set(e.eye[0] - e.x, e.eye[1], 0).applyEuler(g.rotation).add(g.position);
+    RIG_B.set(lay.cockpit.length / 2 - 0.2, 0.1, (k ? 1 : -1) * 0.35).applyEuler(c.rotation).add(c.position);
+    span(rig.cables[k], RIG_A, RIG_B, RIG_UP);
+    const cable = rig.cables[k];
+    if (cable) cable.visible = !dead || k === 0;
+  });
+  // The binder: between the two emitters, flickering
+  const [gl, gr] = rig.engines;
+  if (rig.binder && gl && gr) {
+    rig.binder.visible = !dead && !fire[0] && !fire[1];
+    if (rig.binder.visible) {
+      RIG_A.set(lay.left.emitter[0] - lay.left.x, lay.left.emitter[1], lay.left.emitter[2] - lay.left.z).applyEuler(gl.rotation).add(gl.position);
+      RIG_B.set(lay.right.emitter[0] - lay.right.x, lay.right.emitter[1], lay.right.emitter[2] - lay.right.z).applyEuler(gr.rotation).add(gr.position);
+      span(rig.binder, RIG_A, RIG_B, RIG_Z);
+      const w = 0.7 + Math.random() * 0.9;
+      rig.binder.scale.x = w;
+      rig.binder.scale.y = w;
+    }
+  }
+}
+
 // Sparks and debris where something was struck, and the fire of a mine
 interface Spark { p: THREE.Vector3; v: THREE.Vector3; ttl: number; life: number }
 const SPARK_MATS: Record<string, THREE.MeshBasicMaterial> = {
@@ -746,6 +1088,9 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   }, [track]);
   const aimRef = useRef<THREE.Group>(null);
   const racerRefs = useRef<(THREE.Group | null)[]>([]);
+  // (a podrace: each pod's engines, cockpit, cables and binder, moved by `rigPod`)
+  const pod = !!track.pod;
+  const podRigs = useMemo(() => race0.racers.map(() => newPodRig()), [race0]);
   const shadowRefs = useRef<(THREE.Group | null)[]>([]);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
   const barRefs = useRef<(THREE.Group | null)[]>([]);
@@ -770,7 +1115,8 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   // The party's engine (interiors/fx.ts), its pitch and roar following the speeder's speed and throttle; it dies away when the race ends
   const motor = useRef<Engine | null>(null);
   useEffect(() => {
-    motor.current = engine(race0.racers[party]?.kind === "bike" ? "bike" : "speeder");
+    const kind = race0.racers[party]?.kind;
+    motor.current = engine(kind === "pod" ? "pod" : kind === "bike" ? "bike" : "speeder");
     return () => motor.current?.stop();
   }, [race0]);
   useFrame((_, delta) => {
@@ -842,7 +1188,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
     }
     const driving = now.racers[party];
     if (driving && (now.over || driving.wrecked)) motor.current?.stop();
-    else if (driving) motor.current?.set(Math.abs(driving.craft.speed) / RACE.boost, remote ? 0.7 : Math.max(0, input.current.throttle));
+    else if (driving) motor.current?.set(Math.abs(driving.craft.speed) / (driving.kind === "pod" ? POD.boost : RACE.boost), remote ? 0.7 : driving.kind === "pod" ? (driving.thrust ? (driving.thrust[0] + driving.thrust[1]) / 2 : 1) * (driving.boosting ? 1 : 0.75) : Math.max(0, input.current.throttle));
     now.racers.forEach((rc, i) => {
       const group = racerRefs.current[i];
       if (group) {
@@ -857,6 +1203,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
         const fade = Math.max(0.1, 1 - (rc.craft.p[1] - ground) / 8);
         ((shadow.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 * fade;
       }
+      if (rc.kind === "pod") rigPod(podRigs[i], rc, now.t);
       const flame = flameRefs.current[i];
       if (flame) {
         flame.visible = rc.boosting;
@@ -864,7 +1211,8 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       }
       const bar = barRefs.current[i];
       if (bar) {
-        bar.position.set(rc.craft.p[0], rc.craft.p[1] + 2.6, rc.craft.p[2]);
+        bar.position.set(rc.craft.p[0], rc.craft.p[1] + (rc.kind === "pod" ? 5.5 : 2.6), rc.craft.p[2]);
+        if (rc.kind === "pod") bar.scale.setScalar(2.6);
         bar.visible = !rc.wrecked && rc.finish === null && !rc.idle;
         bar.quaternion.copy(camera.quaternion);
         const fill = fillRefs.current[i];
@@ -896,7 +1244,9 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
     // The chevron over the party's speeder, toward the next gate
     if (chevron.current) {
       const gate = track.gates[raceNextGate(now, mine)];
-      chevron.current.position.set(mine.craft.p[0] + Math.cos(mine.craft.yaw) * 1.5, mine.craft.p[1] + 2.1, mine.craft.p[2] + Math.sin(mine.craft.yaw) * 1.5);
+      const [lead, lift] = pod ? [6, 4.6] : [1.5, 2.1];
+      chevron.current.position.set(mine.craft.p[0] + Math.cos(mine.craft.yaw) * lead, mine.craft.p[1] + lift, mine.craft.p[2] + Math.sin(mine.craft.yaw) * lead);
+      if (pod) chevron.current.scale.setScalar(2.4);
       chevron.current.rotation.set(0, -Math.atan2(gate.p[2] - mine.craft.p[2], gate.p[0] - mine.craft.p[0]), 0);
       chevron.current.visible = mine.finish === null && !mine.wrecked;
     }
@@ -911,14 +1261,23 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       const [dx, dy, dz] = [Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch)];
       behind.set(mine.craft.p[0] - dx * 7, mine.craft.p[1] + 3.4 - dy * 7, mine.craft.p[2] - dz * 7);
       ahead.set(mine.craft.p[0] + dx * 60, mine.craft.p[1] + 3.4 + dy * 60, mine.craft.p[2] + dz * 60);
+    } else if (pod) {
+      // (a pod: low and close behind the cockpit, the engines filling the view ahead, looking far down the way)
+      behind.set(mine.craft.p[0] - cy * 23, mine.craft.p[1] + 5.4, mine.craft.p[2] - sy * 23);
+      ahead.set(mine.craft.p[0] + cy * 70, mine.craft.p[1] + 1.6, mine.craft.p[2] + sy * 70);
     } else {
       behind.set(mine.craft.p[0] - cy * 11, mine.craft.p[1] + 5.2, mine.craft.p[2] - sy * 11);
       ahead.set(mine.craft.p[0] + cy * 17, mine.craft.p[1] + 0.4, mine.craft.p[2] + sy * 17);
     }
-    camera.position.lerp(behind, Math.min(1, dt * (sights !== undefined ? 12 : 5)));
+    camera.position.lerp(behind, Math.min(1, dt * (sights !== undefined ? 12 : pod ? 7 : 5)));
     camera.lookAt(ahead);
-    const floor = groundAt(track, camera.position.x, camera.position.z) + 1.4;
+    const floor = groundAt(track, camera.position.x, camera.position.z) + (pod ? 2.2 : 1.4);
     if (camera.position.y < floor) camera.position.y = floor;
+    // (under the tunnel's roof)
+    if (pod && track.sections?.tunnel) {
+      const roof = tunnelCeiling(track, camera.position.x, camera.position.z) - 2;
+      if (camera.position.y > roof) camera.position.y = roof;
+    }
     if (shake.current > 0.01) {
       camera.position.x += (Math.random() - 0.5) * shake.current;
       camera.position.y += (Math.random() - 0.5) * shake.current;
@@ -926,7 +1285,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
     }
     // Wider on a phone held upright, and wider again with speed and boost
     const cam = camera as THREE.PerspectiveCamera;
-    const fov = (cam.aspect < 1 ? 74 : 60) + (mine.boosting ? 8 : 0) + Math.max(0, Math.min(20, Math.abs(mine.craft.speed) - 30)) * 0.15;
+    const fov = pod ? (cam.aspect < 1 ? 80 : 66) + (mine.boosting ? 10 : 0) + Math.max(0, Math.min(14, (Math.abs(mine.craft.speed) - 90) * 0.08)) : (cam.aspect < 1 ? 74 : 60) + (mine.boosting ? 8 : 0) + Math.max(0, Math.min(20, Math.abs(mine.craft.speed) - 30)) * 0.15;
     if (Math.abs(cam.fov - fov) > 0.05) {
       cam.fov += (fov - cam.fov) * Math.min(1, dt * 4);
       cam.updateProjectionMatrix();
@@ -940,7 +1299,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   const next = raceNextGate(snap, snap.racers[party]);
   return (
     <>
-      <WorldSky look={sky} light={1} hour={13} radius={1500} fog={[140, 760]} lite={lite} />
+      <WorldSky look={sky} light={1} hour={13} radius={pod ? 4200 : 1500} fog={pod ? (lite ? [260, 2000] : [380, 3000]) : [140, 760]} lite={lite} />
       <hemisphereLight args={[look.zenith, look.ground, 0.55]} />
       <ambientLight intensity={0.35} />
       <directionalLight position={[120, 220, 80]} intensity={1.1} />
@@ -953,19 +1312,29 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
           <RaceRivers track={track} />
         </>
       )}
-      {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0 || (!!track.road && i === track.gates.length - 1)} lit={i === next} chequer={chequer} track={track} />)}
+      {track.gates.map((g, i) => (pod ? <PodBeacon key={i} gate={g} first={i === 0} lit={i === next} track={track} /> : <Gate key={i} gate={g} first={i === 0 || (!!track.road && i === track.gates.length - 1)} lit={i === next} chequer={chequer} track={track} />))}
+      {pod && <PodTunnel track={track} look={look} />}
+      {pod && <SpeedLines race={raceRef} party={party} />}
       <Hazards track={track} hazards={snap.hazards} />
       <RaceProps track={track} biome={biome} broken={snap.broken} cover={cover} />
       {race0.racers.map((racer, i) => (
         <group key={racer.id}>
           <group ref={(el) => { racerRefs.current[i] = el; if (el) el.rotation.order = "YZX"; }}>
-            <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} flame={(el) => { flameRefs.current[i] = el; }} crew={rideCrew[i]} aims={aimRefs[i]} seats={racer.party ? seats : undefined} gunner={racer.party ? gunner : !!racer.cargo} empty={!!snap.racers[i].idle} />
+            {racer.kind === "pod" ? (
+              <PodRacer racer={racer} wrecked={snap.racers[i].wrecked} rig={podRigs[i]} />
+            ) : (
+              <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} flame={(el) => { flameRefs.current[i] = el; }} crew={rideCrew[i]} aims={aimRefs[i]} seats={racer.party ? seats : undefined} gunner={racer.party ? gunner : !!racer.cargo} empty={!!snap.racers[i].idle} />
+            )}
           </group>
           <group ref={(el) => { shadowRefs.current[i] = el; }}>
-            <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[SPEEDER_BODY[racer.kind].half[0] * 0.95, SPEEDER_BODY[racer.kind].half[1] * 1.05 + 0.15, 1]}>
-              <circleGeometry args={[1, 18]} />
-              <meshBasicMaterial color="#000000" transparent opacity={0.4} depthWrite={false} polygonOffset polygonOffsetFactor={-5} polygonOffsetUnits={-5} />
-            </mesh>
+            {racer.kind === "pod" ? (
+              <PodShadow make={racer.make ?? "ring"} />
+            ) : (
+              <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[SPEEDER_BODY[racer.kind].half[0] * 0.95, SPEEDER_BODY[racer.kind].half[1] * 1.05 + 0.15, 1]}>
+                <circleGeometry args={[1, 18]} />
+                <meshBasicMaterial color="#000000" transparent opacity={0.4} depthWrite={false} polygonOffset polygonOffsetFactor={-5} polygonOffsetUnits={-5} />
+              </mesh>
+            )}
           </group>
           {!racer.party && (
             <group ref={(el) => { barRefs.current[i] = el; }} visible={!snap.racers[i].idle}>
@@ -1008,9 +1377,35 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
 // The drag pad, and the buttons: throttle (boost, brake), in a race Boost on its meter, and in a dogfight
 // fire. Each button holds its pointer, so that a thumb that slides a little off it does not let go.
 // (`rate`: at a convoy's gun the pad turns the gun, left and right, up and down, as far as it is pushed, rather than pointing it)
-function Controls({ input, onThrottle, onFire, onBoost, meter, aiming, rate }: { input: { current: RaceInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number; aiming?: boolean; rate?: { current: { x: number; y: number } } }) {
+// (a podrace's, 2026-11-27: Repair, lit while an engine burns; the Boost button filled red with the hotter engine's heat; and, if the pilot
+// chose them, two throttle levers in place of the pad, one to each engine: the difference between them turns the pod, both back brakes it)
+function Controls({ input, onThrottle, onFire, onBoost, meter, aiming, rate, onRepair, burning, heat, levers }: { input: { current: RaceInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number; aiming?: boolean; rate?: { current: { x: number; y: number } }; onRepair?: () => void; burning?: boolean; heat?: number; levers?: boolean }) {
   const pad = useRef<HTMLDivElement>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const [lever, setLever] = useState<[number, number]>([1, 1]);
+  const pull = (k: 0 | 1, e: React.PointerEvent) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const v = Math.max(0, Math.min(1, 1 - (e.clientY - box.top) / box.height));
+    const next: [number, number] = k ? [lever[0], v] : [v, lever[1]];
+    setLever(next);
+    const power = (next[0] + next[1]) / 2;
+    input.current.power = power;
+    input.current.steer = { x: Math.max(-1, Math.min(1, (next[0] - next[1]) / 0.7)), y: 0 };
+    input.current.throttle = power < 0.08 ? -1 : 0;
+  };
+  const leverStrip = (k: 0 | 1) => (
+    <div
+      key={k}
+      data-testid={`pod-lever-${k ? "right" : "left"}`}
+      className={`absolute bottom-4 ${k ? "right-4" : "left-4"} w-16 touch-none rounded-xl border-2 border-amber-400/70 bg-gray-900/55`}
+      style={{ height: STICK.size }}
+      onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); pull(k, e); }}
+      onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) pull(k, e); }}
+    >
+      <div className="absolute inset-x-1 rounded-md bg-amber-300/85" style={{ height: 22, bottom: `calc(${lever[k] * 100}% - ${lever[k] * 22}px)` }} />
+      <span className="pointer-events-none absolute inset-x-0 -top-5 text-center text-[10px] text-amber-200">{k ? "Right" : "Left"}</span>
+    </div>
+  );
   const steer = (e: React.PointerEvent) => {
     const box = pad.current!.getBoundingClientRect();
     const dx = Math.max(-1, Math.min(1, (e.clientX - (box.left + box.width / 2)) / PAD));
@@ -1039,7 +1434,8 @@ function Controls({ input, onThrottle, onFire, onBoost, meter, aiming, rate }: {
   const button = "h-14 min-w-[5rem] rounded-full border border-sky-400/60 bg-gray-900/70 px-5 text-base font-semibold text-sky-100 select-none touch-none";
   return (
     <>
-      <div
+      {levers && [leverStrip(0), leverStrip(1)]}
+      {!levers && <div
         ref={pad}
         data-testid={aiming || rate ? "flight-pad-aim" : "flight-pad"}
         className={`absolute bottom-4 left-4 touch-none rounded-full border-2 bg-gray-900/50 ${aiming || rate ? "border-orange-400/70" : "border-sky-400/60"}`}
@@ -1050,11 +1446,12 @@ function Controls({ input, onThrottle, onFire, onBoost, meter, aiming, rate }: {
         onPointerCancel={release}
       >
         <div className="absolute rounded-full bg-sky-300/80" style={{ width: STICK.knob, height: STICK.knob, left: `calc(50% + ${knob.x * STICK.travel}px - ${STICK.knob / 2}px)`, top: `calc(50% + ${knob.y * STICK.travel}px - ${STICK.knob / 2}px)` }} />
-      </div>
-      <div className="absolute bottom-4 right-4 flex flex-col gap-2">
+      </div>}
+      <div className={`absolute bottom-4 ${levers ? "right-24" : "right-4"} flex flex-col gap-2`}>
+        {onRepair && <button type="button" data-testid="pod-repair" className={`${button} ${burning ? "animate-pulse border-red-400 bg-red-900/80 text-red-100" : "opacity-60"}`} onPointerDown={() => onRepair()}>Repair</button>}
         {onFire && <button type="button" data-testid="flight-fire" className={button} {...hold(onFire)}>Fire</button>}
         {onBoost && (
-          <button type="button" data-testid="flight-boost" className={button} style={{ background: `linear-gradient(to top, rgba(56,189,248,0.55) ${Math.round((meter ?? 0) * 100)}%, rgba(17,24,39,0.7) ${Math.round((meter ?? 0) * 100)}%)` }} {...hold(onBoost)}>Boost</button>
+          <button type="button" data-testid="flight-boost" className={button} style={{ background: heat !== undefined ? `linear-gradient(to top, rgba(239,68,68,0.6) ${Math.round(heat * 100)}%, rgba(17,24,39,0.7) ${Math.round(heat * 100)}%)` : `linear-gradient(to top, rgba(56,189,248,0.55) ${Math.round((meter ?? 0) * 100)}%, rgba(17,24,39,0.7) ${Math.round((meter ?? 0) * 100)}%)` }} {...hold(onBoost)}>Boost</button>
         )}
         {onThrottle && !onBoost && <button type="button" data-testid="flight-boost" className={button} {...hold((down) => onThrottle(down ? 1 : 0))}>Boost</button>}
         {onThrottle && <button type="button" data-testid="flight-brake" className={button} {...hold((down) => onThrottle(down ? -1 : 0))}>Brake</button>}
@@ -1211,13 +1608,7 @@ function RaceHud({ race, toast }: { race: Race; toast: string }) {
         <Bar label="Hull" value={me.hull} max={me.hullMax} color={hull > 0.6 ? "#4ade80" : hull > 0.3 ? "#facc15" : "#ef4444"} testid="race-hull" />
         <Bar label="Boost" value={me.boost} max={1} color="#38bdf8" testid="race-boost" lit={me.boosting} />
       </div>
-      <div className="pointer-events-none absolute right-2 top-2 rounded bg-gray-900/70 px-2 py-1 text-[11px] leading-4 text-sky-100" data-testid="race-standings">
-        {order.map((r, i) => (
-          <div key={r.id} className={r.party ? "font-semibold text-yellow-300" : r.wrecked ? "text-gray-500 line-through" : ""}>
-            {i + 1}. {r.name}{r.finish !== null ? ` ${raceClock(r.finish)}` : ""}
-          </div>
-        ))}
-      </div>
+      <Standings race={race} order={order} />
       {race.first !== null && me.finish === null && !me.wrecked && (
         <div className="pointer-events-none absolute left-1/2 top-14 -translate-x-1/2 rounded bg-red-900/70 px-2 py-0.5 text-xs text-red-100">The winner is home: {Math.max(0, Math.ceil(race.first + RACE.grace - race.t))} s to finish</div>
       )}
@@ -1225,7 +1616,72 @@ function RaceHud({ race, toast }: { race: Race; toast: string }) {
     </>
   );
 }
+function Standings({ race, order }: { race: Race; order: Racer[] }) {
+  return (
+    <div className="pointer-events-none absolute right-2 top-2 rounded bg-gray-900/70 px-2 py-1 text-[11px] leading-4 text-sky-100" data-testid="race-standings">
+      {order.map((r, i) => (
+        <div key={r.id} className={r.party ? "font-semibold text-yellow-300" : r.wrecked ? "text-gray-500 line-through" : r.fire?.some(Boolean) ? "text-orange-300" : ""}>
+          {i + 1}. {r.name}{r.finish !== null ? ` ${raceClock(r.finish)}` : race.over || r.party ? "" : r.fire?.some(Boolean) ? " (on fire)" : ""}
+        </div>
+      ))}
+    </div>
+  );
+}
+// A podrace's HUD (2026-11-27): place, lap, checkpoints, speed and the clock; the hull and each engine's heat (red and glowing while it burns);
+// the warning to put out a burning engine, and the repair's seconds; the standings, and what just happened
+function PodHud({ race, toast }: { race: Race; toast: string }) {
+  const me = race.racers.find((r) => r.party)!;
+  const order = raceOrder(race);
+  const place = order.indexOf(me) + 1;
+  const hull = me.hull / me.hullMax;
+  const passed = me.gates === 0 ? 0 : ((me.gates - 1) % race.gateCount) + (me.finish !== null ? race.gateCount : 0);
+  const heat = me.heat ?? [0, 0];
+  const fire = me.fire ?? [false, false];
+  const heatColour = (k: 0 | 1) => (fire[k] ? "#ef4444" : heat[k] > 0.85 ? "#f97316" : heat[k] > 0.6 ? "#facc15" : "#38bdf8");
+  return (
+    <>
+      <div className="pointer-events-none absolute left-2 top-2 w-52 space-y-1 rounded bg-gray-900/75 px-2 py-1.5 text-xs text-sky-100" data-testid="pod-hud">
+        <div className="flex justify-between font-semibold">
+          <span data-testid="pod-place">{ordinal(place)} of {race.racers.length}</span>
+          <span>Lap {raceLap(race, me)}/{race.laps}</span>
+        </div>
+        <div className="flex justify-between text-[11px] text-sky-200/80">
+          <span>check {Math.min(passed, race.gateCount)}/{race.gateCount}</span>
+          <span data-testid="pod-speed">{Math.round(Math.abs(me.craft.speed) * 3.6)} km/h</span>
+          <span>{raceClock(race.t)}</span>
+        </div>
+        <Bar label="Hull" value={me.hull} max={me.hullMax} color={hull > 0.6 ? "#4ade80" : hull > 0.3 ? "#facc15" : "#ef4444"} testid="race-hull" />
+        <Bar label="Heat L" value={heat[0]} max={1} color={heatColour(0)} testid="pod-heat-left" lit={fire[0]} />
+        <Bar label="Heat R" value={heat[1]} max={1} color={heatColour(1)} testid="pod-heat-right" lit={fire[1]} />
+      </div>
+      <Standings race={race} order={order} />
+      {(fire[0] || fire[1]) && !me.fixing && !me.wrecked && (
+        <div className="pointer-events-none absolute left-1/2 top-16 -translate-x-1/2 animate-pulse rounded bg-red-900/85 px-3 py-1 text-sm font-semibold text-red-100" data-testid="pod-fire">
+          {fire[0] && fire[1] ? "Both engines" : fire[0] ? "Left engine" : "Right engine"} on fire! Repair (R)
+        </div>
+      )}
+      {!!me.fixing && <div className="pointer-events-none absolute left-1/2 top-16 -translate-x-1/2 rounded bg-gray-900/85 px-3 py-1 text-sm text-amber-200" data-testid="pod-fixing">Putting the fire out: {me.fixing.toFixed(1)} s</div>}
+      {race.first !== null && me.finish === null && !me.wrecked && (
+        <div className="pointer-events-none absolute left-1/2 top-28 -translate-x-1/2 rounded bg-red-900/70 px-2 py-0.5 text-xs text-red-100">The winner is home: {Math.max(0, Math.ceil(race.first + RACE.grace - race.t))} s to finish</div>
+      )}
+      {toast && <div className="pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 rounded bg-gray-900/70 px-3 py-1 text-sm font-semibold text-yellow-200" data-testid="race-toast">{toast}</div>}
+    </>
+  );
+}
 
+// What a podrace's countdown tells the pilot (its house rules, shared/logic "Pod racing"), and what its end screen says
+const podBriefing = (g: Extract<Minigame, { kind: "pod" }>) => [
+  `Your hired ${POD_MAKES[g.make].name} (${POD_MAKES[g.make].note}). Three laps against seven pilots, about four minutes.`,
+  "House rules: Boost has no meter but heats your engines. An engine that overheats catches fire, pulls the pod to its side and burns the hull until you put it out with Repair (or R): a few seconds at reduced power.",
+  "Steer with the stick (A and D), Boost on Right Shift, Brake on S. Off the way is open land and rock: no slower, but the rock is unforgiving.",
+  g.bet && g.bet.stake > 0 ? `Your bet: ${g.bet.stake} cr on ${g.bet.on === "You" ? "yourself" : g.bet.on} to win, paying ${g.bet.pays} times the stake.` : "No bet placed.",
+  `The purse: ${POD.prizes.map((p) => p.toLocaleString()).join(" / ")} cr for the first four places.`,
+];
+const podHeadline = (race: Race) => {
+  const me = race.racers.find((r) => r.party)!;
+  if (me.finish !== null) return `You finish ${ordinal(raceOrder(race).indexOf(me) + 1)}!`;
+  return me.wrecked ? "Your pod is wrecked." : "The race is over.";
+};
 // What a dogfight's end screen says, and what the briefing tells the pilot before it begins
 const dogfightHeadline = (s: Dogfight) =>
   s.outcome === "station" ? "The station is destroyed!" :
@@ -1248,10 +1704,24 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   // (the page is given a new `game` object each time its parent draws: what is built from it is built again only for another game)
   const gameKey = game.kind === "dogfight" ? "dogfight" : `${game.kind}|${game.seed}|${game.kind === "road" ? `${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : ""}`;
   const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [gameKey]);
-  const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" ? game.biome ?? "temperate" : "temperate";
-  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : game.kind === "convoy" ? raceCourse(game.seed, raceScenery(biome), 1, {}) : null), [gameKey, biome]);
-  const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
-  const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy";
+  const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" || game.kind === "pod" ? game.biome ?? "temperate" : "temperate";
+  const track = useMemo(() => (game.kind === "pod" ? podCourse(game.seed, raceScenery(biome)) : game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : game.kind === "convoy" ? raceCourse(game.seed, raceScenery(biome), 1, {}) : null), [gameKey, biome]);
+  const race0 = useMemo(() => (game.kind === "pod" && track ? podStart(track, game.seed, game.make) : game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
+  const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" || game.kind === "pod";
+  // A podrace's controls: the one stick, or two throttle levers, one to each engine (the pilot's choice, kept in this browser)
+  const [levers, setLevers] = useState(() => { try { return localStorage.getItem("sw5e.podLevers") === "1"; } catch { return false; } });
+  const chooseLevers = (on: boolean) => {
+    setLevers(on);
+    try { localStorage.setItem("sw5e.podLevers", on ? "1" : "0"); } catch { /* (a private window keeps no choice) */ }
+    input.current.power = undefined;
+    input.current.steer = { x: 0, y: 0 };
+    input.current.throttle = 0;
+  };
+  // Repair asked for once (a tap, or R): the race starts the repair if an engine burns, and the ask lapses
+  const repair = () => {
+    input.current.repair = true;
+    setTimeout(() => (input.current.repair = false), 250);
+  };
   // The chase's music over whatever played before, for as long as the minigame is open (lib/music.ts)
   useEffect(() => musicOverlay("chase"), []);
   const [count, setCount] = useState(game.kind === "road" || game.kind === "convoy" ? 4 : 5);
@@ -1291,7 +1761,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     (window as unknown as { __raceInput?: RaceInput }).__raceInput = input.current;
     const me = race.racers.find((r) => r.party);
     if (!me) return;
-    const said = race.said.filter((line) => line.startsWith("You "));
+    const said = race.said.filter((line) => line.startsWith("You ") || line.startsWith("Your "));
     const lap = raceLap(race, me);
     if (lap > toast.current.lap && lap === race.laps && me.finish === null) toast.current = { text: "Last lap!", until: race.t + 2.5, lap };
     else if (lap > toast.current.lap) toast.current.lap = lap;
@@ -1329,7 +1799,11 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     if (!driven) return;
     const held = new Set<string>();
     const press = (e: KeyboardEvent, on: boolean) => {
-      if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight", "Space"].includes(e.code)) return;
+      if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight", "Space", "KeyR"].includes(e.code)) return;
+      if (e.code === "KeyR") {
+        if (on && game.kind === "pod") repair();
+        return;
+      }
       if (game.kind === "convoy" && seatNow.current === "gunner" && e.code !== "Space") {
         if (on) aimKeys.current.add(e.code);
         else aimKeys.current.delete(e.code);
@@ -1454,12 +1928,18 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
           </Canvas>
         )}
         {driven && track && race0 && (
-          <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
+          <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: game.kind === "pod" ? 0.6 : 0.3, far: game.kind === "pod" ? 5200 : 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
+            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "pod" ? { kind: "pod", race, bet: game.bet } : game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
         {game.kind === "race" && hud.race && <RaceHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "pod" && hud.race && <PodHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "pod" && !finished && (
+          <button type="button" className="absolute left-2 top-[9.5rem] z-10 rounded border border-amber-400/70 bg-gray-900/80 px-2 py-0.5 text-[11px] text-amber-100" onClick={() => chooseLevers(!levers)} data-testid="pod-levers">
+            {levers ? "Steer: two levers (tap for the stick)" : "Steer: stick (tap for two levers)"}
+          </button>
+        )}
         {game.kind === "chase" && hud.race && <ChaseHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "road" && hud.race && track && <RoadHud race={hud.race} game={game} track={track} seat={seat} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "convoy" && hud.race && track && <ConvoyHud race={hud.race} track={track} seat={seat} mate={game.mate?.name} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
@@ -1501,6 +1981,11 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
                 {game.intro.map((l, i) => <p key={i}>{l}</p>)}
               </div>
             )}
+            {game.kind === "pod" && (
+              <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="pod-briefing">
+                {podBriefing(game).map((l, i) => <p key={i}>{l}</p>)}
+              </div>
+            )}
             {game.kind === "dogfight" && (
               <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="dogfight-briefing">
                 {briefing(game).map((l, i) => <p key={i}>{l}</p>)}
@@ -1517,15 +2002,27 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
             aiming={game.kind === "road" && seat === "gunner"}
             rate={game.kind === "convoy" && seat === "gunner" ? aimRate : undefined}
             meter={hud.race?.racers.find((r) => r.party)?.boost}
+            onRepair={game.kind === "pod" ? repair : undefined}
+            burning={!!hud.race?.racers.find((r) => r.party)?.fire?.some(Boolean)}
+            heat={game.kind === "pod" ? Math.max(...(hud.race?.racers.find((r) => r.party)?.heat ?? [0, 0])) : undefined}
+            levers={game.kind === "pod" && levers}
           />
         )}
         {finished && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center" data-testid="minigame-over">
-            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "convoy" ? convoyHeadline(finished.race) : finished.kind === "road" ? roadHeadline(finished, game.kind === "road" && !!game.water) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
+            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "convoy" ? convoyHeadline(finished.race) : finished.kind === "road" ? roadHeadline(finished, game.kind === "road" && !!game.water) : finished.kind === "race" ? "The race is over." : finished.kind === "pod" ? podHeadline(finished.race) : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
             {finished.kind === "chase" && <p className="max-w-md text-sm text-sky-100" data-testid="chase-result">{chaseResult(finished.race).note}</p>}
             {finished.kind === "convoy" && <p className="max-w-md text-sm text-sky-100" data-testid="convoy-result">{convoyResult(finished.race).note}: {convoyResult(finished.race).credits} cr</p>}
             {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished, game.kind === "road" && !!game.water)}</p>}
             {finished.kind === "dogfight" && !(game.kind === "dogfight" && game.foes) && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
+            {finished.kind === "pod" && (
+              <div className="text-sm text-sky-100" data-testid="pod-result">
+                <p className="mb-1">{podResult(finished.race, finished.bet).note}</p>
+                {raceOrder(finished.race).map((r, i) => (
+                  <p key={r.id} className={r.party ? "font-semibold text-yellow-300" : ""}>{i + 1}. {r.name} {r.finish !== null ? raceClock(r.finish) : r.wrecked ? "wrecked" : "still racing"}</p>
+                ))}
+              </div>
+            )}
             {finished.kind === "race" && (
               <div className="text-sm text-sky-100" data-testid="race-result">
                 <p className="mb-1">{raceResult(finished.race).note}{raceResult(finished.race).credits ? `: ${raceResult(finished.race).credits} cr` : ""}</p>
