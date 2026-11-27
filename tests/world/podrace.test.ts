@@ -2,8 +2,9 @@
 // walls that stop a pod at 800 km/h, the field of rivals, and what a race and a bet pay.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { POD, POD_MAKES, POD_PILOTS, biomeSky, canyonWall, groundAt, podCourse, podField, podResult, podStart, raceDistance, raceOrder, stepRace, tunnelCeiling, type Race, type RaceInput, type RaceScenery, type RaceTrack } from "@shared/logic";
+import { POD, POD_MAKES, POD_PILOTS, biomeSky, canyonWall, groundAt, podWorld, podCourse, podField, podResult, podStart, raceDistance, raceOrder, stepRace, tunnelCeiling, type Race, type RaceInput, type RaceScenery, type RaceTrack } from "@shared/logic";
 import { podOdds } from "@shared/logic/pitbets";
+import { jobsOf } from "@shared/logic/contracts";
 
 // What stands by a pod course and how it is struck (the library's shapes, siteAssets.tsx, at size 1)
 const scenery = (biome: string): RaceScenery => ({
@@ -151,4 +152,14 @@ test("the bookmaker's board: every pilot priced, the chances sum to one, the fas
   const [a, b] = podOdds([{ name: "steady", pace: 0.97, margin: 0.9 }, { name: "reckless", pace: 0.97, margin: 1.06 }]).slice(1);
   assert.ok(a.pays < b.pays, "the pilot who sets the engines alight is a longer price");
   assert.ok(board.every((p) => p.pays >= 1.1 && p.pays * p.chance <= 0.95 + 0.06), "less the house's cut");
+});
+
+test("podraces are held on desert, rocky and volcanic worlds, offered there by pilots, mechanics and promoters", () => {
+  assert.ok(podWorld("desert") && podWorld("barren") && podWorld("volcanic"));
+  assert.ok(!podWorld("temperate") && !podWorld("ocean") && !podWorld(undefined));
+  const person = (role: string) => ({ role, disposition: "friendly" as const });
+  assert.ok(jobsOf(person("pilot for hire"), "", "desert").includes("podrace"));
+  assert.ok(jobsOf(person("promoter"), "arena", "volcanic").includes("podrace"));
+  assert.ok(!jobsOf(person("pilot for hire"), "", "temperate").includes("podrace"), "not on a green world");
+  assert.ok(!jobsOf(person("bartender"), "cantina", "desert").includes("podrace"));
 });

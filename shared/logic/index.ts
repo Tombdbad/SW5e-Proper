@@ -13908,6 +13908,8 @@ export const POD_MAKES: Record<PodMake, { name: string; note: string; hull: numb
   sting: { name: "Stinger", note: "finned engines that turn sharp and run hot", hull: 16, top: 1.005, turn: 1.1, heat: 1.12 },
   scrap: { name: "Scrapper", note: "built from salvage, one engine unlike the other: tough, a little slow", hull: 20, top: 0.975, turn: 0.98, heat: 1.04 },
 };
+// Where podraces are held (house rule): on desert, rocky and volcanic worlds
+export const podWorld = (biome?: string) => /desert|barren|volcanic/i.test(biome ?? "");
 export const podMakeOf = (model: string): PodMake => (Object.keys(POD_MAKES) as PodMake[]).find((k) => model.toLowerCase().includes(POD_MAKES[k].name.toLowerCase())) ?? "ring";
 export const podModel = (make: PodMake) => `Podracer (${POD_MAKES[make].name})`;
 // The pilots of the field (original), each with a make and a way of racing: pace (a share of the plain speed), daring, how hot they let the
