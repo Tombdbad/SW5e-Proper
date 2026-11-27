@@ -867,14 +867,20 @@ function PodPart({ name, paint, wrecked }: { name: string; paint: string[]; wrec
     />
   );
 }
-interface PodRig { engines: (THREE.Group | null)[]; cockpit: THREE.Group | null; cables: (THREE.Mesh | null)[]; binder: THREE.Mesh | null; flames: (THREE.Mesh | null)[]; fires: (THREE.Mesh | null)[] }
-const newPodRig = (): PodRig => ({ engines: [null, null], cockpit: null, cables: [null, null], binder: null, flames: [null, null], fires: [null, null] });
-function PodRacer({ racer, wrecked, rig }: { racer: Racer; wrecked: boolean; rig: PodRig }) {
+// (`dust`: the plume a pod raises from the ground behind it, in the colour of the course's worn way; `cockpitHidden`: the party's cockpit is not
+// drawn while the camera sits in it)
+interface PodRig { engines: (THREE.Group | null)[]; cockpit: THREE.Group | null; cables: (THREE.Mesh | null)[]; binder: THREE.Mesh | null; flames: (THREE.Mesh | null)[]; fires: (THREE.Mesh | null)[]; dust: THREE.Mesh | null; cockpitHidden?: boolean }
+const newPodRig = (): PodRig => ({ engines: [null, null], cockpit: null, cables: [null, null], binder: null, flames: [null, null], fires: [null, null], dust: null });
+function PodRacer({ racer, wrecked, rig, dust }: { racer: Racer; wrecked: boolean; rig: PodRig; dust: string }) {
   const make = racer.make ?? "ring";
   const lay = POD_KIT[make] ?? POD_KIT.ring;
   const paint = useMemo(() => podPaint(racer.name, racer.party), [racer.name, racer.party]);
+  const plume = useMemo(() => new THREE.MeshBasicMaterial({ color: dust, transparent: true, opacity: 0, depthWrite: false }), [dust]);
   return (
     <>
+      <mesh ref={(el) => { rig.dust = el; }} material={plume} position={[lay.cockpit.x - lay.cockpit.length / 2 - 9, -1.1, 0]} rotation={[0, 0, -Math.PI / 2]} scale={[1, 1, 0.45]} visible={false} raycast={() => null}>
+        <coneGeometry args={[4, 18, 10, 1, true]} />
+      </mesh>
       {(["left", "right"] as const).map((side, k) => (
         <group key={side} ref={(el) => { rig.engines[k] = el; }} position={[lay[side].x, 0, lay[side].z]}>
           <PodPart name={`pod_${make}_engine_${k ? "r" : "l"}`} paint={paint} wrecked={wrecked} />
@@ -942,12 +948,24 @@ function rigPod(rig: PodRig, rc: Racer, t: number) {
   const dead = rc.wrecked;
   const thrust = rc.thrust ?? [0, 0];
   const fire = rc.fire ?? [false, false];
+  // The dust: a plume behind the pod while it runs low and fast, longer and thicker with speed (none in the air, nor from a wreck)
+  const low = !rc.air;
+  if (rig.dust) {
+    const on = !dead && low && speed > 25;
+    rig.dust.visible = on;
+    if (on) {
+      rig.dust.scale.set(1, 0.5 + Math.min(1.3, speed / 160), 0.4 + Math.min(0.35, speed / 600));
+      (rig.dust.material as THREE.MeshBasicMaterial).opacity = Math.min(0.32, (speed - 25) / 500) * (0.85 + 0.15 * Math.sin(t * 13 + rc.id));
+    }
+  }
   (["left", "right"] as const).forEach((side, k) => {
     const g = rig.engines[k];
     if (!g) return;
     const e = lay[side];
     if (dead) {
-      g.position.set(e.x + (k ? 1.2 : -0.6), -0.9, e.z * 1.6);
+      // (a snapped cable: the engines tore away and lie far ahead of the cockpit; burned out: they sank where they were)
+      const flung = rc.snapped ? 9 + k * 6 : 0;
+      g.position.set(e.x + (k ? 1.2 : -0.6) + flung, -0.9, e.z * (rc.snapped ? 3.5 : 1.6));
       g.rotation.set(k ? 0.5 : -0.4, k ? 0.5 : -0.35, k ? -0.15 : 0.2);
     } else {
       g.position.set(e.x, 0.12 * shake * Math.sin(t * 9 + k * 2.1 + rc.id) + 0.05 * Math.sin(t * 23 + k), e.z);
@@ -977,6 +995,7 @@ function rigPod(rig: PodRig, rc: Racer, t: number) {
       c.position.set(lay.cockpit.x, -0.15 + 0.07 * shake * Math.sin(t * 6 + rc.id), -rc.spin * 1.4);
       c.rotation.set(rc.bank * 0.3, rc.spin * 0.25, 0);
     }
+    c.visible = !rig.cockpitHidden;
   }
   // The cables: from each engine's eye to the cockpit's front corner on its side
   (["left", "right"] as const).forEach((side, k) => {
@@ -987,7 +1006,7 @@ function rigPod(rig: PodRig, rc: Racer, t: number) {
     RIG_B.set(lay.cockpit.length / 2 - 0.2, 0.1, (k ? 1 : -1) * 0.35).applyEuler(c.rotation).add(c.position);
     span(rig.cables[k], RIG_A, RIG_B, RIG_UP);
     const cable = rig.cables[k];
-    if (cable) cable.visible = !dead || k === 0;
+    if (cable) cable.visible = !dead || (k === 0 && !rc.snapped);
   });
   // The binder: between the two emitters, flickering
   const [gl, gr] = rig.engines;
@@ -1073,7 +1092,7 @@ function Sparks({ queue }: { queue: { current: RaceEvent[] } }) {
 // the chase camera (wider while boosting, shaken by a hit)
 // `crew`: who is in the party's craft, by seat (the pilot first; the gunner's seat second when `gunner` lends it a gun); `seats` how many it seats
 // (`haulerLook`: the make of a convoy's haulers)
-function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote, crew, seats, haulerLook }: { track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean; crew?: (CrewMember | undefined)[]; seats?: number; haulerLook?: string }) {
+function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote, crew, seats, haulerLook, view }: { view?: { current: "chase" | "cockpit" }; track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean; crew?: (CrewMember | undefined)[]; seats?: number; haulerLook?: string }) {
   const raceRef = useRef<Race>(race0);
   // Each racer's guns' aims, as the race says (the party's from the pad), for its turrets and gunners to follow
   const aimRefs = useMemo(() => race0.racers.map(() => ({ current: [{ yaw: 0, pitch: 0 }] as GunAim[] })), [race0]);
@@ -1261,6 +1280,13 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       const [dx, dy, dz] = [Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch)];
       behind.set(mine.craft.p[0] - dx * 7, mine.craft.p[1] + 3.4 - dy * 7, mine.craft.p[2] - dz * 7);
       ahead.set(mine.craft.p[0] + dx * 60, mine.craft.p[1] + 3.4 + dy * 60, mine.craft.p[2] + dz * 60);
+    } else if (pod && view?.current === "cockpit" && !mine.wrecked && racerRefs.current[party]) {
+      // (the pilot's seat: in the cockpit, the engines and the binder out ahead, the cockpit itself not drawn)
+      const g = racerRefs.current[party]!;
+      const lay = POD_KIT[mine.make ?? "ring"] ?? POD_KIT.ring;
+      g.updateMatrixWorld();
+      g.localToWorld(behind.set(lay.cockpit.x + 0.3, 1.25, -mine.spin * 1.4));
+      g.localToWorld(ahead.set(lay.cockpit.x + 80, 0.6, 0));
     } else if (pod) {
       // (a pod: low and close behind the cockpit, the engines filling the view ahead, looking far down the way)
       behind.set(mine.craft.p[0] - cy * 23, mine.craft.p[1] + 5.4, mine.craft.p[2] - sy * 23);
@@ -1269,7 +1295,9 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       behind.set(mine.craft.p[0] - cy * 11, mine.craft.p[1] + 5.2, mine.craft.p[2] - sy * 11);
       ahead.set(mine.craft.p[0] + cy * 17, mine.craft.p[1] + 0.4, mine.craft.p[2] + sy * 17);
     }
-    camera.position.lerp(behind, Math.min(1, dt * (sights !== undefined ? 12 : pod ? 7 : 5)));
+    const seat = pod && view?.current === "cockpit" && !mine.wrecked;
+    if (podRigs[party]) podRigs[party].cockpitHidden = seat;
+    camera.position.lerp(behind, seat ? 1 : Math.min(1, dt * (sights !== undefined ? 12 : pod ? 7 : 5)));
     camera.lookAt(ahead);
     const floor = groundAt(track, camera.position.x, camera.position.z) + (pod ? 2.2 : 1.4);
     if (camera.position.y < floor) camera.position.y = floor;
@@ -1321,7 +1349,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
         <group key={racer.id}>
           <group ref={(el) => { racerRefs.current[i] = el; if (el) el.rotation.order = "YZX"; }}>
             {racer.kind === "pod" ? (
-              <PodRacer racer={racer} wrecked={snap.racers[i].wrecked} rig={podRigs[i]} />
+              <PodRacer racer={racer} wrecked={snap.racers[i].wrecked} rig={podRigs[i]} dust={look.track} />
             ) : (
               <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} flame={(el) => { flameRefs.current[i] = el; }} crew={rideCrew[i]} aims={aimRefs[i]} seats={racer.party ? seats : undefined} gunner={racer.party ? gunner : !!racer.cargo} empty={!!snap.racers[i].idle} />
             )}
@@ -1673,7 +1701,7 @@ function PodHud({ race, toast }: { race: Race; toast: string }) {
 const podBriefing = (g: Extract<Minigame, { kind: "pod" }>) => [
   `Your hired ${POD_MAKES[g.make].name} (${POD_MAKES[g.make].note}). Three laps against seven pilots, about four minutes.`,
   "House rules: Boost has no meter but heats your engines. An engine that overheats catches fire, pulls the pod to its side and burns the hull until you put it out with Repair (or R): a few seconds at reduced power.",
-  "Steer with the stick (A and D), Boost on Right Shift, Brake on S. Off the way is open land and rock: no slower, but the rock is unforgiving.",
+  "Steer with the stick (A and D), Boost on Right Shift, Brake on S, the view from behind or the cockpit on V. Off the way is open land and rock: no slower, but the rock is unforgiving, and a blow that costs nearly half your hull at once snaps a cable.",
   g.bet && g.bet.stake > 0 ? `Your bet: ${g.bet.stake} cr on ${g.bet.on === "You" ? "yourself" : g.bet.on} to win, paying ${g.bet.pays} times the stake.` : "No bet placed.",
   `The purse: ${POD.prizes.map((p) => p.toLocaleString()).join(" / ")} cr for the first four places.`,
 ];
@@ -1716,6 +1744,14 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     input.current.power = undefined;
     input.current.steer = { x: 0, y: 0 };
     input.current.throttle = 0;
+  };
+  // A podrace's camera: behind the pod, or in its cockpit (the pilot's choice, kept in this browser; V)
+  const podView = useRef<"chase" | "cockpit">((() => { try { return localStorage.getItem("sw5e.podView") === "cockpit" ? "cockpit" : "chase"; } catch { return "chase"; } })());
+  const [viewName, setViewName] = useState(podView.current);
+  const toggleView = () => {
+    podView.current = podView.current === "chase" ? "cockpit" : "chase";
+    setViewName(podView.current);
+    try { localStorage.setItem("sw5e.podView", podView.current); } catch { /* (a private window keeps no choice) */ }
   };
   // Repair asked for once (a tap, or R): the race starts the repair if an engine burns, and the ask lapses
   const repair = () => {
@@ -1799,9 +1835,9 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     if (!driven) return;
     const held = new Set<string>();
     const press = (e: KeyboardEvent, on: boolean) => {
-      if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight", "Space", "KeyR"].includes(e.code)) return;
-      if (e.code === "KeyR") {
-        if (on && game.kind === "pod") repair();
+      if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight", "Space", "KeyR", "KeyV"].includes(e.code)) return;
+      if (e.code === "KeyR" || e.code === "KeyV") {
+        if (on && game.kind === "pod") (e.code === "KeyR" ? repair : toggleView)();
         return;
       }
       if (game.kind === "convoy" && seatNow.current === "gunner" && e.code !== "Space") {
@@ -1929,7 +1965,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         )}
         {driven && track && race0 && (
           <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: game.kind === "pod" ? 0.6 : 0.3, far: game.kind === "pod" ? 5200 : 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "pod" ? { kind: "pod", race, bet: game.bet } : game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
+            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "pod" ? { kind: "pod", race, bet: game.bet } : game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} view={game.kind === "pod" ? podView : undefined} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
@@ -1938,6 +1974,11 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         {game.kind === "pod" && !finished && (
           <button type="button" className="absolute left-2 top-[9.5rem] z-10 rounded border border-amber-400/70 bg-gray-900/80 px-2 py-0.5 text-[11px] text-amber-100" onClick={() => chooseLevers(!levers)} data-testid="pod-levers">
             {levers ? "Steer: two levers (tap for the stick)" : "Steer: stick (tap for two levers)"}
+          </button>
+        )}
+        {game.kind === "pod" && !finished && (
+          <button type="button" className="absolute left-2 top-[11.2rem] z-10 rounded border border-sky-400/70 bg-gray-900/80 px-2 py-0.5 text-[11px] text-sky-100" onClick={toggleView} data-testid="pod-view">
+            {viewName === "cockpit" ? "View: cockpit (tap for behind; V)" : "View: behind (tap for the cockpit; V)"}
           </button>
         )}
         {game.kind === "chase" && hud.race && <ChaseHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}

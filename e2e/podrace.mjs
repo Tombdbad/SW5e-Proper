@@ -92,7 +92,9 @@ try {
     await page.getByTestId("minigame-land").click();
     await sleep(2500);
     const after = Number(/([\d,]+) cr\./.exec(await page.getByTestId("downtime-state").innerText())[1].replace(/,/g, ""));
-    check(after === credits0 - cost + gain, `the credits: ${credits0} - ${cost} + ${gain} = ${after}`);
+    // (the day the race takes is lived at the party's lifestyle: a Modest one costs 10 cr, an Aristocratic one 100 at least)
+    const living = credits0 - cost + gain - after;
+    check(living >= 0 && living <= 100, `the credits: ${credits0} - ${cost} + ${gain}, less ${living} cr for the day's lifestyle, = ${after}`);
   }
 } catch (e) {
   failed = true;

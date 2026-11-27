@@ -13887,7 +13887,8 @@ export const POD = {
   // Hover height, the rise a pod rides up in a tick, the steepness that is a wall (rise a metre), contacts (as RACE's, at a pod's speeds)
   // (`band`: how far over its hover height the repulsors still hold it down, by the spring `hold`; `swell`: the most the land rises and falls by the
   // way, a speeder's 14 m)
-  hover: 1.5, band: 6, hold: 30, swell: 5, stepUp: 1.1, wall: 1.4, hitSpeed: 12, hitPer: 9, landHard: 22,
+  // (`snap`: a single blow that costs this share of a pod's hull or more snaps a cable: the pod is out)
+  hover: 1.5, band: 6, hold: 30, swell: 5, stepUp: 1.1, wall: 1.4, hitSpeed: 12, hitPer: 9, landHard: 22, snap: 0.45,
   // Heat a second of boost at full thrust, and of plain driving (it cools a little); how fast it cools off the throttle; the share of thrust left to
   // a burning engine; the seconds a hull point burns; a repair's seconds, the power and steering left while the pilot works, the heat left after
   heatBoost: 0.11, heatDrive: -0.035, cool: 0.1, weak: 0.3, burn: 2.5, repair: 2.5, repairPower: 0.6, after: 0.5,
@@ -15082,6 +15083,8 @@ export interface Racer {
   // in the last tick (for its flame and its sound), the seconds of a repair left, how long it has burned, and the seconds since the hull last
   // burned; a pod pilot's ways (POD_PILOTS): how hot they let the engines run, how keen they are to ram
   make?: PodMake; heat?: [number, number]; fire?: [boolean, boolean]; thrust?: [number, number]; fixing?: number; alight?: number; scorch?: number; margin?: number; aggro?: number;
+  // (a pod whose cable snapped: its engines tore away from the cockpit)
+  snapped?: boolean;
 }
 // (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
 // (`side`: whose shot it was in a convoy, the convoy's or the raiders')
@@ -15440,6 +15443,12 @@ function hurt(rc: Racer, impact: number, race: Race, what: string, at: Vec3): nu
   const damage = 1 + Math.floor((impact - T.hitSpeed) / T.hitPer);
   rc.hull = Math.max(0, rc.hull - damage);
   race.log.push(`${says(rc, "hits", "hit")} ${what} (${damage} hull)`);
+  // (a pod: a blow that costs it POD.snap of its hull or more at once snaps a cable, and the engines tear away from the cockpit)
+  if (rc.kind === "pod" && damage >= POD.snap * rc.hullMax) {
+    rc.hull = 0;
+    rc.snapped = true;
+    race.log.push(`${rc.party ? "Your" : `${rc.name}'s`} cable snaps!`);
+  }
   if (rc.hull <= 0) {
     rc.wrecked = true;
     rc.boosting = false;

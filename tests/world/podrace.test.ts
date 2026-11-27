@@ -163,3 +163,23 @@ test("podraces are held on desert, rocky and volcanic worlds, offered there by p
   assert.ok(!jobsOf(person("pilot for hire"), "", "temperate").includes("podrace"), "not on a green world");
   assert.ok(!jobsOf(person("bartender"), "cantina", "desert").includes("podrace"));
 });
+
+test("a blow that costs a pod nearly half its hull at once snaps a cable: it is out; a scrape along the cliff only dents it", () => {
+  const track = course(1);
+  const canyon = track.features!.find((f) => f.kind === "canyon")!;
+  const i = Math.round(canyon.at / track.step);
+  const p = track.points[i];
+  const into = (angle: number, speed: number) => {
+    const yaw = track.yaws[i] + angle;
+    let race = podStart(track, 1, "arrow");
+    race = { ...race, racers: race.racers.map((r) => (r.party ? { ...r, craft: { ...r.craft, p: [p[0], p[1] + POD.hover, p[2]], yaw, speed }, v: [Math.cos(yaw) * speed, 0, Math.sin(yaw) * speed], at: i, gates: track.gates.filter((g) => g.s <= i * track.step).length } : r)) };
+    return run(race, track, { ...still, boost: true }, 2.5);
+  };
+  const hard = into(1.0, 220);
+  const me = hard.racers.find((r) => r.party)!;
+  assert.ok(me.snapped && me.wrecked && me.hull === 0, "snapped and out");
+  assert.ok(hard.log.some((l) => /Your cable snaps!/.test(l)));
+  const soft = into(0.12, 160);
+  const dented = soft.racers.find((r) => r.party)!;
+  assert.ok(!dented.snapped, "a scrape does not snap a cable");
+});
