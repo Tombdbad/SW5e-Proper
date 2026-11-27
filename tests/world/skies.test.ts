@@ -76,7 +76,7 @@ test("a course meets the world's land: a gorge it drops into, a hill it goes ove
     // depth, up on the hill by its height
     const plain = raceCourse(seed, { ...scenery(biome), crossings: [] });
     for (const f of track.features ?? []) {
-      assert.ok(wanted.includes(f.kind), `${biome}: only the world's own features`);
+      assert.ok((wanted as string[]).includes(f.kind), `${biome}: only the world's own features`);
       const i = Math.round(f.at / track.step) % track.points.length;
       const rise = track.points[i][1] - plain.points[i][1];
       if (f.kind === "gorge") assert.ok(Math.abs(rise + CROSSING.gorgeDepth) < 0.5, `${biome}: the track is down in the gorge (${rise.toFixed(1)} m)`);
