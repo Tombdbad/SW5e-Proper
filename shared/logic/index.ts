@@ -13903,7 +13903,7 @@ export const POD = {
 export type PodMake = "arrow" | "brute" | "ring" | "sting" | "scrap";
 export const POD_MAKES: Record<PodMake, { name: string; note: string; hull: number; top: number; turn: number; heat: number }> = {
   arrow: { name: "Arrowhead", note: "long needle engines: quick, light, and soon broken", hull: 15, top: 1.02, turn: 1.04, heat: 1 },
-  brute: { name: "Bruiser", note: "two great split-intake engines: heavy, hard to hurt, slow to turn", hull: 23, top: 0.985, turn: 0.92, heat: 0.95 },
+  brute: { name: "Bruiser", note: "two great armoured engines behind grille intakes: heavy, hard to hurt, slow to turn", hull: 23, top: 0.985, turn: 0.92, heat: 0.95 },
   ring: { name: "Ringjet", note: "ring intakes that run cool: the steady all-rounder", hull: 18, top: 1, turn: 1, heat: 0.85 },
   sting: { name: "Stinger", note: "finned engines that turn sharp and run hot", hull: 16, top: 1.005, turn: 1.1, heat: 1.12 },
   scrap: { name: "Scrapper", note: "built from salvage, one engine unlike the other: tough, a little slow", hull: 20, top: 0.975, turn: 0.98, heat: 1.04 },

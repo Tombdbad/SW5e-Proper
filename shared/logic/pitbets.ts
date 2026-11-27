@@ -363,7 +363,7 @@ export interface PodPrice { name: string; chance: number; pays: number; note: st
 export const POD_NEWCOMER = { pace: 0.955, margin: 0.9 };
 export function podOdds(field: { name: string; pace: number; margin: number; note?: string }[]): PodPrice[] {
   const all = [{ name: "You", ...POD_NEWCOMER, note: "a newcomer: the board rates you middling" }, ...field];
-  const weight = (p: { pace: number; margin: number }) => Math.exp((p.pace - 0.95) * 70) * (p.margin > 1 ? 0.55 : 1);
+  const weight = (p: { pace: number; margin: number }) => Math.exp((p.pace - 0.95) * 50) * (p.margin > 1 ? 0.55 : 1);
   const total = all.reduce((s, p) => s + weight(p), 0);
   return all.map((p) => {
     const chance = weight(p) / total;
