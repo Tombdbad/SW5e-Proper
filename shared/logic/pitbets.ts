@@ -351,3 +351,22 @@ export function crowdEventText(event: CrowdEvent, names: { fighter: string; beas
     lost: `${names.beast} has beaten ${names.fighter}`,
   }[event];
 }
+
+// ---------------------------------------------------------------------------------------------
+// Betting on a podrace (2026-11-27; HOUSE RULES, shared/logic "Pod racing"): the bookmaker's board before the start, a price on each pilot
+// to win, read from their record: the pace they race at (a few hundredths of pace is a long way over three laps) and, for a pilot who runs
+// the engines past their limit, the fires that cost them races. The party is a newcomer, rated as a middling pilot (pace 0.955). Each
+// chance is shared out of the whole field and what a credit staked pays back in all (stake included) is the odds less the house's five in a
+// hundred, at least 1.1. A bet is on one pilot to win; it is settled by `podResult`.
+// ---------------------------------------------------------------------------------------------
+export interface PodPrice { name: string; chance: number; pays: number; note: string }
+export const POD_NEWCOMER = { pace: 0.955, margin: 0.9 };
+export function podOdds(field: { name: string; pace: number; margin: number; note?: string }[]): PodPrice[] {
+  const all = [{ name: "You", ...POD_NEWCOMER, note: "a newcomer: the board rates you middling" }, ...field];
+  const weight = (p: { pace: number; margin: number }) => Math.exp((p.pace - 0.95) * 50) * (p.margin > 1 ? 0.55 : 1);
+  const total = all.reduce((s, p) => s + weight(p), 0);
+  return all.map((p) => {
+    const chance = weight(p) / total;
+    return { name: p.name, chance, pays: Math.max(1.1, Math.round(((1 - HOUSE_CUT) / chance) * 10) / 10), note: p.note ?? "" };
+  });
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
 import { EFFECTS, babylonGl, onEffects, setEffects, type Effects } from "@/components/Map/babylon";
@@ -28,7 +28,7 @@ import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
-import { pitArenaOf, pitArenasIn, cardFor, pitNews, isBoutDay, nextBoutDay, weekdayName, matchState, type Ticket } from "@shared/logic/pitbets";
+import { pitArenaOf, pitArenasIn, cardFor, pitNews, isBoutDay, nextBoutDay, weekdayName, matchState, podOdds, type Ticket } from "@shared/logic/pitbets";
 import { usePartyLook } from "@/components/Map/models";
 import { FORM_STYLE } from "@/components/Map/interiors/limbs";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
@@ -46,6 +46,7 @@ import { watchFight } from "@/lib/barks";
 import { realtimeFeatures, realtimePowers } from "@/lib/sw5e/realtimePowers";
 import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
+import { roadBus, podBus, subscribePod } from "@/lib/roadBus";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { classColumnTotal, hitDiceLabel, levelInClass, nextHitDie, savedPools } from "@/lib/sw5e/characterCalculation";
@@ -84,7 +85,7 @@ import {
   advanceSearch, retireSquad, isCivilian, type Squad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, statProfile, type StatCasting, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, seatsOfShip, aboardShipId, hasInterior, helmExits, shipLands, deckIdOf, flightPayout, raceResult, convoyResult, POD, POD_MAKES, podField, podResult, podWorld, type PodMake, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, statProfile, type StatCasting, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -4283,7 +4284,7 @@ export default function GameBoard() {
   const jobsPanel = (o: Occupant, areaId: string) => {
     if (!world || !character) return null;
     const building = trailOf(world, areaId).find((a) => a.kind === "building");
-    const ids = jobsOf(o, building?.type ?? "");
+    const ids = jobsOf(o, building?.type ?? "", trailOf(world, areaId).find((a) => a.kind === "planet")?.type);
     if (!ids.length) return null;
     return (
       <div className="mt-2 border-t border-gray-600 pt-2 text-xs" data-testid="odd-jobs">
@@ -9732,6 +9733,7 @@ export default function GameBoard() {
           <CoopDialog campaignId={Number(campaignId)} characterId={character.id} areaName={(id) => world.areas[id]?.name ?? id} onClose={() => setCoopOpen(false)} onGoTo={goToMember} />
         )}
         {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
+        {coopHere && character && <PodInviteBanner character={character} me={coopMe} commit={commitDowntime} />}
         {stopPanel()}
         {hands && <HandsGame key={hands.key} what={hands.what} plan={hands.plan} onDone={(r) => { hands.resolve(r); setHands(null); }} />}
         {askMode && world && (
@@ -10937,7 +10939,7 @@ const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.flo
 const DOWNTIME_GROUPS: [string, string[]][] = [
   ["Side quests", ["bounty-hunting", "espionage", "mercenary-contracting", "crime"]],
   ["Fighting games", ["pit-arena"]],
-  ["Racing games", ["racing", "speeder-race", "convoy-guard"]],
+  ["Racing games", ["racing", "speeder-race", "podrace", "convoy-guard"]],
   ["Flying games", ["taxi-run", "delivery-run", "dogfight"]],
   ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
 ];
@@ -10948,11 +10950,13 @@ const ARENA = [{ id: "pit-arena", name: "Pit arena", intro: "Fight creatures of 
 // The flying games (house rules, shared/logic "Flying"): flown on the 3D map for a day. A run takes rings,
 // a race is laps against rivals, a dogfight is against foes that fire back; each needs one of the party's
 // vehicles or ships.
-const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight" | "convoy"; mode: FlightMode; needs: "vehicle" | "ship"; intro: string }[] = [
+// (a podrace needs no vehicle of the party's own: a pod is hired; it is held on desert, rocky and volcanic worlds)
+const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight" | "convoy" | "pod"; mode: FlightMode; needs: "vehicle" | "ship" | "hire"; intro: string }[] = [
   { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
   // (2026-10-30, the user: the reverse of the convoy strike, house rules: shared/logic "The convoy")
   { id: "convoy-guard", name: "Convoy guard", kind: "convoy", mode: "speeder", needs: "vehicle", intro: "Ride guard on a convoy of haulers down a road in your own speeder. Raiders come at it from the sky in waves, fighters of the convoy's side fly cover, and each hauler's turret fires back. Drive with the column, or take your craft's gun (your crewmate, or the convoy's droid pilot, takes the wheel) and turn it on them: the pad, or W A S D, or a drag on the scene, turns it all round and up into the sky. Paid for each hauler that gets through and each raider shot down." },
   { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your speeder over three laps of a long course against four rivals: gates to pass in order, jumps, shortcuts down a trail with a ravine to clear, mines and oil. Boost draws on a meter that refills; the hull bar is what you can still take. Paid by the place you finish." },
+  { id: "podrace", name: "Podrace", kind: "pod", mode: "speeder", needs: "hire", intro: "Hire a podracer and race it three laps of a long course against seven pilots: a canyon, a tunnel under a ridge, arches, rock spires, a jump over a ravine. Boost heats the engines; one that overheats catches fire until you put it out. Entry 250 cr and the pod's hire 1,000 cr (the book's Racing activity); a purse for the first four, and the bookmaker takes bets on who wins." },
   { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
   { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against fighters, a cruiser, a carrier, a battleship, a dreadnought or a battle station, or in its air: defend the settlement from a bombing raid, bomb a hostile one, escort a convoy or strike one. Guns, missiles and bombs (a few for a small ship, more for a large one); the largest ships are shielded by generators, and a station is destroyed from inside." },
 ];
@@ -10963,6 +10967,8 @@ function DowntimePanel(props: DowntimeProps) {
   const credits = Number(character?.credits) || 0;
   const here = props.settlement;
   const specs = DOWNTIME.activities.map((a) => ({ a, spec: activitySpec(a) }));
+  // (a podrace needs only the entry fee in a pod of the party's own)
+  const ownsPod = ((character?.playState as { pods?: string[] } | undefined)?.pods?.length ?? 0) > 0;
   const city = !!here && /city|station|town/i.test(here.type);
 
   if (props.blocked) {
@@ -11011,7 +11017,7 @@ function DowntimePanel(props: DowntimeProps) {
             const items = [
               ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
               ...ARENA.filter((x) => ids.includes(x.id)).map((x) => ({ key: x.id, name: x.name, intro: x.intro, disabled: false, reason: "", pick: props.openPit, testId: `downtime-${x.id}` })),
-              ...FLYING.filter((f) => ids.includes(f.id)).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
+              ...FLYING.filter((f) => ids.includes(f.id) && (f.needs !== "hire" || podWorld(props.biome))).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "hire" ? credits < POD.entry + (ownsPod ? 0 : POD.hire) : f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "hire" ? (credits < POD.entry + (ownsPod ? 0 : POD.hire) ? ` (needs ${(POD.entry + (ownsPod ? 0 : POD.hire)).toLocaleString()} cr)` : "") : f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
             ];
             if (!items.length) return null;
             return (
@@ -11035,7 +11041,7 @@ function DowntimePanel(props: DowntimeProps) {
           <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setOpen(null)}>← Activities</Button>
           <h3 className="text-base font-semibold text-yellow-300">{flying.name}</h3>
           <p className="text-xs text-gray-300">{flying.intro}</p>
-          <FlightActivity {...props} flying={flying} />
+          {flying.kind === "pod" ? <PodraceActivity {...props} flying={flying} /> : <FlightActivity {...props} flying={flying} />}
         </div>
       )}
       {mine && (
@@ -11093,6 +11099,176 @@ function applyComplication(props: DowntimeProps, activity: DowntimeActivityData,
 }
 
 // A flying minigame of downtime, on its own page: a day's work, paid by what it takes
+// A podrace (2026-11-27; house rules, shared/logic "Pod racing"): held on desert, rocky and volcanic worlds. The book's Racing activity sets the
+// entry fee (250 cr) and the hire of a vehicle (1,000 cr): a pod of one of five makes is hired for the day. Before the start the bookmaker's
+// board prices each pilot of the day's field (pitbets.ts `podOdds`), and a bet can be laid on one to win. Paid: the purse of the party's place
+// and a winning bet; the entry, the hire and the stake are spent whatever happens, even if the party leaves before the finish. A pod can be
+// bought there too (POD_MAKES' prices, a house rule; kept in the character's play state, `pods`): a pod of the party's own races without the
+// hire, and if it is wrecked in the race it is mended for POD.mend.
+function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number] }) {
+  const { character, commit, flying } = props;
+  const credits = Number(character?.credits) || 0;
+  const [seed] = useState(() => Math.floor(Math.random() * 1e9) + 1);
+  const [make, setMake] = useState<PodMake>("ring");
+  const [on, setOn] = useState("");
+  const [stake, setStake] = useState(0);
+  const [game, setGame] = useState<Minigame | null>(null);
+  // (in co-op: the game invited to race, and the members who joined, each in the make they hire)
+  const coopOn = useCoop((st) => st.status === "on" && st.members.length > 1);
+  useSyncExternalStore(subscribePod, () => podBus.version);
+  const [invited, setInvited] = useState(false);
+  const crew = Object.entries(podBus.joined).filter(([, j]) => Date.now() - j.at < 15 * 60000).map(([id, j]) => ({ id, name: j.name, make: (j.make in POD_MAKES ? j.make : "ring") as PodMake }));
+  const invite = () => {
+    podBus.joined = {};
+    roadBus.send?.({ t: "pod", invite: { seed, biome: props.biome ?? "desert", title: flying.name } });
+    setInvited(true);
+  };
+  const board = useMemo(() => podOdds(podField(seed)), [seed]);
+  const play = (character?.playState ?? {}) as Record<string, any>;
+  const owned: PodMake[] = Array.isArray(play.pods) ? play.pods : [];
+  const own = owned.includes(make);
+  const cost = POD.entry + (own ? 0 : POD.hire);
+  const buy = (k: PodMake) => commit({ character: { credits: credits - POD_MAKES[k].price, playState: { ...play, pods: [...owned, k] } }, downtime: {}, days: 0, log: [`Bought a ${POD_MAKES[k].name} podracer for ${POD_MAKES[k].price.toLocaleString()} cr (house rule: the books give no price for a pod).`] });
+  const price = board.find((p) => p.name === on);
+  const most = Math.max(0, Math.min(1000, credits - cost));
+  const bet = price && stake > 0 ? { on, stake: Math.min(stake, most), pays: price.pays } : undefined;
+  const spent = cost + (bet?.stake ?? 0);
+  const settle = (log: string[], gain: number) => {
+    commit({ character: { credits: credits - spent + gain }, downtime: {}, days: 1, log });
+    setGame(null);
+    podBus.joined = {};
+    podBus.inputs = {};
+  };
+  const paid = `paid ${cost.toLocaleString()} cr to enter${own ? " in your own pod" : " and hire the pod"}${bet ? ` and staked ${bet.stake} cr` : ""}`;
+  if (game) {
+    return (
+      <MinigamePage
+        game={game}
+        pod={game.kind === "pod" && game.crew?.length ? { host: true } : undefined}
+        onExit={() => settle([`${flying.name}: you left before the finish; ${paid} (house rules).`], 0)}
+        onDone={(result) => {
+          if (result.kind !== "pod") return setGame(null);
+          const r = podResult(result.race, result.bet);
+          const wrecked = own && !!result.race.racers.find((x) => x.party)?.wrecked;
+          settle([`${flying.name}: ${r.note}; ${paid}.`, ...(wrecked ? [`Your ${POD_MAKES[make].name} is mended for ${POD.mend.toLocaleString()} cr (house rule).`] : [])], r.purse + r.winnings - (wrecked ? POD.mend : 0));
+        }}
+      />
+    );
+  }
+  return (
+    <div className="space-y-2 text-xs" data-testid="podrace-setup">
+      <p className="text-sky-200">Entry {POD.entry} cr and the hire of a pod for the day {POD.hire.toLocaleString()} cr (the book's Racing activity; no hire in a pod of your own). You have {credits.toLocaleString()} cr. The purse: {POD.prizes.map((p) => p.toLocaleString()).join(" / ")} cr for the first four (house rule).</p>
+      <p className="font-semibold text-sky-100">Which pod do you hire?</p>
+      <div className="grid grid-cols-1 gap-1">
+        {(Object.keys(POD_MAKES) as PodMake[]).map((k) => (
+          <button key={k} type="button" data-testid={`pod-make-${k}`} aria-pressed={make === k} onClick={() => setMake(k)} className={`rounded border px-2 py-1 text-left ${make === k ? "border-yellow-400 bg-yellow-400/10 text-yellow-100" : "border-gray-600 text-gray-200"}`}>
+            <span className="font-semibold">{POD_MAKES[k].name}</span>{owned.includes(k) && <span className="ml-1 rounded bg-emerald-700/60 px-1 text-emerald-100" data-testid={`pod-own-${k}`}>yours</span>} <span className="text-gray-400">(hull {POD_MAKES[k].hull}, speed {Math.round(POD_MAKES[k].top * 100)}%, turning {Math.round(POD_MAKES[k].turn * 100)}%, heat {Math.round(POD_MAKES[k].heat * 100)}%)</span>
+            <span className="block text-gray-300">{POD_MAKES[k].note}</span>
+          </button>
+        ))}
+      </div>
+      {!own && (
+        <Button size="sm" variant="outline" disabled={credits < POD_MAKES[make].price} data-testid="pod-buy" onClick={() => buy(make)}>
+          {`Buy this ${POD_MAKES[make].name} for ${POD_MAKES[make].price.toLocaleString()} cr (house rule)${credits < POD_MAKES[make].price ? ": not enough credits" : ""}`}
+        </Button>
+      )}
+      <p className="font-semibold text-sky-100">The bookmaker's board: a bet on a pilot to win (house rule; what each credit staked pays back)</p>
+      <div className="grid grid-cols-1 gap-1" data-testid="pod-board">
+        {board.map((p) => (
+          <button key={p.name} type="button" data-testid={`pod-bet-${p.name === "You" ? "you" : p.name.split(" ")[0].toLowerCase()}`} aria-pressed={on === p.name} onClick={() => setOn(on === p.name ? "" : p.name)} className={`flex justify-between gap-2 rounded border px-2 py-1 text-left ${on === p.name ? "border-emerald-400 bg-emerald-400/10 text-emerald-100" : "border-gray-700 text-gray-200"}`}>
+            <span><span className="font-semibold">{p.name}</span> <span className="text-gray-400">{p.note}</span></span>
+            <span className="shrink-0 text-amber-200">pays {p.pays}x</span>
+          </button>
+        ))}
+      </div>
+      {on && (
+        <label className="flex items-center gap-2 text-sky-100">
+          Stake on {on === "You" ? "yourself" : on}:
+          <input type="number" min={0} max={most} step={10} value={stake} onChange={(e) => setStake(Math.max(0, Math.min(most, Math.floor(Number(e.target.value) || 0))))} className="w-24 rounded border border-gray-600 bg-gray-800 px-1 py-0.5" data-testid="pod-stake" />
+          <span className="text-gray-400">cr (at most {most})</span>
+        </label>
+      )}
+      {coopOn && (
+        <div className="space-y-1 rounded border border-sky-700/60 p-1.5" data-testid="pod-coop">
+          <Button size="sm" variant="outline" onClick={invite} data-testid="pod-invite">{invited ? "Invited: ask again" : "Invite the party to race too"}</Button>
+          <p className="text-gray-300">{crew.length ? `Racing with you: ${crew.map((c) => `${c.name} (${POD_MAKES[c.make].name})`).join(", ")}. Each pays their own entry and hire.` : invited ? "Waiting for the others to join (each in a pod of their own, on the same grid)." : "Your co-op party can race in the same podrace, each in a pod of their own (house rule)."}</p>
+        </div>
+      )}
+      <Button size="sm" variant="outline" disabled={credits < cost} data-testid="flight-start-podrace" onClick={() => {
+        const next: Minigame = { kind: "pod", title: `${flying.name}: your ${POD_MAKES[make].name}`, seed, make, biome: props.biome ?? "desert", bet, ...(crew.length ? { crew } : {}) };
+        if (crew.length) roadBus.send?.({ t: "pod", start: { ...next, bet: undefined } });
+        setGame(next);
+      }}>
+        {`Start the podrace (a day; ${spent.toLocaleString()} cr)`}
+      </Button>
+    </div>
+  );
+}
+
+// A podrace in co-op (2026-11-27; house rules): another member's invitation, at the top of the screen. Join in a make to hire (each pays their
+// own entry and hire, the book's Racing activity; in a pod of one's own, the entry only), wait for the entrant to start, race one's own pod
+// from the entrant's stream, and be paid one's own purse (or charged for leaving).
+function PodInviteBanner({ character, me, commit }: { character: { credits?: number | null; playState?: unknown }; me: string | null; commit: DowntimeProps["commit"] }) {
+  useSyncExternalStore(subscribePod, () => podBus.version);
+  const invite = podBus.invite;
+  const key = invite ? `${invite.from}:${invite.seed}` : "";
+  const [make, setMake] = useState<PodMake>("ring");
+  const [joined, setJoined] = useState("");
+  const [gone, setGone] = useState("");
+  const [game, setGame] = useState<Minigame | null>(null);
+  const credits = Number(character.credits) || 0;
+  const play = (character.playState ?? {}) as Record<string, any>;
+  const owned: PodMake[] = Array.isArray(play.pods) ? play.pods : [];
+  const cost = POD.entry + (owned.includes(make) ? 0 : POD.hire);
+  const start = podBus.start;
+  useEffect(() => {
+    if (!invite || !me || joined !== key || game || !start || start.from !== invite.from) return;
+    const spec = start.game as Extract<Minigame, { kind: "pod" }>;
+    if (spec?.kind !== "pod" || spec.seed !== invite.seed || !spec.crew?.some((c) => c.id === me)) return;
+    setGame({ ...spec, bet: undefined, title: `Podrace with ${invite.name}: your ${POD_MAKES[make].name}` });
+  }, [podBus.version, joined]);
+  if (game && invite && me) {
+    const settle = (log: string[], gain: number) => {
+      commit({ character: { credits: credits - cost + gain }, downtime: {}, days: 1, log });
+      setGame(null);
+      setGone(key);
+    };
+    return (
+      <MinigamePage
+        game={game}
+        pod={{ member: { me, host: invite.from } }}
+        onExit={() => settle([`Podrace with ${invite.name}: you left before the finish; paid ${cost.toLocaleString()} cr to enter (house rules).`], 0)}
+        onDone={(result) => {
+          if (result.kind !== "pod") return setGame(null);
+          const r = podResult(result.race, undefined, result.me);
+          settle([`Podrace with ${invite.name}: ${r.note}; paid ${cost.toLocaleString()} cr to enter.`], r.purse);
+        }}
+      />
+    );
+  }
+  if (!invite || !me || invite.from === me || gone === key || Date.now() - invite.at > 15 * 60000) return null;
+  return (
+    <div className="fixed left-1/2 top-12 z-40 w-[min(32rem,94vw)] -translate-x-1/2 space-y-1.5 rounded border border-amber-500/70 bg-gray-900/95 p-2 text-xs text-gray-100" data-testid="pod-invite-banner">
+      <p className="font-semibold text-amber-200">{invite.name} is entering a podrace and asks you to race too, each in a pod of your own on the same grid (house rule).</p>
+      {joined === key ? (
+        <p className="text-sky-200" data-testid="pod-joined">You are in, in a {POD_MAKES[make].name}: waiting for {invite.name} to start the race.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1">
+            {(Object.keys(POD_MAKES) as PodMake[]).map((k) => (
+              <button key={k} type="button" aria-pressed={make === k} onClick={() => setMake(k)} data-testid={`pod-join-make-${k}`} className={`rounded border px-1.5 py-0.5 ${make === k ? "border-yellow-400 text-yellow-100" : "border-gray-600 text-gray-300"}`}>{POD_MAKES[k].name}{owned.includes(k) ? " (yours)" : ""}</button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={credits < cost} onClick={() => { roadBus.send?.({ t: "pod", to: invite.from, join: { make } }); setJoined(key); }} data-testid="pod-join">{`Join (${cost.toLocaleString()} cr: the entry${owned.includes(make) ? "" : " and the hire"})`}</Button>
+            <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setGone(key)} data-testid="pod-decline">No thanks</Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number] }) {
   const { character, commit, flying } = props;
   const [game, setGame] = useState<Minigame | null>(null);

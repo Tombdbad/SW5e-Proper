@@ -468,6 +468,15 @@ function handle(s: Session, id: string, msg: any) {
       for (const other of unit.crew) if (other !== id) send(s.members.get(other)?.socket, { t: "road", spec: msg.spec, race: msg.race, events: msg.events });
       return;
     }
+    case "pod": {
+      // A podrace in co-op (2026-11-27): the member who enters invites the game, members join, the race starts, the entrant's page streams it
+      // and each member's page sends what they steer; to one member (`to`) or to all the others, from whom it came
+      if (JSON.stringify(msg).length > 160000) return;
+      const out = { t: "pod", from: id, name: me.name, invite: msg.invite, join: msg.join, start: msg.start, race: msg.race, events: msg.events, input: msg.input, leave: msg.leave };
+      if (msg.to) send(s.members.get(String(msg.to))?.socket, out);
+      else broadcast(s, out, id);
+      return;
+    }
     case "gun": {
       // The gunner of a craft aims and fires for its pilot
       const room = s.room;

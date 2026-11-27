@@ -14,7 +14,7 @@
 // the hideout has no one left of the job), and the giver pays on the report (`payout`). Pure: the monsters and equipment of the rules
 // data come in as parameters; nothing here reads a clock or a random of its own.
 // ---------------------------------------------------------------------------------------------
-import { artificerIn, childrenOf, crValue, formOf, statBlockOccupant, submergedAt, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
+import { artificerIn, childrenOf, crValue, formOf, podWorld, statBlockOccupant, submergedAt, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
 import type { Sw5eMonster, Sw5eEquipment } from "../data";
 
 export type ContractKind = "bounty" | "burglary" | "espionage" | "assault";
@@ -364,10 +364,11 @@ export const payout = (c: Contract, bonus = 0) => Math.round(c.reward * (1 + bon
 // Downtime tab itself is for test builds): the ids are those of the Downtime panel (`DOWNTIME_GROUPS` in Play). Bounty hunting, espionage,
 // mercenary contracting and crime are the jobs above.
 export const JOB_NAMES: Record<string, string> = {
-  "pit-arena": "fighting in the pit", "pit-bets": "bets on the pit", gambling: "a game of chance", carousing: "a night out", racing: "a race", "speeder-race": "a speeder race", "taxi-run": "a taxi run", "delivery-run": "a delivery run",
+  "pit-arena": "fighting in the pit", "pit-bets": "bets on the pit", gambling: "a game of chance", carousing: "a night out", racing: "a race", "speeder-race": "a speeder race", podrace: "a podrace", "taxi-run": "a taxi run", "delivery-run": "a delivery run",
   dogfight: "a dogfight", work: "honest work", research: "research", training: "training", crafting: "crafting", "buying-enhanced-items": "buying enhanced items", "selling-enhanced-items": "selling enhanced items",
 };
-export function jobsOf(o: Pick<Occupant, "role" | "disposition" | "captive" | "disabled">, buildingType = ""): string[] {
+// (`biome`: the world's; a podrace is offered by its pilots, mechanics and promoters only where podraces are held, shared/logic `podWorld`)
+export function jobsOf(o: Pick<Occupant, "role" | "disposition" | "captive" | "disabled">, buildingType = "", biome = ""): string[] {
   if (o.disposition === "hostile" || o.captive || o.disabled) return [];
   const role = o.role ?? "";
   const out: string[] = [];
@@ -376,6 +377,7 @@ export function jobsOf(o: Pick<Occupant, "role" | "disposition" | "captive" | "d
   if (/bookmaker/i.test(role)) out.push("pit-bets");
   if (BAR.test(role) || /croupier|gambler/i.test(role) || /gambling hall|cantina/.test(buildingType)) out.push("gambling", "carousing");
   if (/dockmaster|pilot for hire|mechanic|engineer|pilot/i.test(role) || /spaceport|hangar|shipyard|transit|landing/.test(buildingType)) out.push("racing", "speeder-race", "taxi-run", "delivery-run", "dogfight");
+  if (podWorld(biome) && (/pilot|mechanic|promoter|bookmaker/i.test(role) || /hangar|arena/.test(buildingType))) out.push("podrace");
   if (/merchant|dealer|clerk|overseer|cook|mechanic|farmer|dockmaster|laborer|steward/i.test(role) || BAR.test(role)) out.push("work");
   if (/scholar|archivist|clerk|medic|officer|noble|chamberlain/i.test(role) || /archive|medcenter/.test(buildingType)) out.push("research");
   if (/officer|guard|trainer|instructor|mechanic|scholar|bounty hunter|medic/i.test(role)) out.push("training");
