@@ -14229,7 +14229,9 @@ function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
       if (s < 0) continue;
       const a = easeStep(f.at - f.len / 2, f.at - f.len / 2 + f.ramp, s) * easeStep(f.at + f.len / 2, f.at + f.len / 2 - f.ramp, s);
       if (a <= 0) continue;
-      y += f.depth * a * canyonRise(f, s, d);
+      // (the cliffs by the exact distance from the way, not the grid's: a face 7 m across is finer than its 8 m cells, which would cut it in teeth)
+      const exact = d < 64 ? nearCentre(track, x, z).d : d;
+      y += f.depth * a * canyonRise(f, s, exact < 999 ? exact : d);
     } else if (d < track.width / 2 + 12) {
       // The gorge's walls: cliffs, standing from 3 m off the track's edge to 9 m (the land beyond rises as it does anywhere)
       const s = fieldS(track, x, z);
@@ -14279,6 +14281,25 @@ export function tunnelCeiling(track: RaceTrack, x: number, z: number): number {
     return track.points[i][1] + (f.roof ?? 16);
   }
   return Infinity;
+}
+// For drawing a podrace's ground: whether a point lies by its canyon (its cliffs want a finer mesh), within `reach` metres of the way
+export function inCanyon(track: RaceTrack, x: number, z: number, reach = 140): boolean {
+  if (!track.sections?.canyon || fieldAt(track, x, z) > reach) return false;
+  const s = fieldS(track, x, z);
+  return s >= track.sections.canyon[0] - 60 && s <= track.sections.canyon[1] + 60;
+}
+// For drawing a podrace's canyon: its cliffs are drawn as a strip that follows the way (a square grid of heights cuts a cliff that runs across
+// it into teeth), and the grid's ground under the strip is sunk out of sight: the height to sink it to, or null where the strip does not lie
+export const CANYON_STRIP = { margin: 60, inner: 2, outer: 165 };
+export function canyonSunk(track: RaceTrack, x: number, z: number): number | null {
+  const f = track.features?.find((q) => q.kind === "canyon");
+  if (!f || !inCanyon(track, x, z, CANYON_STRIP.outer)) return null;
+  const s = fieldS(track, x, z);
+  if (s < f.at - f.len / 2 - CANYON_STRIP.margin + 10 || s > f.at + f.len / 2 + CANYON_STRIP.margin - 10) return null;
+  const near = nearCentre(track, x, z).d;
+  const d = near < 999 ? near : fieldAt(track, x, z);
+  if (d < canyonWall(f, s) - CANYON_STRIP.inner + 0.8 || d > CANYON_STRIP.outer - 6) return null;
+  return track.points[Math.round(s / track.step) % track.points.length][1] - 4;
 }
 // For drawing the ground under a podrace's tunnel (the land's own cliffs would cut through the inside between the ground's samples): the
 // height of the way where a point lies under the tunnel's ridge (its lid, `reach` metres either side of the way), else null

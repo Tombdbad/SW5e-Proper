@@ -6,7 +6,7 @@ import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
-  CROSSING, POD, POD_MAKES, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, raceWay, terrainSurface, podCourse, podStart, podResult, tunnelCeiling, tunnelFloor, canyonWall,
+  CROSSING, POD, POD_MAKES, RACE, RACE_MODEL_SCALE, SPEEDER_BODY, raceWay, terrainSurface, podCourse, podStart, podResult, tunnelCeiling, tunnelFloor, canyonSunk, CANYON_STRIP, canyonWall,
   type PodMake, type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
@@ -213,6 +213,37 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     const idx: number[] = [];
     const land = track.land;
     const w2 = track.width / 2;
+    // One vertex of the ground: its place, normal (from the slope dx, dz), colour from the land and the way, the layers' weights and the way's ruts
+    const vertex = (x: number, z: number, y: number, dx: number, dz: number, curve: number) => {
+      const nl = Math.hypot(dx, 1, dz);
+      pos.push(x, y, z);
+      nor.push(-dx / nl, 1 / nl, -dz / nl);
+      const slope = Math.hypot(dx, dz);
+      let sp = [0, 0, 0];
+      if (land) {
+        const surf = terrainSurface(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope, curve });
+        c.setRGB(surf.color[0], surf.color[1], surf.color[2]);
+        c.lerp(a, 0.25);
+        sp = [surf.rock, surf.pale, surf.wet];
+      } else c.copy(a).lerp(b, 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013));
+      // The way: the dust of the course, worn most in the middle and gone into the verge past the edge, broken up a little
+      const d = raceDistance(track, x, z);
+      const wornBase = (1 - Math.min(1, Math.max(0, (d - w2 * 0.35) / (w2 * 0.65 + 10)))) * (1 - Math.min(1, slope * 1.4));
+      const worn = wornBase * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11));
+      if (worn > 0) c.lerp(verge, Math.min(0.7, worn));
+      c.multiplyScalar(0.94 + Math.max(-0.08, Math.min(0.12, y * 0.004)));
+      // (in the dark under a podrace's tunnel roof)
+      if (tunnel && tunnelCeiling(track, x, z) < Infinity) c.multiplyScalar(0.32);
+      // A river's banks are wet mud; a lava flow's are scorched black
+      const water = track.rivers?.length ? raceWater(track, x, z) : null;
+      if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
+      col.push(c.r, c.g, c.b);
+      // (a river's bank is mud, the way itself soil: the layers' weights, with the water's wet laid over)
+      splat.push(sp[0], sp[1], Math.max(sp[2], water ? (water.inside ? 0.9 : 0.6) * (water.lava ? 0 : 1) : 0), worn > 0 ? Math.min(1, worn * 1.6) : 0);
+      const wy = worn > 0.02 ? raceWay(track, x, z) : null;
+      way.push(wy ? wy.lat : 0, wy ? wy.nx : 0, wy ? wy.nz : 0, wy ? wy.s : 0);
+    };
+    const canyon = track.pod ? track.features?.find((f) => f.kind === "canyon") : undefined;
     for (let cj = 0; cj < count; cj++) {
       for (let ci = 0; ci < count; ci++) {
         const [ox, oz] = [-half + ci * CH, -half + cj * CH];
@@ -221,11 +252,11 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
         // The heights with a vertex of border, for the normals and the slope
         const side = segs + 3;
         const hs = new Float32Array(side * side);
-        // (under a podrace's tunnel the ground is drawn level: the tunnel's own walls and vault stand over it)
+        // (under a podrace's tunnel the ground is drawn level: the tunnel's own walls and vault stand over it; under its canyon's strip, sunk)
         for (let j = 0; j < side; j++) for (let i = 0; i < side; i++) {
           const [x, z] = [ox + (i - 1) * step, oz + (j - 1) * step];
           const floor = tunnel ? tunnelFloor(track, x, z) : null;
-          hs[j * side + i] = floor ?? groundAt(track, x, z, true);
+          hs[j * side + i] = floor ?? (canyon ? canyonSunk(track, x, z) : null) ?? groundAt(track, x, z, true);
         }
         const base = pos.length / 3;
         const row = segs + 1;
@@ -234,35 +265,8 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             const [x, z] = [ox + i * step, oz + j * step];
             const at = (j + 1) * side + i + 1;
             const y = hs[at];
-            const [dx, dz] = [(hs[at + 1] - hs[at - 1]) / (2 * step), (hs[at + side] - hs[at - side]) / (2 * step)];
-            const nl = Math.hypot(dx, 1, dz);
-            pos.push(x, y, z);
-            nor.push(-dx / nl, 1 / nl, -dz / nl);
-            const slope = Math.hypot(dx, dz);
-            let sp = [0, 0, 0];
-            if (land) {
-              const around = (hs[at + 1] + hs[at - 1] + hs[at + side] + hs[at - side]) / 4;
-              const surf = terrainSurface(land, x, z, { alt: (y - land.min) / Math.max(1, land.max - land.min), slope, curve: (around - y) / step });
-              c.setRGB(surf.color[0], surf.color[1], surf.color[2]);
-              c.lerp(a, 0.25);
-              sp = [surf.rock, surf.pale, surf.wet];
-            } else c.copy(a).lerp(b, 0.5 + 0.5 * Math.sin(x * 0.045 + Math.cos(z * 0.031) * 2) * Math.cos(z * 0.052 - x * 0.013));
-            // The way: the dust of the course, worn most in the middle and gone into the verge past the edge, broken up a little
-            const d = raceDistance(track, x, z);
-            const wornBase = (1 - Math.min(1, Math.max(0, (d - w2 * 0.35) / (w2 * 0.65 + 10)))) * (1 - Math.min(1, slope * 1.4));
-            const worn = wornBase * (0.5 + 0.2 * Math.sin(x * 0.31 + z * 0.17) * Math.cos(z * 0.23 - x * 0.11));
-            if (worn > 0) c.lerp(verge, Math.min(0.7, worn));
-            c.multiplyScalar(0.94 + Math.max(-0.08, Math.min(0.12, y * 0.004)));
-            // (in the dark under a podrace's tunnel roof)
-            if (tunnel && tunnelCeiling(track, x, z) < Infinity) c.multiplyScalar(0.32);
-            // A river's banks are wet mud; a lava flow's are scorched black
-            const water = track.rivers?.length ? raceWater(track, x, z) : null;
-            if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
-            col.push(c.r, c.g, c.b);
-            // (a river's bank is mud, the way itself soil: the layers' weights, with the water's wet laid over)
-            splat.push(sp[0], sp[1], Math.max(sp[2], water ? (water.inside ? 0.9 : 0.6) * (water.lava ? 0 : 1) : 0), worn > 0 ? Math.min(1, worn * 1.6) : 0);
-            const wy = worn > 0.02 ? raceWay(track, x, z) : null;
-            way.push(wy ? wy.lat : 0, wy ? wy.nx : 0, wy ? wy.nz : 0, wy ? wy.s : 0);
+            const around = (hs[at + 1] + hs[at - 1] + hs[at + side] + hs[at - side]) / 4;
+            vertex(x, z, y, (hs[at + 1] - hs[at - 1]) / (2 * step), (hs[at + side] - hs[at - side]) / (2 * step), (around - y) / step);
           }
         }
         for (let j = 0; j < segs; j++) {
@@ -289,6 +293,39 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
             way.push(way[v * 4], way[v * 4 + 1], way[v * 4 + 2], way[v * 4 + 3]);
           }
           for (let k = 0; k < list.length - 1; k++) idx.push(list[k], down + k, list[k + 1], list[k + 1], down + k, down + k + 1);
+        }
+      }
+    }
+    // A podrace's canyon: its cliffs as a strip along the way, a row at each of the course's points, its columns across from the way's edge out
+    // past the plateau, closest where the cliff and its ledge rise (the grid's ground under it was sunk above)
+    if (canyon) {
+      const n = track.points.length;
+      const offs = [0, 1.5, 3, 4.5, 6, 7.5, 9, 11, 13, 15, 17, 19, 21, 25, 32, 45, 65, 95, 130];
+      const cols = offs.length;
+      const e = 0.6;
+      for (const sideOf of [-1, 1]) {
+        const start = pos.length / 3;
+        let rows = 0;
+        for (let sAt = canyon.at - canyon.len / 2 - CANYON_STRIP.margin; sAt <= canyon.at + canyon.len / 2 + CANYON_STRIP.margin; sAt += track.step) {
+          const i = ((Math.round(sAt / track.step) % n) + n) % n;
+          const p = track.points[i];
+          const yaw = track.yaws[i];
+          const [rx, rz] = [-Math.sin(yaw), Math.cos(yaw)];
+          const wall = canyonWall(canyon, i * track.step) - CANYON_STRIP.inner;
+          for (const o of offs) {
+            const d = Math.min(CANYON_STRIP.outer, wall + o);
+            const [x, z] = [p[0] + rx * sideOf * d, p[2] + rz * sideOf * d];
+            const y = groundAt(track, x, z, true);
+            vertex(x, z, y, (groundAt(track, x + e, z, true) - groundAt(track, x - e, z, true)) / (2 * e), (groundAt(track, x, z + e, true) - groundAt(track, x, z - e, true)) / (2 * e), 0);
+          }
+          rows++;
+        }
+        for (let r = 0; r + 1 < rows; r++) {
+          for (let k = 0; k + 1 < cols; k++) {
+            const v = start + r * cols + k;
+            if (sideOf > 0) idx.push(v, v + 1, v + cols, v + 1, v + cols + 1, v + cols);
+            else idx.push(v, v + cols, v + 1, v + 1, v + cols, v + cols + 1);
+          }
         }
       }
     }
@@ -875,11 +912,11 @@ function PodRacer({ racer, wrecked, rig, dust }: { racer: Racer; wrecked: boolea
   const make = racer.make ?? "ring";
   const lay = POD_KIT[make] ?? POD_KIT.ring;
   const paint = useMemo(() => podPaint(racer.name, racer.party), [racer.name, racer.party]);
-  const plume = useMemo(() => new THREE.MeshBasicMaterial({ color: dust, transparent: true, opacity: 0, depthWrite: false }), [dust]);
+  const plume = useMemo(() => new THREE.MeshBasicMaterial({ color: dust, map: dustTexture(), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }), [dust]);
   return (
     <>
-      <mesh ref={(el) => { rig.dust = el; }} material={plume} position={[lay.cockpit.x - lay.cockpit.length / 2 - 9, -1.1, 0]} rotation={[0, 0, -Math.PI / 2]} scale={[1, 1, 0.45]} visible={false} raycast={() => null}>
-        <coneGeometry args={[4, 18, 10, 1, true]} />
+      <mesh ref={(el) => { rig.dust = el; }} material={plume} position={[lay.cockpit.x - lay.cockpit.length / 2 - 9, -0.9, 0]} rotation={[-Math.PI / 2, 0, 0]} visible={false} raycast={() => null}>
+        <planeGeometry args={[18, 9]} />
       </mesh>
       {(["left", "right"] as const).map((side, k) => (
         <group key={side} ref={(el) => { rig.engines[k] = el; }} position={[lay[side].x, 0, lay[side].z]}>
@@ -925,6 +962,29 @@ function PodShadow({ make }: { make: string }) {
     </>
   );
 }
+// The dust's texture: soft puffs, thickest at the near end (+x of the quad: under the cockpit) and fading to the tail and the sides
+let DUST: THREE.Texture | null = null;
+function dustTexture(): THREE.Texture {
+  if (DUST) return DUST;
+  const c = document.createElement("canvas");
+  c.width = 128;
+  c.height = 64;
+  const g = c.getContext("2d")!;
+  const r = createRandom(41);
+  for (let i = 0; i < 70; i++) {
+    const x = 128 * Math.pow(r.next(), 0.7);
+    const y = 32 + (r.next() - 0.5) * 40 * (0.4 + (128 - x) / 160);
+    const rad = 6 + r.next() * 14 * (1 - x / 200);
+    const a = 0.1 + 0.25 * (x / 128);
+    const grad = g.createRadialGradient(x, y, 0, x, y, rad);
+    grad.addColorStop(0, `rgba(255,255,255,${a})`);
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+  }
+  DUST = new THREE.CanvasTexture(c);
+  return DUST;
+}
 const RIG_A = new THREE.Vector3();
 const RIG_B = new THREE.Vector3();
 const RIG_D = new THREE.Vector3();
@@ -954,8 +1014,11 @@ function rigPod(rig: PodRig, rc: Racer, t: number) {
     const on = !dead && low && speed > 25;
     rig.dust.visible = on;
     if (on) {
-      rig.dust.scale.set(1, 0.5 + Math.min(1.3, speed / 160), 0.4 + Math.min(0.35, speed / 600));
-      (rig.dust.material as THREE.MeshBasicMaterial).opacity = Math.min(0.32, (speed - 25) / 500) * (0.85 + 0.15 * Math.sin(t * 13 + rc.id));
+      // (the quad lies flat behind the pod: longer with speed, from its near edge under the cockpit)
+      const long = 0.6 + Math.min(1.4, speed / 150);
+      rig.dust.scale.set(long, 0.8 + Math.min(0.5, speed / 400), 1);
+      rig.dust.position.x = (POD_KIT[rc.make ?? "ring"] ?? POD_KIT.ring).cockpit.x - 2 - 9 * long;
+      (rig.dust.material as THREE.MeshBasicMaterial).opacity = Math.min(0.6, (speed - 25) / 250) * (0.85 + 0.15 * Math.sin(t * 13 + rc.id));
     }
   }
   (["left", "right"] as const).forEach((side, k) => {
@@ -975,7 +1038,10 @@ function rigPod(rig: PodRig, rc: Racer, t: number) {
     if (flame) {
       flame.visible = !dead && thrust[k] > 0.05 && speed > 2;
       if (flame.visible) {
-        flame.scale.set(1, 0.4 + thrust[k] * 0.8 + (rc.boosting ? 1.3 : 0) + Math.random() * 0.15, 1);
+        // (seen from the cockpit, behind the engines, the flames are short: they point back at the pilot)
+        const seat = rig.cockpitHidden ? 0.3 : 1;
+        flame.scale.set(seat < 1 ? 0.7 : 1, (0.4 + thrust[k] * 0.8 + (rc.boosting ? 1.3 : 0) + Math.random() * 0.15) * seat, seat < 1 ? 0.7 : 1);
+        (flame.material as THREE.MeshBasicMaterial).opacity = seat < 1 ? 0.3 : 0.7;
         (flame.material as THREE.MeshBasicMaterial).color.set(rc.boosting ? "#e8f6ff" : fire[k] ? "#ff9a4d" : "#9fd8ff");
       }
     }
@@ -1350,7 +1416,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
         <group key={racer.id}>
           <group ref={(el) => { racerRefs.current[i] = el; if (el) el.rotation.order = "YZX"; }}>
             {racer.kind === "pod" ? (
-              <PodRacer racer={racer} wrecked={snap.racers[i].wrecked} rig={podRigs[i]} dust={look.track} />
+              <PodRacer racer={racer} wrecked={snap.racers[i].wrecked} rig={podRigs[i]} dust={shade(look.ground2, 1.3)} />
             ) : (
               <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} flame={(el) => { flameRefs.current[i] = el; }} crew={rideCrew[i]} aims={aimRefs[i]} seats={racer.party ? seats : undefined} gunner={racer.party ? gunner : !!racer.cargo} empty={!!snap.racers[i].idle} />
             )}

