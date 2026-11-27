@@ -16024,7 +16024,9 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number, cre
     const next = track.gates[rc.gates % race.gateCount];
     rc.toGate = Math.hypot(next.p[0] - x1, next.p[2] - z1);
     // Stuck against something, or lost far off the course: towed back
-    const slow = Math.hypot(rc.v[0], rc.v[2]) < 2 && !rc.air && (!rc.party || input.throttle >= 0);
+    // (one held back by its own pilot's brake, the party's or a co-op member's, is not stuck)
+    const held = rc.party ? input : rc.pilot ? crew?.[rc.pilot] : undefined;
+    const slow = Math.hypot(rc.v[0], rc.v[2]) < 2 && !rc.air && (!held || held.auto || held.throttle >= 0);
     rc.stuck = slow && race.t > 1 ? rc.stuck + h : 0;
     // Gone 60 m down the track past the next gate without going through it: towed back to it
     const gateAt = Math.round(next.s / track.step) % track.points.length;

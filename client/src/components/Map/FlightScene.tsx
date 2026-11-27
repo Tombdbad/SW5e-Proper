@@ -1739,7 +1739,7 @@ export function MinigamePage({ game, onDone, onExit, coop, pod }: { game: Miniga
   const race0 = useMemo(() => (game.kind === "pod" && track ? podStart(track, game.seed, game.make, undefined, game.crew ?? []) : game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
   const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" || game.kind === "pod";
   // A podrace in co-op: on a member's page what they steer goes to the entrant's twenty times a second (and that they left, if they leave);
-  // on the entrant's page the members' inputs come in (a second without one hands their pod to the rivals' driving)
+  // on the entrant's page the members' inputs come in (four seconds without one, a page that has stalled or gone, hands their pod to the rivals' driving)
   const member = pod?.member;
   useEffect(() => {
     if (!member) return;
@@ -1751,7 +1751,7 @@ export function MinigamePage({ game, onDone, onExit, coop, pod }: { game: Miniga
   const podPilots = () => {
     const out: Record<string, RaceInput> = {};
     const clock = performance.now();
-    for (const [id, v] of Object.entries(podBus.inputs)) out[id] = clock - v.at < 1000 ? (v.input as RaceInput) : { steer: { x: 0, y: 0 }, throttle: 0, auto: true };
+    for (const [id, v] of Object.entries(podBus.inputs)) out[id] = clock - v.at < 4000 ? (v.input as RaceInput) : { steer: { x: 0, y: 0 }, throttle: 0, auto: true };
     return out;
   };
   const leave = () => {

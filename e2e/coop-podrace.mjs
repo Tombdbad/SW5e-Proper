@@ -45,7 +45,7 @@ try {
   await sleep(5000);
   await host.getByTestId("coop-toggle").click();
   await host.getByTestId("coop-host").click();
-  await host.waitForFunction(() => /^[A-Z]{4}$/.test(document.querySelector('[data-testid="coop-code"]')?.textContent?.trim() ?? ""), null, { timeout: 30000 });
+  await host.waitForFunction(() => /^[A-Z]{4}$/.test(document.querySelector('[data-testid="coop-code"]')?.textContent?.trim() ?? ""), null, { timeout: 120000, polling: 500 });
   const code = (await host.getByTestId("coop-code").innerText()).trim();
   await host.getByTestId("coop-close").click();
   guestContext = await browser.newContext({ viewport: { width: 1100, height: 700 } });
@@ -62,12 +62,12 @@ try {
   await host.getByRole("tab", { name: "Downtime" }).or(host.getByRole("button", { name: "Downtime", exact: true })).first().click();
   await host.getByTestId("downtime-podrace").click();
   await host.getByTestId("pod-invite").click();
-  await guest.getByTestId("pod-invite-banner").waitFor({ timeout: 30000 });
+  await guest.getByTestId("pod-invite-banner").waitFor({ timeout: 180000 });
   check(true, "the guest is asked to race too");
   await guest.getByTestId("pod-join-make-sting").click();
   await guest.getByTestId("pod-join").click();
   await guest.getByTestId("pod-joined").waitFor();
-  await host.waitForFunction((n) => (document.querySelector('[data-testid="pod-coop"]')?.textContent ?? "").includes(n), bo.name, { timeout: 30000 });
+  await host.waitForFunction((n) => (document.querySelector('[data-testid="pod-coop"]')?.textContent ?? "").includes(n), bo.name, { timeout: 120000, polling: 500 });
   check(true, "the host sees the guest joined, in a Stinger");
   await host.getByTestId("flight-start-podrace").click();
   await host.getByTestId("minigame-pod").waitFor({ timeout: 180000 });
@@ -77,7 +77,11 @@ try {
   await guest.getByTestId("countdown").waitFor({ state: "detached", timeout: 180000 });
   // The guest brakes (their own pod held back on the host's race), then hands over to the autopilot
   await guest.evaluate(() => { window.__raceInput.throttle = -1; });
-  await sleep(6000);
+  // (the headless pages draw slowly: up to a minute for the brake to tell on the host's race)
+  for (let n = 0; n < 30; n++) {
+    await sleep(2000);
+    if (await host.evaluate(() => (window.__race.racers.find((x) => x.pilot)?.craft.speed ?? 999) < 30)) break;
+  }
   const held = await host.evaluate(() => {
     const r = window.__race;
     const mate = r.racers.find((x) => x.pilot);
@@ -85,10 +89,17 @@ try {
     return { mate: mate && { name: mate.name, make: mate.make, speed: Math.round(mate.craft.speed) }, me: Math.round(me.craft.speed), t: r.t };
   });
   say("host's race:", JSON.stringify(held));
+  say("host's inputs from members:", JSON.stringify(await host.evaluate(async () => { const m = await import("/src/lib/roadBus.ts"); return Object.fromEntries(Object.entries(m.podBus.inputs).map(([k, v]) => [k, { age: Math.round(performance.now() - v.at), throttle: v.input.throttle, auto: v.input.auto }])); })));
+  say("guest's input:", JSON.stringify(await guest.evaluate(() => ({ throttle: window.__raceInput?.throttle, auto: window.__raceInput?.auto }))));
   check(!!held.mate && held.mate.make === "sting" && held.mate.speed < 30 && held.me > 80, "on the host's race the guest's pod is held back by the guest's brake");
   await guest.evaluate(() => { window.__raceInput.throttle = 0; window.__raceInput.auto = true; });
-  await sleep(8000);
-  const seen = await guest.evaluate(() => { const r = window.__race; const mine = r.racers.find((x) => x.pilot); return { t: r.t, mine: mine && Math.round(mine.craft.speed), hud: document.querySelector('[data-testid="pod-hud"]')?.textContent ?? "" }; });
+  // (the headless pages draw slowly: up to a minute and a half for the pod to get going again)
+  let seen = null;
+  for (let n = 0; n < 45; n++) {
+    await sleep(2000);
+    seen = await guest.evaluate(() => { const r = window.__race; const mine = r.racers.find((x) => x.pilot); return { t: r.t, mine: mine && Math.round(mine.craft.speed), hud: document.querySelector('[data-testid="pod-hud"]')?.textContent ?? "" }; });
+    if ((seen.mine ?? 0) > 60) break;
+  }
   say("guest's view:", JSON.stringify(seen));
   check(seen.t > held.t && (seen.mine ?? 0) > 60, "the guest's page follows the race as it runs, their own pod now under way");
   await guest.screenshot({ path: `${OUT}/coop-podrace-guest.png`, timeout: 120000 });
