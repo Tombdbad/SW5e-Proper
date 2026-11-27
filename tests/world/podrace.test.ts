@@ -189,3 +189,30 @@ test("a pod can be bought (house rule: priced beside the speeders of the rules d
   assert.ok(POD_MAKES.scrap.price < POD_MAKES.ring.price && POD_MAKES.ring.price < POD_MAKES.brute.price, "salvage is cheapest, the armoured make dearest");
   assert.equal(POD.mend, POD.hire);
 });
+
+test("co-op: members race their own pods on the same grid, each steered by their own page, the race running until all of them are done", () => {
+  const track = course(2);
+  const crew = [{ id: "m1", name: "Tavi", make: "sting" as const }, { id: "m2", name: "Orr", make: "brute" as const }];
+  const race = podStart(track, 2, "ring", POD_PILOTS.length, crew);
+  assert.equal(race.racers.length, 8, "eight pods: the party, two members and five pilots");
+  const mates = race.racers.filter((r) => r.pilot);
+  assert.deepEqual(mates.map((r) => [r.pilot, r.name, r.make]), [["m1", "Tavi", "sting"], ["m2", "Orr", "brute"]]);
+  const spots = race.racers.map((r) => `${r.craft.p[0].toFixed(1)},${r.craft.p[2].toFixed(1)}`);
+  assert.equal(new Set(spots).size, 8, "each on a grid place of its own");
+  // m1 brakes and m2 has nothing sent (the rivals' driving takes it): after a few seconds m1 is far behind m2
+  let now = race;
+  for (let t = 0; t < 6; t += 1 / 30) now = stepRace(now, track, { steer: { x: 0, y: 0 }, throttle: 0, auto: true }, 1 / 30, { m1: { steer: { x: 0, y: 0 }, throttle: -1 } });
+  const [m1, m2] = [now.racers.find((r) => r.pilot === "m1")!, now.racers.find((r) => r.pilot === "m2")!];
+  assert.ok(Math.abs(m1.craft.speed) < 15 && m2.craft.speed > 100, `m1 held back by its own brake (${m1.craft.speed.toFixed(0)} m/s), m2 driven on (${m2.craft.speed.toFixed(0)} m/s)`);
+  // The party finished but a member still racing: not over; both done: over, and each member's result is their own
+  const party = now.racers.find((r) => r.party)!;
+  const finished: Race = { ...now, first: 180, racers: now.racers.map((r) => (r.party ? { ...r, finish: 180 } : r)) };
+  const later = stepRace({ ...finished, racers: finished.racers.map((r) => ({ ...r })) }, track, { steer: { x: 0, y: 0 }, throttle: 0, auto: true }, 1 / 30, {});
+  assert.ok(!later.over, "the members are still racing");
+  const all: Race = { ...now, over: true, racers: now.racers.map((r) => (r.party ? { ...r, finish: 180 } : r.pilot === "m2" ? { ...r, finish: 185 } : r.pilot === "m1" ? { ...r, wrecked: true } : r)) };
+  assert.equal(podResult(all, undefined, m2.id).place, 2);
+  assert.equal(podResult(all, undefined, m2.id).winner, "the party's pilot");
+  assert.equal(podResult(all, undefined, m1.id).purse, 0);
+  assert.equal(podResult(all).place, 1, "the party's own result as before");
+  assert.ok(party);
+});

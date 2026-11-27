@@ -15088,6 +15088,8 @@ export interface Racer {
   make?: PodMake; heat?: [number, number]; fire?: [boolean, boolean]; thrust?: [number, number]; fixing?: number; alight?: number; scorch?: number; margin?: number; aggro?: number;
   // (a pod whose cable snapped: its engines tore away from the cockpit)
   snapped?: boolean;
+  // A podrace in co-op (2026-11-27): the pod a member of the party's co-op game drives (their member id), steered by what their page sends
+  pilot?: string;
 }
 // (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
 // (`side`: whose shot it was in a convoy, the convoy's or the raiders')
@@ -15146,25 +15148,31 @@ export function raceStart(track: RaceTrack, seed: number, model: string, rivalMo
 export function podField(seed: number, rivals = POD_PILOTS.length): typeof POD_PILOTS {
   return createRandom(seed + 11).shuffle([...POD_PILOTS]).slice(0, Math.max(1, Math.min(POD_PILOTS.length, rivals)));
 }
-export function podStart(track: RaceTrack, seed: number, make: PodMake, rivals = POD_PILOTS.length): Race {
+// (`crew`: the co-op members racing with the party, each in a pod of their own make; they take the grid's places after the party's, and as many
+// pilots of the field stand down, so that eight pods race)
+export function podStart(track: RaceTrack, seed: number, make: PodMake, rivals = POD_PILOTS.length, crew: { id: string; name: string; make: PodMake }[] = []): Race {
   const r = createRandom(seed + 12);
-  const field = podField(seed, rivals);
-  const count = field.length + 1;
+  const field = podField(seed, Math.max(1, rivals - crew.length));
+  const count = field.length + 1 + crew.length;
   const mine = Math.min(count - 1, 2 + Math.floor(r.next() * Math.min(5, Math.max(1, count - 2))));
   const n = track.points.length;
+  // (the crew's places: the slots after the party's, round the grid)
+  const crewSlot = (slot: number) => crew.findIndex((_, c) => (mine + 1 + c) % count === slot);
   const racers: Racer[] = Array.from({ length: count }, (_, slot) => {
     const party = slot === mine;
-    const k = slot < mine ? slot : slot - 1;
-    const who = party ? null : field[k];
+    const c = crewSlot(slot);
+    const mate = c >= 0 ? crew[c] : null;
+    const k = Array.from({ length: slot }, (_, q) => q).filter((q) => q !== mine && crewSlot(q) < 0).length;
+    const who = party || mate ? null : field[k];
     const row = Math.floor(slot / 2);
     const lat = slot % 2 === 0 ? -10 : 10;
     const at = (n - Math.round((16 + row * 26) / track.step)) % n;
     const yaw = track.yaws[at];
     const [px, pz] = [track.points[at][0] - Math.sin(yaw) * lat, track.points[at][2] + Math.cos(yaw) * lat];
-    const m: PodMake = who ? who.make : make;
+    const m: PodMake = who ? who.make : mate ? mate.make : make;
     const hull = POD_MAKES[m].hull;
     return {
-      id: party ? 0 : k + 1, name: who ? who.name : "You", party, model: podModel(m), kind: "pod", make: m, pace: who ? who.pace : 1, daring: who ? who.daring : 0.6,
+      id: party ? 0 : mate ? 100 + c : k + 1, name: who ? who.name : mate ? mate.name : "You", party, ...(mate ? { pilot: mate.id } : {}), model: podModel(m), kind: "pod", make: m, pace: who ? who.pace : 1, daring: who ? who.daring : 0.6,
       craft: { p: [px, groundAt(track, px, pz) + POD.hover, pz], yaw, pitch: 0, speed: 0 }, v: [0, 0, 0], spin: 0, bank: 0,
       boost: 1, boosting: false, rest: 0, air: false, rough: false, onTrail: false, gates: 0, toGate: 0, hull, hullMax: hull, finish: null, wrecked: false,
       lane: lat, home: within(lat + (r.next() - 0.5) * 8, -14, 14), at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 0,
@@ -15813,7 +15821,7 @@ function tow(rc: Racer, track: RaceTrack, race: Race, before?: number) {
 }
 
 // One tick of the race at RACE.tick or less
-function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
+function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number, crew?: Record<string, RaceInput>) {
   race.t += h;
   const index = trackIndexOf(track);
   // Every half second each racer's place on the track is found afresh (it is followed tick by tick between)
@@ -15822,7 +15830,9 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   for (const rc of race.racers) {
     if (rc.idle) continue;
     const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
-    let steer: RaceInput = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rc.kind === "pod" ? podRivalInput(rc, track, race, h) : rivalInput(rc, track, race, h);
+    // (a co-op member's pod: what their page sent, or the rivals' driving while nothing comes from it, or when they hand it over)
+    const mate = rc.pilot && rc.finish === null && !rc.wrecked ? crew?.[rc.pilot] : undefined;
+    let steer: RaceInput = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : mate && !mate.auto ? mate : rc.hostile ? chaseInput(rc, track, race, h) : rc.kind === "pod" ? podRivalInput(rc, track, race, h) : rivalInput(rc, track, race, h);
     // A crewmate at the wheel drives at their own pace, safely, and stops short of a roadblock (a speed to be at by each distance from it)
     // (in a convoy with nobody else to drive, the convoy's droid pilot keeps the party's craft in the column at its pace)
     if (rc.party && input.auto && (race.mate || race.convoy) && !rc.wrecked) {
@@ -16045,14 +16055,18 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
     return;
   }
   const party = race.racers.find((rc) => rc.party);
-  if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
+  // (with co-op members racing, it runs until every one of them, the party too, has finished or is out)
+  const humans = race.racers.filter((rc) => rc.party || rc.pilot);
+  const done = humans.length > 1 ? humans.every((rc) => rc.finish !== null || rc.wrecked) : !!party && (party.finish !== null || party.wrecked);
+  if (done || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
   // A chase is over too when every rider after the party is down
   if (race.chase && race.racers.some((rc) => rc.hostile) && race.racers.filter((rc) => rc.hostile).every((rc) => rc.wrecked)) race.over = true;
 }
 
 // One step of a race, in ticks of RACE.tick: the party's racer is steered by `input`, the rivals by
 // their own line. Returns the next race; `events` holds what happened in this step (for sparks and sounds)
-export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: number): Race {
+// (`crew`: a podrace's co-op members' inputs by member id)
+export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: number, crew?: Record<string, RaceInput>): Race {
   if (race.over) return race;
   const next: Race = {
     ...race,
@@ -16069,7 +16083,7 @@ export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: num
   // (a podrace's ticks are finer: POD.tick)
   const tick = race.racers.some((rc) => rc.kind === "pod") ? POD.tick : RACE.tick;
   const ticks = Math.max(1, Math.ceil(dt / tick - 1e-6));
-  for (let i = 0; i < ticks && !next.over && next.block?.state !== "stopped"; i++) raceTick(next, track, input, dt / ticks);
+  for (let i = 0; i < ticks && !next.over && next.block?.state !== "stopped"; i++) raceTick(next, track, input, dt / ticks, crew);
   next.said = next.log.slice(race.log.length);
   next.log = next.log.slice(-60);
   return next;
@@ -16086,10 +16100,12 @@ export function raceOrder(race: Race): Racer[] {
 }
 
 // What the party's race pays: the prize of its place (house rule), or nothing when it did not finish
-export function raceResult(race: Race, prizes: number[] = RACE_PRIZES): { place: number; credits: number; note: string } {
+// (`me`: whose result, by racer id: a co-op member's own pod; the party's by default)
+export function raceResult(race: Race, prizes: number[] = RACE_PRIZES, me?: number): { place: number; credits: number; note: string } {
   const order = raceOrder(race);
-  const place = order.findIndex((racer) => racer.party) + 1;
-  const mine = race.racers.find((racer) => racer.party)!;
+  const isMe = (racer: Racer) => (me === undefined ? racer.party : racer.id === me);
+  const place = order.findIndex(isMe) + 1;
+  const mine = race.racers.find(isMe)!;
   const time = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
   const hull = `hull ${mine.hull} of ${mine.hullMax}`;
   if (mine.finish === null) return { place: race.racers.length, credits: 0, note: `you did not finish the race (${mine.wrecked ? "out with no hull" : race.first !== null ? "the winner was home " + RACE.grace + " s before you" : "out of time"}; ${hull}; house rule)` };
@@ -16098,10 +16114,10 @@ export function raceResult(race: Race, prizes: number[] = RACE_PRIZES): { place:
 // What a podrace pays the party (house rules, "Pod racing"): the purse of its place (POD.prizes; nothing if it did not finish), and a bet
 // on a pilot to win (`podOdds` in pitbets.ts), the stake and its winnings paid back when that pilot won. The entry fee and the pod's hire
 // (the book's Racing activity) were paid when the party entered.
-export function podResult(race: Race, bet?: { on: string; stake: number; pays: number }): { place: number; purse: number; winnings: number; winner: string; note: string } {
-  const { place, credits, note } = raceResult(race, POD.prizes);
+export function podResult(race: Race, bet?: { on: string; stake: number; pays: number }, me?: number): { place: number; purse: number; winnings: number; winner: string; note: string } {
+  const { place, credits, note } = raceResult(race, POD.prizes, me);
   const first = raceOrder(race)[0];
-  const winner = first?.finish !== null ? (first.party ? "You" : first.name) : "";
+  const winner = first?.finish !== null ? ((me === undefined ? first.party : first.id === me) ? "You" : first.party ? "the party's pilot" : first.name) : "";
   const won = !!bet && bet.stake > 0 && winner === bet.on;
   const winnings = won ? Math.floor(bet!.stake * bet!.pays) : 0;
   const betNote = bet && bet.stake > 0 ? (won ? `; your ${bet.stake} cr on ${bet.on === "You" ? "yourself" : bet.on} paid ${winnings} cr` : `; your ${bet.stake} cr on ${bet.on === "You" ? "yourself" : bet.on} is lost`) : "";

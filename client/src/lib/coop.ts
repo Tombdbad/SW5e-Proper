@@ -7,7 +7,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
-import { roadBus, resetRoad } from "@/lib/roadBus";
+import { roadBus, resetRoad, podBus, podChanged, resetPod } from "@/lib/roadBus";
 import { speak, voicePrefs } from "@/lib/voice";
 import { applyChanges, changesBetween, type Changes, type CoopMember, type Craft, type TravelRoom } from "@shared/logic/coop";
 
@@ -173,6 +173,25 @@ function receive(msg: any) {
       if (msg.race) roadBus.snap = { race: msg.race, events: Array.isArray(msg.events) ? msg.events : [], at: performance.now() };
       return;
     }
+    case "pod": {
+      // A podrace in co-op: an invitation, a member joining mine, the start, the race as the entrant's page streams it, a member's steering
+      const from = String(msg.from ?? "");
+      if (msg.invite && typeof msg.invite === "object") {
+        podBus.invite = { from, name: String(msg.name ?? "A member"), seed: Number(msg.invite.seed) || 1, biome: String(msg.invite.biome ?? "desert"), title: String(msg.invite.title ?? "Podrace"), at: Date.now() };
+        toast.info(`${msg.name} is entering a podrace and asks you to race too (Downtime or the banner at the top)`);
+      }
+      if (msg.join && typeof msg.join === "object") podBus.joined = { ...podBus.joined, [from]: { name: String(msg.name ?? "A member"), make: String(msg.join.make ?? "ring"), at: Date.now() } };
+      if (msg.leave) {
+        const { [from]: _gone, ...rest } = podBus.joined;
+        podBus.joined = rest;
+        podBus.inputs[from] = { input: { steer: { x: 0, y: 0 }, throttle: 0, auto: true }, at: performance.now() };
+      }
+      if (msg.start) podBus.start = { from, game: msg.start, at: Date.now() };
+      if (msg.race) podBus.snap = { race: msg.race, events: Array.isArray(msg.events) ? msg.events : [], at: performance.now() };
+      if (msg.input && typeof msg.input === "object") podBus.inputs[from] = { input: msg.input, at: performance.now() };
+      if (msg.invite || msg.join || msg.leave || msg.start) podChanged();
+      return;
+    }
     case "gun": {
       // From the gunner of the craft I pilot
       roadBus.gun = { aim: Number(msg.aim) || 0, fire: !!msg.fire, at: performance.now() };
@@ -226,6 +245,7 @@ function stop() {
   early = [];
   queued = [];
   resetRoad();
+  resetPod();
   lastPets = "";
   set({ status: "off", code: "", me: null, members: [], room: null, peers: {} });
 }

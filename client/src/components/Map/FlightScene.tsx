@@ -23,7 +23,7 @@ import type { Dogfight } from "@shared/logic/dogfight";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, sortieNotes } from "@shared/logic/dogfight";
 import { DogfightGame, type DogfightSpec } from "./dogfight/DogfightGame";
-import { roadBus } from "@/lib/roadBus";
+import { roadBus, podBus, type RoadSnap } from "@/lib/roadBus";
 
 // The flying games, the speeder race and the pilot's route, each on a dedicated page (MinigamePage): a
 // five-second countdown, then the run. The drag pad steers (yaw, and pitch where the craft can climb);
@@ -49,7 +49,7 @@ export type Minigame =
   | { kind: "convoy"; title: string; seed: number; vehicle: string; biome: string; look?: string; seats?: number; crew?: CrewMember[]; mate?: { name: string; pace: number }; haulers: number; hauler: string; haulerLook?: string; level: number; who: string; ally: string; intro: string[] }
   | ({ kind: "dogfight" } & DogfightSpec)
   // A podrace (2026-11-27, shared/logic "Pod racing"): a hired pod of `make` on a course of the world's land; `bet`: a stake on a pilot to win, at its price
-  | { kind: "pod"; title: string; seed: number; make: PodMake; biome: string; bet?: PodBet };
+  | { kind: "pod"; title: string; seed: number; make: PodMake; biome: string; bet?: PodBet; crew?: { id: string; name: string; make: PodMake }[] };
 export type PodBet = { on: string; stake: number; pays: number };
 
 export type MinigameResult =
@@ -59,7 +59,7 @@ export type MinigameResult =
   | { kind: "chase"; race: Race }
   | { kind: "convoy"; race: Race }
   | { kind: "dogfight"; state: Dogfight }
-  | { kind: "pod"; race: Race; bet?: PodBet };
+  | { kind: "pod"; race: Race; bet?: PodBet; me?: number };
 
 // The party's craft and its camera: behind and above, looking a little ahead
 function place(group: THREE.Group | null, craft: Craft) {
@@ -1092,7 +1092,8 @@ function Sparks({ queue }: { queue: { current: RaceEvent[] } }) {
 // the chase camera (wider while boosting, shaken by a hit)
 // `crew`: who is in the party's craft, by seat (the pilot first; the gunner's seat second when `gunner` lends it a gun); `seats` how many it seats
 // (`haulerLook`: the make of a convoy's haulers)
-function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote, crew, seats, haulerLook, view }: { view?: { current: "chase" | "cockpit" }; track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean; crew?: (CrewMember | undefined)[]; seats?: number; haulerLook?: string }) {
+// (a podrace in co-op: `pilots` the members' inputs on the entrant's page; on a member's page `feed` is the entrant's stream and `follow` their own pod)
+function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote, crew, seats, haulerLook, view, pilots, feed, follow }: { view?: { current: "chase" | "cockpit" }; pilots?: () => Record<string, RaceInput>; feed?: { snap: RoadSnap | null }; follow?: string; track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean; crew?: (CrewMember | undefined)[]; seats?: number; haulerLook?: string }) {
   const raceRef = useRef<Race>(race0);
   // Each racer's guns' aims, as the race says (the party's from the pad), for its turrets and gunners to follow
   const aimRefs = useMemo(() => race0.racers.map(() => ({ current: [{ yaw: 0, pitch: 0 }] as GunAim[] })), [race0]);
@@ -1130,7 +1131,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   const lookOf = (racer: Racer) => (racer.party ? partyLook : racer.cargo ? haulerLook : track.sea ? (racer.kind === "bike" ? "hydro" : "bongo") : undefined);
   const ahead = useMemo(() => new THREE.Vector3(), []);
   const behind = useMemo(() => new THREE.Vector3(), []);
-  const party = race0.racers.findIndex((racer) => racer.party);
+  const party = follow ? Math.max(0, race0.racers.findIndex((racer) => racer.pilot === follow)) : race0.racers.findIndex((racer) => racer.party);
   // The party's engine (interiors/fx.ts), its pitch and roar following the speeder's speed and throttle; it dies away when the race ends
   const motor = useRef<Engine | null>(null);
   useEffect(() => {
@@ -1177,7 +1178,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
     };
     if (remote) {
       // A crew member's screen: the pilot's race as streamed, carried on a little between snapshots by each craft's own speed
-      const snapped = roadBus.snap;
+      const snapped = (feed ?? roadBus).snap;
       if (snapped) {
         if (snapped !== lastSnap.current) {
           lastSnap.current = snapped;
@@ -1194,7 +1195,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       }
     } else if (go.current && !now.over && !pause?.current) {
       // Up to half a second a frame (a slow device runs the race slower, never through anything: it steps at 1/60 s)
-      now = stepRace(now, track, input.current, Math.min(delta, 0.5));
+      now = stepRace(now, track, input.current, Math.min(delta, 0.5), pilots?.());
       raceRef.current = now;
       // Stopped at a roadblock: the race waits for the page's answer
       if (now.block?.state === "stopped" && pause) {
@@ -1657,8 +1658,8 @@ function Standings({ race, order }: { race: Race; order: Racer[] }) {
 }
 // A podrace's HUD (2026-11-27): place, lap, checkpoints, speed and the clock; the hull and each engine's heat (red and glowing while it burns);
 // the warning to put out a burning engine, and the repair's seconds; the standings, and what just happened
-function PodHud({ race, toast }: { race: Race; toast: string }) {
-  const me = race.racers.find((r) => r.party)!;
+function PodHud({ race, toast, me: pilot }: { race: Race; toast: string; me?: string }) {
+  const me = race.racers.find((r) => (pilot ? r.pilot === pilot : r.party)) ?? race.racers.find((r) => r.party)!;
   const order = raceOrder(race);
   const place = order.indexOf(me) + 1;
   const hull = me.hull / me.hullMax;
@@ -1728,14 +1729,35 @@ const briefing = (g: Extract<Minigame, { kind: "dogfight" }>) => [
 const scenarioIntro = (g: Extract<Minigame, { kind: "dogfight" }>) => g.intro ?? SCENARIOS.find((x) => x.id === g.scenario)?.intro ?? "";
 
 // The dedicated page of a minigame: a five-second countdown, then the game. Calls onDone with how it ended.
-export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; onDone: (result: MinigameResult) => void; onExit: () => void; coop?: { pilot: boolean; gunner: boolean } }) {
+// (`pod`: a podrace in co-op: on the entrant's page `host`; on a member's page `member`, their own member id and the entrant's)
+export function MinigamePage({ game, onDone, onExit, coop, pod }: { game: Minigame; onDone: (result: MinigameResult) => void; onExit: () => void; coop?: { pilot: boolean; gunner: boolean }; pod?: { host?: boolean; member?: { me: string; host: string } } }) {
   // (the page is given a new `game` object each time its parent draws: what is built from it is built again only for another game)
   const gameKey = game.kind === "dogfight" ? "dogfight" : `${game.kind}|${game.seed}|${game.kind === "road" ? `${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : ""}`;
   const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [gameKey]);
   const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" || game.kind === "pod" ? game.biome ?? "temperate" : "temperate";
   const track = useMemo(() => (game.kind === "pod" ? podCourse(game.seed, raceScenery(biome)) : game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : game.kind === "convoy" ? raceCourse(game.seed, raceScenery(biome), 1, {}) : null), [gameKey, biome]);
-  const race0 = useMemo(() => (game.kind === "pod" && track ? podStart(track, game.seed, game.make) : game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
+  const race0 = useMemo(() => (game.kind === "pod" && track ? podStart(track, game.seed, game.make, undefined, game.crew ?? []) : game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
   const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" || game.kind === "pod";
+  // A podrace in co-op: on a member's page what they steer goes to the entrant's twenty times a second (and that they left, if they leave);
+  // on the entrant's page the members' inputs come in (a second without one hands their pod to the rivals' driving)
+  const member = pod?.member;
+  useEffect(() => {
+    if (!member) return;
+    const timer = setInterval(() => {
+      if (go.current) roadBus.send?.({ t: "pod", to: member.host, input: { ...input.current, steer: { ...input.current.steer } } });
+    }, 50);
+    return () => clearInterval(timer);
+  }, [member?.host]);
+  const podPilots = () => {
+    const out: Record<string, RaceInput> = {};
+    const clock = performance.now();
+    for (const [id, v] of Object.entries(podBus.inputs)) out[id] = clock - v.at < 1000 ? (v.input as RaceInput) : { steer: { x: 0, y: 0 }, throttle: 0, auto: true };
+    return out;
+  };
+  const leave = () => {
+    if (member) roadBus.send?.({ t: "pod", to: member.host, leave: true });
+    onExit();
+  };
   // A podrace's controls: the one stick, or two throttle levers, one to each engine (the pilot's choice, kept in this browser)
   const [levers, setLevers] = useState(() => { try { return localStorage.getItem("sw5e.podLevers") === "1"; } catch { return false; } });
   const chooseLevers = (on: boolean) => {
@@ -1784,6 +1806,15 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   const sent = useRef({ at: 0, events: [] as RaceEvent[] });
   const onRace = (race: Race) => {
     latest.current.race = race;
+    // (the entrant of a podrace in co-op streams it to the members racing in it)
+    if (pod?.host && roadBus.send) {
+      sent.current.events.push(...race.events);
+      const clock = performance.now();
+      if (clock - sent.current.at > 66 || race.over) {
+        sent.current.at = clock;
+        roadBus.send({ t: "pod", race: { ...race, log: race.over ? race.log.slice(-12) : [], events: [] }, events: sent.current.events.splice(0) });
+      }
+    }
     if (coop?.pilot && roadBus.send) {
       sent.current.events.push(...race.events);
       const clock = performance.now();
@@ -1795,9 +1826,9 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     // For test scripts, as the map's window.__map3d: the race as it stands, and what the party does (`__raceInput`)
     (window as unknown as { __race?: Race; __raceInput?: RaceInput }).__race = race;
     (window as unknown as { __raceInput?: RaceInput }).__raceInput = input.current;
-    const me = race.racers.find((r) => r.party);
+    const me = race.racers.find((r) => (member ? r.pilot === member.me : r.party));
     if (!me) return;
-    const said = race.said.filter((line) => line.startsWith("You ") || line.startsWith("Your "));
+    const said = member ? [] : race.said.filter((line) => line.startsWith("You ") || line.startsWith("Your "));
     const lap = raceLap(race, me);
     if (lap > toast.current.lap && lap === race.laps && me.finish === null) toast.current = { text: "Last lap!", until: race.t + 2.5, lap };
     else if (lap > toast.current.lap) toast.current.lap = lap;
@@ -1955,7 +1986,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     <div ref={page} className="fixed inset-0 z-[70] flex flex-col bg-black" data-testid="minigame-page">
       <div className="flex items-center justify-between gap-2 border-b border-sky-500/30 bg-gray-950 px-3 py-2 text-sm text-sky-100">
         <span className="font-semibold" data-testid="minigame-title">{title}</span>
-        <button type="button" className="rounded border border-gray-500 px-3 py-1 text-xs" onClick={onExit} data-testid="minigame-exit">Leave it</button>
+        <button type="button" className="rounded border border-gray-500 px-3 py-1 text-xs" onClick={leave} data-testid="minigame-exit">Leave it</button>
       </div>
       <div className="relative flex-1 overflow-hidden" data-testid={`minigame-${game.kind}`} onPointerMove={dragAim}>
         {game.kind === "run" && course && (
@@ -1965,12 +1996,12 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         )}
         {driven && track && race0 && (
           <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: game.kind === "pod" ? 0.6 : 0.3, far: game.kind === "pod" ? 5200 : 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "pod" ? { kind: "pod", race, bet: game.bet } : game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} view={game.kind === "pod" ? podView : undefined} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
+            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "pod" ? { kind: "pod", race, bet: game.bet, me: member ? race.racers.find((r) => r.pilot === member.me)?.id : undefined } : game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} view={game.kind === "pod" ? podView : undefined} pilots={pod?.host ? podPilots : undefined} feed={member ? podBus : undefined} follow={member?.me} remote={!!member || undefined} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
         {game.kind === "race" && hud.race && <RaceHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
-        {game.kind === "pod" && hud.race && <PodHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "pod" && hud.race && <PodHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} me={member?.me} />}
         {game.kind === "pod" && !finished && (
           <button type="button" className="absolute left-2 top-[9.5rem] z-10 rounded border border-amber-400/70 bg-gray-900/80 px-2 py-0.5 text-[11px] text-amber-100" onClick={() => chooseLevers(!levers)} data-testid="pod-levers">
             {levers ? "Steer: two levers (tap for the stick)" : "Steer: stick (tap for two levers)"}
@@ -2058,9 +2089,9 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
             {finished.kind === "dogfight" && !(game.kind === "dogfight" && game.foes) && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "pod" && (
               <div className="text-sm text-sky-100" data-testid="pod-result">
-                <p className="mb-1">{podResult(finished.race, finished.bet).note}</p>
+                <p className="mb-1">{podResult(finished.race, finished.bet, finished.me).note}</p>
                 {raceOrder(finished.race).map((r, i) => (
-                  <p key={r.id} className={r.party ? "font-semibold text-yellow-300" : ""}>{i + 1}. {r.name} {r.finish !== null ? raceClock(r.finish) : r.wrecked ? "wrecked" : "still racing"}</p>
+                  <p key={r.id} className={(finished.me === undefined ? r.party : r.id === finished.me) ? "font-semibold text-yellow-300" : r.pilot || r.party ? "text-sky-300" : ""}>{i + 1}. {r.party && finished.me !== undefined ? "The party's pilot" : r.name} {r.finish !== null ? raceClock(r.finish) : r.wrecked ? "wrecked" : "still racing"}</p>
                 ))}
               </div>
             )}

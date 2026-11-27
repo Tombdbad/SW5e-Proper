@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
 import { EFFECTS, babylonGl, onEffects, setEffects, type Effects } from "@/components/Map/babylon";
@@ -46,6 +46,7 @@ import { watchFight } from "@/lib/barks";
 import { realtimeFeatures, realtimePowers } from "@/lib/sw5e/realtimePowers";
 import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
+import { roadBus, podBus, subscribePod } from "@/lib/roadBus";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { classColumnTotal, hitDiceLabel, levelInClass, nextHitDie, savedPools } from "@/lib/sw5e/characterCalculation";
@@ -9732,6 +9733,7 @@ export default function GameBoard() {
           <CoopDialog campaignId={Number(campaignId)} characterId={character.id} areaName={(id) => world.areas[id]?.name ?? id} onClose={() => setCoopOpen(false)} onGoTo={goToMember} />
         )}
         {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
+        {coopHere && character && <PodInviteBanner character={character} me={coopMe} commit={commitDowntime} />}
         {stopPanel()}
         {hands && <HandsGame key={hands.key} what={hands.what} plan={hands.plan} onDone={(r) => { hands.resolve(r); setHands(null); }} />}
         {askMode && world && (
@@ -11111,6 +11113,16 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
   const [on, setOn] = useState("");
   const [stake, setStake] = useState(0);
   const [game, setGame] = useState<Minigame | null>(null);
+  // (in co-op: the game invited to race, and the members who joined, each in the make they hire)
+  const coopOn = useCoop((st) => st.status === "on" && st.members.length > 1);
+  useSyncExternalStore(subscribePod, () => podBus.version);
+  const [invited, setInvited] = useState(false);
+  const crew = Object.entries(podBus.joined).filter(([, j]) => Date.now() - j.at < 15 * 60000).map(([id, j]) => ({ id, name: j.name, make: (j.make in POD_MAKES ? j.make : "ring") as PodMake }));
+  const invite = () => {
+    podBus.joined = {};
+    roadBus.send?.({ t: "pod", invite: { seed, biome: props.biome ?? "desert", title: flying.name } });
+    setInvited(true);
+  };
   const board = useMemo(() => podOdds(podField(seed)), [seed]);
   const play = (character?.playState ?? {}) as Record<string, any>;
   const owned: PodMake[] = Array.isArray(play.pods) ? play.pods : [];
@@ -11124,12 +11136,15 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
   const settle = (log: string[], gain: number) => {
     commit({ character: { credits: credits - spent + gain }, downtime: {}, days: 1, log });
     setGame(null);
+    podBus.joined = {};
+    podBus.inputs = {};
   };
   const paid = `paid ${cost.toLocaleString()} cr to enter${own ? " in your own pod" : " and hire the pod"}${bet ? ` and staked ${bet.stake} cr` : ""}`;
   if (game) {
     return (
       <MinigamePage
         game={game}
+        pod={game.kind === "pod" && game.crew?.length ? { host: true } : undefined}
         onExit={() => settle([`${flying.name}: you left before the finish; ${paid} (house rules).`], 0)}
         onDone={(result) => {
           if (result.kind !== "pod") return setGame(null);
@@ -11173,9 +11188,83 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
           <span className="text-gray-400">cr (at most {most})</span>
         </label>
       )}
-      <Button size="sm" variant="outline" disabled={credits < cost} data-testid="flight-start-podrace" onClick={() => setGame({ kind: "pod", title: `${flying.name}: your ${POD_MAKES[make].name}`, seed, make, biome: props.biome ?? "desert", bet })}>
+      {coopOn && (
+        <div className="space-y-1 rounded border border-sky-700/60 p-1.5" data-testid="pod-coop">
+          <Button size="sm" variant="outline" onClick={invite} data-testid="pod-invite">{invited ? "Invited: ask again" : "Invite the party to race too"}</Button>
+          <p className="text-gray-300">{crew.length ? `Racing with you: ${crew.map((c) => `${c.name} (${POD_MAKES[c.make].name})`).join(", ")}. Each pays their own entry and hire.` : invited ? "Waiting for the others to join (each in a pod of their own, on the same grid)." : "Your co-op party can race in the same podrace, each in a pod of their own (house rule)."}</p>
+        </div>
+      )}
+      <Button size="sm" variant="outline" disabled={credits < cost} data-testid="flight-start-podrace" onClick={() => {
+        const next: Minigame = { kind: "pod", title: `${flying.name}: your ${POD_MAKES[make].name}`, seed, make, biome: props.biome ?? "desert", bet, ...(crew.length ? { crew } : {}) };
+        if (crew.length) roadBus.send?.({ t: "pod", start: { ...next, bet: undefined } });
+        setGame(next);
+      }}>
         {`Start the podrace (a day; ${spent.toLocaleString()} cr)`}
       </Button>
+    </div>
+  );
+}
+
+// A podrace in co-op (2026-11-27; house rules): another member's invitation, at the top of the screen. Join in a make to hire (each pays their
+// own entry and hire, the book's Racing activity; in a pod of one's own, the entry only), wait for the entrant to start, race one's own pod
+// from the entrant's stream, and be paid one's own purse (or charged for leaving).
+function PodInviteBanner({ character, me, commit }: { character: { credits?: number | null; playState?: unknown }; me: string | null; commit: DowntimeProps["commit"] }) {
+  useSyncExternalStore(subscribePod, () => podBus.version);
+  const invite = podBus.invite;
+  const key = invite ? `${invite.from}:${invite.seed}` : "";
+  const [make, setMake] = useState<PodMake>("ring");
+  const [joined, setJoined] = useState("");
+  const [gone, setGone] = useState("");
+  const [game, setGame] = useState<Minigame | null>(null);
+  const credits = Number(character.credits) || 0;
+  const play = (character.playState ?? {}) as Record<string, any>;
+  const owned: PodMake[] = Array.isArray(play.pods) ? play.pods : [];
+  const cost = POD.entry + (owned.includes(make) ? 0 : POD.hire);
+  const start = podBus.start;
+  useEffect(() => {
+    if (!invite || !me || joined !== key || game || !start || start.from !== invite.from) return;
+    const spec = start.game as Extract<Minigame, { kind: "pod" }>;
+    if (spec?.kind !== "pod" || spec.seed !== invite.seed || !spec.crew?.some((c) => c.id === me)) return;
+    setGame({ ...spec, bet: undefined, title: `Podrace with ${invite.name}: your ${POD_MAKES[make].name}` });
+  }, [podBus.version, joined]);
+  if (game && invite && me) {
+    const settle = (log: string[], gain: number) => {
+      commit({ character: { credits: credits - cost + gain }, downtime: {}, days: 1, log });
+      setGame(null);
+      setGone(key);
+    };
+    return (
+      <MinigamePage
+        game={game}
+        pod={{ member: { me, host: invite.from } }}
+        onExit={() => settle([`Podrace with ${invite.name}: you left before the finish; paid ${cost.toLocaleString()} cr to enter (house rules).`], 0)}
+        onDone={(result) => {
+          if (result.kind !== "pod") return setGame(null);
+          const r = podResult(result.race, undefined, result.me);
+          settle([`Podrace with ${invite.name}: ${r.note}; paid ${cost.toLocaleString()} cr to enter.`], r.purse);
+        }}
+      />
+    );
+  }
+  if (!invite || !me || invite.from === me || gone === key || Date.now() - invite.at > 15 * 60000) return null;
+  return (
+    <div className="fixed left-1/2 top-12 z-40 w-[min(32rem,94vw)] -translate-x-1/2 space-y-1.5 rounded border border-amber-500/70 bg-gray-900/95 p-2 text-xs text-gray-100" data-testid="pod-invite-banner">
+      <p className="font-semibold text-amber-200">{invite.name} is entering a podrace and asks you to race too, each in a pod of your own on the same grid (house rule).</p>
+      {joined === key ? (
+        <p className="text-sky-200" data-testid="pod-joined">You are in, in a {POD_MAKES[make].name}: waiting for {invite.name} to start the race.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1">
+            {(Object.keys(POD_MAKES) as PodMake[]).map((k) => (
+              <button key={k} type="button" aria-pressed={make === k} onClick={() => setMake(k)} data-testid={`pod-join-make-${k}`} className={`rounded border px-1.5 py-0.5 ${make === k ? "border-yellow-400 text-yellow-100" : "border-gray-600 text-gray-300"}`}>{POD_MAKES[k].name}{owned.includes(k) ? " (yours)" : ""}</button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={credits < cost} onClick={() => { roadBus.send?.({ t: "pod", to: invite.from, join: { make } }); setJoined(key); }} data-testid="pod-join">{`Join (${cost.toLocaleString()} cr: the entry${owned.includes(make) ? "" : " and the hire"})`}</Button>
+            <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setGone(key)} data-testid="pod-decline">No thanks</Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
