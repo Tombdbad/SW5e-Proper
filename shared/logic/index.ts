@@ -13898,16 +13898,19 @@ export const POD = {
   off: 170, towSpeed: 30,
   // The purse by place (the book's Racing results pay 500 to 10,000 cr for a week of races), the entry fee and the hire of a pod (the book's)
   prizes: [4000, 2000, 1250, 500], entry: 250, hire: 1000,
+  // Mending a pod of the party's own that was wrecked in a race (house rule)
+  mend: 1000,
 };
 // The makes of pod (tools/blender/build-pods.py builds each; original designs after the film's look): hull, top speed and steering as shares of
-// the plain figures, and how fast its engines heat
+// the plain figures, how fast its engines heat, and what one costs to buy (house rule: the books price no pod; a landspeeder is 10,000 cr, an
+// airspeeder 14,500). A pod of the party's own races without the hire; wrecked in a race, it is mended for POD.mend
 export type PodMake = "arrow" | "brute" | "ring" | "sting" | "scrap";
-export const POD_MAKES: Record<PodMake, { name: string; note: string; hull: number; top: number; turn: number; heat: number }> = {
-  arrow: { name: "Arrowhead", note: "long needle engines: quick, light, and soon broken", hull: 15, top: 1.02, turn: 1.04, heat: 1 },
-  brute: { name: "Bruiser", note: "two great armoured engines behind grille intakes: heavy, hard to hurt, slow to turn", hull: 23, top: 0.985, turn: 0.92, heat: 0.95 },
-  ring: { name: "Ringjet", note: "ring intakes that run cool: the steady all-rounder", hull: 18, top: 1, turn: 1, heat: 0.85 },
-  sting: { name: "Stinger", note: "finned engines that turn sharp and run hot", hull: 16, top: 1.005, turn: 1.1, heat: 1.12 },
-  scrap: { name: "Scrapper", note: "built from salvage, one engine unlike the other: tough, a little slow", hull: 20, top: 0.975, turn: 0.98, heat: 1.04 },
+export const POD_MAKES: Record<PodMake, { name: string; note: string; hull: number; top: number; turn: number; heat: number; price: number }> = {
+  arrow: { name: "Arrowhead", note: "long needle engines: quick, light, and soon broken", hull: 15, top: 1.02, turn: 1.04, heat: 1, price: 18000 },
+  brute: { name: "Bruiser", note: "two great armoured engines behind grille intakes: heavy, hard to hurt, slow to turn", hull: 23, top: 0.985, turn: 0.92, heat: 0.95, price: 20000 },
+  ring: { name: "Ringjet", note: "ring intakes that run cool: the steady all-rounder", hull: 18, top: 1, turn: 1, heat: 0.85, price: 16000 },
+  sting: { name: "Stinger", note: "finned engines that turn sharp and run hot", hull: 16, top: 1.005, turn: 1.1, heat: 1.12, price: 18000 },
+  scrap: { name: "Scrapper", note: "built from salvage, one engine unlike the other: tough, a little slow", hull: 20, top: 0.975, turn: 0.98, heat: 1.04, price: 12000 },
 };
 // Where podraces are held (house rule): on desert, rocky and volcanic worlds
 export const podWorld = (biome?: string) => /desert|barren|volcanic/i.test(biome ?? "");

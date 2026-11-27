@@ -10965,6 +10965,8 @@ function DowntimePanel(props: DowntimeProps) {
   const credits = Number(character?.credits) || 0;
   const here = props.settlement;
   const specs = DOWNTIME.activities.map((a) => ({ a, spec: activitySpec(a) }));
+  // (a podrace needs only the entry fee in a pod of the party's own)
+  const ownsPod = ((character?.playState as { pods?: string[] } | undefined)?.pods?.length ?? 0) > 0;
   const city = !!here && /city|station|town/i.test(here.type);
 
   if (props.blocked) {
@@ -11013,7 +11015,7 @@ function DowntimePanel(props: DowntimeProps) {
             const items = [
               ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
               ...ARENA.filter((x) => ids.includes(x.id)).map((x) => ({ key: x.id, name: x.name, intro: x.intro, disabled: false, reason: "", pick: props.openPit, testId: `downtime-${x.id}` })),
-              ...FLYING.filter((f) => ids.includes(f.id) && (f.needs !== "hire" || podWorld(props.biome))).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "hire" ? credits < POD.entry + POD.hire : f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "hire" ? (credits < POD.entry + POD.hire ? ` (needs ${(POD.entry + POD.hire).toLocaleString()} cr)` : "") : f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
+              ...FLYING.filter((f) => ids.includes(f.id) && (f.needs !== "hire" || podWorld(props.biome))).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "hire" ? credits < POD.entry + (ownsPod ? 0 : POD.hire) : f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "hire" ? (credits < POD.entry + (ownsPod ? 0 : POD.hire) ? ` (needs ${(POD.entry + (ownsPod ? 0 : POD.hire)).toLocaleString()} cr)` : "") : f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
             ];
             if (!items.length) return null;
             return (
@@ -11098,7 +11100,9 @@ function applyComplication(props: DowntimeProps, activity: DowntimeActivityData,
 // A podrace (2026-11-27; house rules, shared/logic "Pod racing"): held on desert, rocky and volcanic worlds. The book's Racing activity sets the
 // entry fee (250 cr) and the hire of a vehicle (1,000 cr): a pod of one of five makes is hired for the day. Before the start the bookmaker's
 // board prices each pilot of the day's field (pitbets.ts `podOdds`), and a bet can be laid on one to win. Paid: the purse of the party's place
-// and a winning bet; the entry, the hire and the stake are spent whatever happens, even if the party leaves before the finish.
+// and a winning bet; the entry, the hire and the stake are spent whatever happens, even if the party leaves before the finish. A pod can be
+// bought there too (POD_MAKES' prices, a house rule; kept in the character's play state, `pods`): a pod of the party's own races without the
+// hire, and if it is wrecked in the race it is mended for POD.mend.
 function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number] }) {
   const { character, commit, flying } = props;
   const credits = Number(character?.credits) || 0;
@@ -11108,7 +11112,11 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
   const [stake, setStake] = useState(0);
   const [game, setGame] = useState<Minigame | null>(null);
   const board = useMemo(() => podOdds(podField(seed)), [seed]);
-  const cost = POD.entry + POD.hire;
+  const play = (character?.playState ?? {}) as Record<string, any>;
+  const owned: PodMake[] = Array.isArray(play.pods) ? play.pods : [];
+  const own = owned.includes(make);
+  const cost = POD.entry + (own ? 0 : POD.hire);
+  const buy = (k: PodMake) => commit({ character: { credits: credits - POD_MAKES[k].price, playState: { ...play, pods: [...owned, k] } }, downtime: {}, days: 0, log: [`Bought a ${POD_MAKES[k].name} podracer for ${POD_MAKES[k].price.toLocaleString()} cr (house rule: the books give no price for a pod).`] });
   const price = board.find((p) => p.name === on);
   const most = Math.max(0, Math.min(1000, credits - cost));
   const bet = price && stake > 0 ? { on, stake: Math.min(stake, most), pays: price.pays } : undefined;
@@ -11117,7 +11125,7 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
     commit({ character: { credits: credits - spent + gain }, downtime: {}, days: 1, log });
     setGame(null);
   };
-  const paid = `paid ${cost.toLocaleString()} cr to enter and hire the pod${bet ? ` and staked ${bet.stake} cr` : ""}`;
+  const paid = `paid ${cost.toLocaleString()} cr to enter${own ? " in your own pod" : " and hire the pod"}${bet ? ` and staked ${bet.stake} cr` : ""}`;
   if (game) {
     return (
       <MinigamePage
@@ -11126,23 +11134,29 @@ function PodraceActivity(props: DowntimeProps & { flying: (typeof FLYING)[number
         onDone={(result) => {
           if (result.kind !== "pod") return setGame(null);
           const r = podResult(result.race, result.bet);
-          settle([`${flying.name}: ${r.note}; ${paid}.`], r.purse + r.winnings);
+          const wrecked = own && !!result.race.racers.find((x) => x.party)?.wrecked;
+          settle([`${flying.name}: ${r.note}; ${paid}.`, ...(wrecked ? [`Your ${POD_MAKES[make].name} is mended for ${POD.mend.toLocaleString()} cr (house rule).`] : [])], r.purse + r.winnings - (wrecked ? POD.mend : 0));
         }}
       />
     );
   }
   return (
     <div className="space-y-2 text-xs" data-testid="podrace-setup">
-      <p className="text-sky-200">Entry {POD.entry} cr and the hire of a pod for the day {POD.hire.toLocaleString()} cr (the book's Racing activity). You have {credits.toLocaleString()} cr. The purse: {POD.prizes.map((p) => p.toLocaleString()).join(" / ")} cr for the first four (house rule).</p>
+      <p className="text-sky-200">Entry {POD.entry} cr and the hire of a pod for the day {POD.hire.toLocaleString()} cr (the book's Racing activity; no hire in a pod of your own). You have {credits.toLocaleString()} cr. The purse: {POD.prizes.map((p) => p.toLocaleString()).join(" / ")} cr for the first four (house rule).</p>
       <p className="font-semibold text-sky-100">Which pod do you hire?</p>
       <div className="grid grid-cols-1 gap-1">
         {(Object.keys(POD_MAKES) as PodMake[]).map((k) => (
           <button key={k} type="button" data-testid={`pod-make-${k}`} aria-pressed={make === k} onClick={() => setMake(k)} className={`rounded border px-2 py-1 text-left ${make === k ? "border-yellow-400 bg-yellow-400/10 text-yellow-100" : "border-gray-600 text-gray-200"}`}>
-            <span className="font-semibold">{POD_MAKES[k].name}</span> <span className="text-gray-400">(hull {POD_MAKES[k].hull}, speed {Math.round(POD_MAKES[k].top * 100)}%, turning {Math.round(POD_MAKES[k].turn * 100)}%, heat {Math.round(POD_MAKES[k].heat * 100)}%)</span>
+            <span className="font-semibold">{POD_MAKES[k].name}</span>{owned.includes(k) && <span className="ml-1 rounded bg-emerald-700/60 px-1 text-emerald-100" data-testid={`pod-own-${k}`}>yours</span>} <span className="text-gray-400">(hull {POD_MAKES[k].hull}, speed {Math.round(POD_MAKES[k].top * 100)}%, turning {Math.round(POD_MAKES[k].turn * 100)}%, heat {Math.round(POD_MAKES[k].heat * 100)}%)</span>
             <span className="block text-gray-300">{POD_MAKES[k].note}</span>
           </button>
         ))}
       </div>
+      {!own && (
+        <Button size="sm" variant="outline" disabled={credits < POD_MAKES[make].price} data-testid="pod-buy" onClick={() => buy(make)}>
+          {`Buy this ${POD_MAKES[make].name} for ${POD_MAKES[make].price.toLocaleString()} cr (house rule)${credits < POD_MAKES[make].price ? ": not enough credits" : ""}`}
+        </Button>
+      )}
       <p className="font-semibold text-sky-100">The bookmaker's board: a bet on a pilot to win (house rule; what each credit staked pays back)</p>
       <div className="grid grid-cols-1 gap-1" data-testid="pod-board">
         {board.map((p) => (

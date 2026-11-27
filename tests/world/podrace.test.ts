@@ -183,3 +183,9 @@ test("a blow that costs a pod nearly half its hull at once snaps a cable: it is 
   const dented = soft.racers.find((r) => r.party)!;
   assert.ok(!dented.snapped, "a scrape does not snap a cable");
 });
+
+test("a pod can be bought (house rule: priced beside the speeders of the rules data) and one's own is mended after a wreck", () => {
+  for (const make of Object.values(POD_MAKES)) assert.ok(make.price >= 10000 && make.price <= 25000, `${make.name}: ${make.price} cr`);
+  assert.ok(POD_MAKES.scrap.price < POD_MAKES.ring.price && POD_MAKES.ring.price < POD_MAKES.brute.price, "salvage is cheapest, the armoured make dearest");
+  assert.equal(POD.mend, POD.hire);
+});
