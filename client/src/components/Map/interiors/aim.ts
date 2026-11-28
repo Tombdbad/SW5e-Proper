@@ -128,6 +128,10 @@ export function fadeable(o: THREE.Object3D): boolean {
   if (!m.isMesh || ((m as THREE.InstancedMesh).isInstancedMesh && (m as THREE.InstancedMesh).count > 1)) return false;
   const mats = Array.isArray(m.material) ? m.material : [m.material];
   if (!mats.some((x) => x?.visible && (x.opacity ?? 1) > 0.05)) return false;
+  // (a figure that moves its limbs is drawn with a limb material, interiors/limbs.ts `limbMaterial`: its pivots are on the material and the
+  // geometry, not on the object, so the check below never saw them. 2026-11-28, the user: W "causes a really bad stutter and freezing": the
+  // followers walk behind the character, between it and the camera, and the Babylon renderer cannot copy a limb material to fade it)
+  if (mats.some((x) => x?.userData?.limbParents)) return false;
   for (let p: THREE.Object3D | null = m; p; p = p.parent) {
     if (!p.visible || AIM.targets.has(p) || p.userData.pivots || p.userData.person !== undefined || p.userData.noFade) return false;
   }

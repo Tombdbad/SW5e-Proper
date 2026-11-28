@@ -128,10 +128,17 @@ test("the wall between the camera and the character is faded; not the floor, the
   body.userData.pivots = [];
   const tap = box([0, 0.6, 0.9], [0.8, 1.2, 0.3]);
   AIM.targets.add(tap);
-  scene.add(between, beyond, floor, body, tap);
+  // A follower walking behind the character, between it and the camera, is drawn with a limb material (interiors/limbs.ts): its pivots
+  // are on the material, not the object. Beside it a plain post at the same place, which is faded, so the rays do reach that spot
+  const follower = box([0, 0.6, 1.6], [0.5, 1.2, 0.5]);
+  (follower.material as THREE.Material).userData.limbParents = [-1, 0];
+  const post = box([0, 0.6, 1.75], [0.3, 1.2, 0.1]);
+  scene.add(between, beyond, floor, body, tap, follower, post);
   scene.updateMatrixWorld(true);
   const got = fadeBetween(scene, camera, feet, EYE);
   AIM.targets.delete(tap);
+  assert.ok(got.has(post), "a post in the way, where the follower is");
+  assert.ok(!got.has(follower), "not a follower with moving limbs (W froze the game: 2026-11-28)");
   assert.ok(got.has(between), "the wall in the way");
   assert.ok(!got.has(beyond), "not what is beyond the character");
   assert.ok(!got.has(floor), "not the floor");

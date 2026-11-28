@@ -1612,7 +1612,13 @@ class Mirror {
       if (!node.cutMat || node.cutFrom !== mesh.material) {
         node.cutMat?.dispose();
         node.cutFrom = mesh.material;
-        node.cutMat = mesh.material.clone(`${mesh.material.name}-seen`) ?? undefined;
+        // (a material whose plugin Babylon cannot remake, the limbs' own, throws on a copy: it is then drawn as it is, and not tried again
+        // every frame; a throw here stopped the whole frame, the cause of a stutter and freeze, 2026-11-28)
+        try {
+          node.cutMat = mesh.material.clone(`${mesh.material.name}-seen`) ?? undefined;
+        } catch {
+          node.cutMat = undefined;
+        }
       }
       const own = node.cutMat as PBRMaterial | undefined;
       const base = node.cutFrom as PBRMaterial;
