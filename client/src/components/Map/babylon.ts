@@ -705,7 +705,8 @@ class Mirror {
     if (s._bandFrame === this.frame) return s._band!;
     s._bandFrame = this.frame;
     const c = sm.getBoundingInfo().boundingSphere.centerWorld, p = this.camera.position;
-    const at = Math.log2(1 + Math.hypot(c.x - p.x, c.y - p.y, c.z - p.z)) * 2;
+    const dx = c.x - p.x, dy = c.y - p.y, dz = c.z - p.z;
+    const at = Math.log2(1 + Math.sqrt(dx * dx + dy * dy + dz * dz)) * 2;
     if (s._band === undefined || at < s._band - 0.25 || at > s._band + 1.25) s._band = Math.floor(at);
     return s._band;
   }
@@ -788,13 +789,15 @@ class Mirror {
     const bs = g.boundingSphere ?? (g.computeBoundingSphere(), g.boundingSphere);
     if (!bs) return false;
     const e = o.matrixWorld.elements;
-    const s = Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+    // (squares and one root, not Math.hypot, which is several times slower: this runs for every mesh in every frame)
+    const s = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
     const r = bs.radius * s;
     if (r > HUGE) return false;
     const c = bs.center;
     const cam = this.camera.position;
     this.lodR = r;
-    this.lodD = Math.max(0, Math.hypot(e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12] - cam.x, e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13] - cam.y, e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14] - cam.z) - r);
+    const dx = e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12] - cam.x, dy = e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13] - cam.y, dz = e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14] - cam.z;
+    this.lodD = Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - r);
     return true;
   }
 
@@ -1212,10 +1215,13 @@ class Mirror {
   }
   private newMaterial(name: string) {
     const mat = new PBRMaterial(name, this.scene);
+    // (set with the look through the scene's meshes held back, as in `dress`: no mesh uses it yet)
+    mat.blockDirtyMechanism = true;
     mat.enableSpecularAntiAliasing = true;
     mat.maxSimultaneousLights = this.lightCount();
     // three's diffuse is Lambert's (Babylon's own darkens a rough surface)
     mat.brdf.baseDiffuseModel = Constants.MATERIAL_DIFFUSE_MODEL_LAMBERT;
+    mat.blockDirtyMechanism = false;
     return mat;
   }
   // What changes from frame to frame: colour, opacity, emission
@@ -1238,7 +1244,19 @@ class Mirror {
     return g && g > 1 && this.pipeline?.bloomEnabled && (this.pipeline as unknown as { _hdr: boolean })._hdr ? g : 1;
   }
   // The rest, when the three material changes or its maps come
+  // Each setting of a Babylon material looks through every mesh of the scene for the ones that use it (to mark them to be looked at
+  // again): some fifteen settings a material, over two thousand meshes, for each of some hundreds of materials, was a second and a
+  // half of a district's loading (2026-11-28). The settings are made with that held back, and the meshes marked once after.
   private dress(mat: PBRMaterial, m: THREE.Material, patch: ShaderPatch | null | undefined) {
+    mat.blockDirtyMechanism = true;
+    try {
+      this.dressNow(mat, m, patch);
+    } finally {
+      mat.blockDirtyMechanism = false;
+      mat.markAsDirty(Material.AllDirtyFlag);
+    }
+  }
+  private dressNow(mat: PBRMaterial, m: THREE.Material, patch: ShaderPatch | null | undefined) {
     const any = m as Painted;
     const height = patch?.kind === "parallax" ? patch.height.value : null;
     const basic = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.PointsMaterial).isPointsMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.ShaderMaterial).isShaderMaterial;
@@ -1596,7 +1614,10 @@ class Mirror {
     const shader = !Array.isArray(o.material) && (o.material as THREE.ShaderMaterial).isShaderMaterial ? (o.material as THREE.ShaderMaterial) : null;
     // (the plainer materials from `near` on, for a scatter's farther model, and for what is far in a street: inside, a room is all near)
     const farBand = inst.isInstancedMesh && inst.userData.lod === "far";
-    const plain = farBand || (away >= 0 && away > D.near * (node.far ? 0.9 : 1) && !inst.isInstancedMesh);
+    // (while a district is got ready behind its loading screen, every other frame draws all of it in the plainer materials too, so that
+    // those are compiled there: they were compiled when the screen had gone, some forty shaders, a stall of a second or more, 2026-11-28)
+    const prepFar = this.owner.preparing && (this.frame & 1) === 1 && !inst.isInstancedMesh;
+    const plain = farBand || prepFar || (away >= 0 && away > D.near * (node.far ? 0.9 : 1) && !inst.isInstancedMesh);
     node.far = plain;
     if (shader) mesh.material = this.shaderOf(shader, false);
     else this.bind(node, mesh, o.material, g, entry.colors, plain);
@@ -1720,7 +1741,7 @@ class Mirror {
     const pack = node.pack!;
     const bs = g.boundingSphere ?? (g.computeBoundingSphere(), g.boundingSphere);
     const e = inst.matrixWorld.elements;
-    const ws = Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+    const ws = Math.sqrt(Math.max(e[0] * e[0] + e[1] * e[1] + e[2] * e[2], e[4] * e[4] + e[5] * e[5] + e[6] * e[6], e[8] * e[8] + e[9] * e[9] + e[10] * e[10]));
     const band = inst.userData.lod as "near" | "far" | undefined;
     const from = band === "far" ? D.near : 0;
     const to = band === "near" ? D.near : Infinity;
@@ -1728,8 +1749,10 @@ class Mirror {
     let n = 0;
     for (let i = 0, o = 0; i < inst.count; i++, o += 16) {
       const x = full[o + 12], y = full[o + 13], z = full[o + 14];
-      const r = (bs?.radius ?? 1) * Math.hypot(full[o], full[o + 1], full[o + 2]) * ws;
-      const d = Math.hypot(e[0] * x + e[4] * y + e[8] * z + e[12] - cam.x, e[1] * x + e[5] * y + e[9] * z + e[13] - cam.y, e[2] * x + e[6] * y + e[10] * z + e[14] - cam.z) - r;
+      // (squares and a root, not Math.hypot: this is every instance of a scatter, each time the camera has moved a metre and a half)
+      const r = (bs?.radius ?? 1) * Math.sqrt(full[o] * full[o] + full[o + 1] * full[o + 1] + full[o + 2] * full[o + 2]) * ws;
+      const dx = e[0] * x + e[4] * y + e[8] * z + e[12] - cam.x, dy = e[1] * x + e[5] * y + e[9] * z + e[13] - cam.y, dz = e[2] * x + e[6] * y + e[10] * z + e[14] - cam.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) - r;
       if (r > HUGE || (d >= from && d < Math.min(to, reachOf(r, D)))) {
         for (let k = 0; k < 16; k++) pack[n * 16 + k] = full[o + k];
         if (rgba && rgbaPack) for (let k = 0; k < 4; k++) rgbaPack[n * 4 + k] = rgba[i * 4 + k];

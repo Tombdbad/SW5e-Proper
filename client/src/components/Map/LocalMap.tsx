@@ -184,6 +184,9 @@ export const useClock = create<{ minutes: number; set: (minutes: number) => void
 // the districts got ready this session, which do not show it again
 export const useWarmup = create<{ total: number; done: number }>(() => ({ total: 0, done: 0 }));
 const READY_DISTRICTS = new Set<string>();
+// The kinds of room got ready this session, in any district (2026-11-28): their shaders and maps stay with Babylon for the session, so the
+// next district opens only the kinds it has new (and its own streets)
+const WARMED_KINDS = new Set<string>();
 // The minute between the clock's ticks (a minute passes each real second while the clock runs), for what is
 // drawn moving by the clock: a ship coming down into its berth, the doors of its hangar
 let tickedAt = performance.now();
@@ -3517,16 +3520,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // of room (its building's kind, the pack it is furnished from, its form, above or below ground), which share their shaders and maps
   const [warming, setWarming] = useState<number | null>(null);
   const roomKey = rooms.map((r) => r.id).join(",");
+  const warmKinds = useRef<string[]>([]);
   const warmRooms = useMemo(() => {
     const kinds = new Set<string>();
-    return rooms.filter((r) => {
+    const list = rooms.filter((r) => {
       if (!r.layout) return false;
       const type = world.areas[r.parentId ?? ""]?.type ?? building.type;
-      const kind = `${type}|${packOf(r.name, type) ?? ""}|${formOf(r) ?? ""}|${(r.layout.level ?? 0) < 0}`;
-      if (kinds.has(kind)) return false;
+      const kind = `${biome}|${type}|${packOf(r.name, type) ?? ""}|${formOf(r) ?? ""}|${(r.layout.level ?? 0) < 0}`;
+      if (kinds.has(kind) || WARMED_KINDS.has(kind)) return false;
       kinds.add(kind);
       return true;
     });
+    warmKinds.current = [...kinds];
+    return list;
   }, [roomKey]);
   const warmRoom = warming !== null ? warmRooms[warming] ?? null : null;
   const opened = warmRoom ?? inside ?? (reveal && planned ? rooms.find((a) => a.id === selectedId) ?? null : null);
@@ -3599,7 +3605,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
   // a catwalk, which stand over what is below)
   // (a covered walkway is no room here either: the wall it meets has its doorway framed and cut through, as for an open one)
-  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && !a.layout.tube && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  // (the rooms that stand on the street are sorted out once a render, not at every square asked about: a route asks thousands, 2026-11-28)
+  const roomRects = useMemo(() => rooms.filter((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && !a.layout.tube).map((a) => a.layout!), [rooms]);
+  const inRoom = (x: number, y: number) => roomRects.some((l) => x >= l.x && x < l.x + l.width && y >= l.y && y < l.y + l.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
   // (the pieces moved or broken here; a room is set right once the party is somewhere else: house rule)
@@ -3875,9 +3883,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const swimsAt = (x: number, y: number) => !!deck && !deck.has(`${x},${y}`);
   // The party's water craft whose helm the party is at, if any (see `boats` below)
   const afloatRef = useRef<{ v: PartyVehicle; x: number; y: number; face: number } | null>(null);
-  const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`) && !rigSquares.has(`${x},${y}`)
-    && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
+  // (the squares the street's things stand on, as a set: the check made a new list of them all at every square asked about, and the
+  // routes of the people about the street, made again as the world changes, took a fifth of a second while the party walked, 2026-11-28)
+  const thingSquares = useMemo(() => new Set([...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].map((t) => `${t.x},${t.y}`)), [street]);
+  const outdoors = (x: number, y: number) => {
+    if (x < ground.x || y < ground.y || x >= ground.x + ground.w || y >= ground.y + ground.h) return false;
+    const k = `${x},${y}`;
+    return !inRoom(x, y) && !barred.has(k) && !fixtures.blocked.has(k) && !street.ambientBlocked.has(k) && !pieceSquares.has(k) && !rigSquares.has(k) && !thingSquares.has(k);
+  };
   // Where the people of an encounter are (their squares), where one comes in from (a way out of the district, or
   // the edge of the ground), and the squares a gang stands on round the party in its alley
   const folkAt = useRef<Record<string, Sq>>({});
@@ -4191,12 +4204,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // screen, the renderer drawing everything whether in view or not (babylon.ts `preparing`), until all it drew is ready (its shaders
   // compiled, its maps on the graphics card; five seconds at most a room). Babylon keeps those for the session, so going in and out
   // afterwards compiles nothing. Not on a renderer drawing in software (the play-through test's browser), which would take minutes.
+  // (2026-11-28) The last step is the street itself, with no room opened (`warmRoom` is null there), given up to fifteen seconds: it was
+  // left to after the screen, and some sixty shaders of the street were compiled while the party already stood in it (a half-drawn street
+  // and a stutter for some seconds). A room in which nothing new was drawn (its shaders and maps all ready at once) takes two frames.
   const gl = useThree((state) => state.gl) as unknown as { preparing?: boolean; prepared?: () => boolean; software?: boolean };
   const districtKey = district?.id ?? building.id;
   useEffect(() => {
-    if (!planned || !warmRooms.length || READY_DISTRICTS.has(districtKey) || !gl.prepared || gl.software) return;
+    // (a district of no rooms has no screen; one whose kinds of room were all got ready elsewhere still has its streets got ready)
+    if (!planned || !rooms.some((r) => r.layout) || READY_DISTRICTS.has(districtKey) || !gl.prepared || gl.software) return;
+    // (the count starts afresh: the last district's may have ended on the same step)
+    warmTick.current.at = -1;
     setWarming(0);
-    useWarmup.setState({ total: warmRooms.length, done: 0 });
+    useWarmup.setState({ total: warmRooms.length + 1, done: 0 });
     return () => {
       gl.preparing = false;
       setWarming(null);
@@ -4206,18 +4225,28 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   useEffect(() => {
     gl.preparing = warming !== null;
   }, [warming !== null]);
-  const warmTick = useRef({ at: -1, frames: 0, since: 0 });
+  const warmTick = useRef({ at: -1, frames: 0, since: 0, ok: 0 });
+  // (the frames are counted from when the step's room is in the scene: React may take more than a frame to put a big room in)
+  const warmIn = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    warmIn.current = warming;
+  }, [warming]);
   useFrame(() => {
-    if (warming === null) return;
+    if (warming === null || warmIn.current !== warming) return;
     const t = warmTick.current;
-    if (t.at !== warming) Object.assign(t, { at: warming, frames: 0, since: performance.now() });
-    if (++t.frames < 3 || (!gl.prepared!() && performance.now() - t.since < 5000)) return;
-    if (warming + 1 < warmRooms.length) {
+    if (t.at !== warming) Object.assign(t, { at: warming, frames: 0, since: performance.now(), ok: 0 });
+    if (++t.frames < 2) return;
+    // (all ready in the last frame drawn; the streets in two running, as every other frame draws them in their plainer materials: babylon.ts)
+    t.ok = gl.prepared!() ? t.ok + 1 : 0;
+    const room = warming < warmRooms.length;
+    if (t.ok < (room ? 1 : 2) && performance.now() - t.since < (room ? 5000 : 15000)) return;
+    if (warming < warmRooms.length) {
       setWarming(warming + 1);
       useWarmup.setState({ done: warming + 1 });
       return;
     }
     READY_DISTRICTS.add(districtKey);
+    for (const k of warmKinds.current) WARMED_KINDS.add(k);
     setWarming(null);
     useWarmup.setState({ total: 0, done: 0 });
   });

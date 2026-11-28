@@ -2075,8 +2075,18 @@ const EARTH_LIGHT = 1.2; // how bright the bare earth is (1 leaves the texture a
 const PARALLAX = 0.045; // how far the height map moves the texture, in repeats of GROUND_TILE squares (0.05 and then 30% more, the user, 2026-10-21; down by 30% again, it swam: 2026-11-01)
 const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal map reads (1 as photographed, 30% more)
 
-// Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
-export function groundTexture(biome: string, buildingType: string, base: string): { set: string; tint: THREE.Color; parallax: number } | null {
+// Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant). The same
+// object for the same question (2026-11-28): a new tint on every render was taken by the far land's `useMemo` (terrain.tsx ReliefGround)
+// for a new ground, and the whole land (its relief, water, trees and Megascans) was made again on every render of the street, about a
+// hundred times while a district got ready. Do not change what it returns: it is shared.
+type GroundTex = { set: string; tint: THREE.Color; parallax: number };
+const GROUND_TEX = new Map<string, GroundTex | null>();
+export function groundTexture(biome: string, buildingType: string, base: string): GroundTex | null {
+  const key = `${biome}|${buildingType}|${base}`;
+  if (!GROUND_TEX.has(key)) GROUND_TEX.set(key, groundTextureOf(biome, buildingType, base));
+  return GROUND_TEX.get(key)!;
+}
+function groundTextureOf(biome: string, buildingType: string, base: string): GroundTex | null {
   if (buildingType === "sewer system") return { set: "brown_mud_03", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   // A city: paving (2026-10-28, the user: the street was a black plane; the concrete of the floors, as ground)
   if (biome === "urban") return { set: "concrete_floor_worn_02", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };

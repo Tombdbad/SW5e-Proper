@@ -12189,7 +12189,8 @@ function DistrictLoading() {
       <div className="h-1.5 w-48 overflow-hidden rounded bg-gray-800">
         <div className="h-full bg-blue-500 transition-all" style={{ width: `${Math.round((done / total) * 100)}%` }} />
       </div>
-      <div className="text-xs text-gray-500">{done} of {total} kinds of room</div>
+      {/* (the last step is the street itself: LocalMap BuildingScene) */}
+      <div className="text-xs text-gray-500">{done < total - 1 ? `${done} of ${total - 1} kinds of room` : "The streets"}</div>
     </div>
   );
 }

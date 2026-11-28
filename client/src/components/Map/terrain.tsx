@@ -310,7 +310,8 @@ export function ReliefGround({ biome, seed, inner, at, set, tint, dip = 0 }: { b
       rivers.computeVertexNormals();
     }
     return { geo, treeMesh, lakes, rivers, t, heightAt, away, unit, inner, palette: P, ridges: st.ridges };
-  }, [biome, seed, inner, lite, diffuse, tint, dip]);
+    // (by the tint's colour, not the object: a caller that makes a new one each render must not have the land made again, 2026-11-28)
+  }, [biome, seed, inner, lite, diffuse, tint.getHexString(), dip]);
   // The kit: boulders on the ground that is not flat (unless the Megascans pack stands the rocks), scree at the foot of a steep slope, overhanging ledges on the cliffs (shared/logic kitSpots)
   const kitMeshes = useMemo(() => {
     // (the kit's own boulders, scree and ledges only where there is no Megascans pack: with one, Megascans rocks stand in their places, `rockSpots` below: 2026-11-11, the user: "remove
