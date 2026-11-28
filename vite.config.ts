@@ -33,6 +33,10 @@ export default defineConfig({
       output: {
         manualChunks(id: string) {
           const p = id.split("\\").join("/");
+          // React, and Vite's helper for loading a chunk, in a small chunk of their own (2026-11-28): left out, Rollup put React in
+          // "three" and the helper in "babylon" (the chunks that used them first), so the home page loaded and parsed both 3D
+          // engines, 3.6 MB of script, before it showed anything
+          if (p.includes("vite/preload-helper") || p.includes("commonjsHelpers") || /\/node_modules\/(react|react-dom|scheduler|use-sync-external-store|zustand)\//.test(p)) return "react";
           if (p.includes("/node_modules/@babylonjs/")) return "babylon";
           if (/\/node_modules\/(three|three-stdlib|@react-three)\//.test(p)) return "three";
           return undefined;
